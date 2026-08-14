@@ -1,0 +1,21 @@
+# CMake
+build/
+cmake-build-*/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Xcode
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# Generated render output (golden images are committed under Tests/golden/)
+*.ppm
+out/
+render_out/
+
+# OS
+.DS_Store

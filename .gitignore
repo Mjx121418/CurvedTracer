@@ -22,3 +22,6 @@ render_out/
 
 # misc
 *.log
+
+# VS Code
+.vscode/

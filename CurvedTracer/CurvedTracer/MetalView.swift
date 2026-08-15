@@ -6,6 +6,7 @@
 
 import SwiftUI
 import MetalKit
+import GeometryCore
 
 enum AmbientSpace: String, CaseIterable, Identifiable {
     case sphere = "S^3"
@@ -39,9 +40,12 @@ struct MetalView: NSViewRepresentable {
             blue: 0.8,
             alpha: 1.0
         )
+        
+        view.framebufferOnly = false
 
         context.coordinator.configure(device: device, view: view)
         context.coordinator.ambientSpace = ambientSpace
+        context.coordinator.setScenePacket()
 
         view.delegate = context.coordinator
 
@@ -55,13 +59,31 @@ struct MetalView: NSViewRepresentable {
 
 
 final class Renderer: NSObject, MTKViewDelegate {
-    private var commandQueue: (any MTL4CommandQueue)?
-    private var commandBuffer: (any MTL4CommandBuffer)?
-    private var commandAllocator: (any MTL4CommandAllocator)?
+    private var device: (any MTLDevice)!
+
+    private var pipeline: (any MTLComputePipelineState)!
+    private var sceneBuffer: (any MTLBuffer)!
+    
+    private var commandQueue: (any MTL4CommandQueue)!
+    private var commandBuffer: (any MTL4CommandBuffer)!
+    private var commandAllocator: (any MTL4CommandAllocator)!
+    
+    private var argumentTable: (any MTL4ArgumentTable)!
+    private var residencySet: (any MTLResidencySet)!
+    
+    private var renderTexture: (any MTLTexture)!
 
     var ambientSpace: AmbientSpace = .sphere
 
     func configure(device: MTLDevice, view: MTKView) {
+        self.device = device
+
+        let library = device.makeDefaultLibrary()!
+        guard let function = library.makeFunction(name: "raytrace") else {
+            fatalError("raytrace shader not found")
+        }
+        self.pipeline = try! device.makeComputePipelineState(function: function)
+
         guard
             let commandQueue = device.makeMTL4CommandQueue(),
             let commandBuffer = device.makeCommandBuffer(),
@@ -74,13 +96,120 @@ final class Renderer: NSObject, MTKViewDelegate {
         self.commandBuffer = commandBuffer
         self.commandAllocator = commandAllocator
 
-        commandQueue.addResidencySet(view.residencySet)
+        self.commandQueue.addResidencySet(view.residencySet)
+        
+        let residencySetDescreptior = MTLResidencySetDescriptor()
+        residencySetDescreptior.label = "Curved Ray Tracer App Residency Set"
+        do {
+            self.residencySet = try device.makeResidencySet(descriptor: residencySetDescreptior)
+        } catch {
+            fatalError("Failed to create residency set: \(error)")
+        }
+        self.commandQueue.addResidencySet(self.residencySet)
+        
+        let descriptor = MTL4ArgumentTableDescriptor()
+        descriptor.maxBufferBindCount = 1
+        descriptor.maxTextureBindCount = 1
+        
+        self.argumentTable = try! device.makeArgumentTable(descriptor: descriptor)    }
+    
+    func setScenePacket() {
+        // Create the atlas. 0 = H³, 1 = S³.
+        var atlas = geo.Atlas()
+        atlas.start(0)
+
+        // The anchorless base chart is always id 0.
+        let cameraChart = atlas.seed()
+
+        // Add materials first; colorIdx refers to these in order.
+        _ = atlas.addMaterial(geo.vec4(1.0, 0.0, 0.0, 1.0))  // material 0: red
+        _ = atlas.addMaterial(geo.vec4(0.0, 1.0, 0.0, 1.0))  // material 1: green
+        _ = atlas.addMaterial(geo.vec4(0.0, 0.0, 1.0, 1.0))  // material 2: blue
+        _ = atlas.addMaterial(geo.vec4(1.0, 1.0, 0.0, 1.0))  // material 3: yellow
+        _ = atlas.addMaterial(geo.vec4(0.0, 1.0, 1.0, 1.0))  // material 4: cyan
+        _ = atlas.addMaterial(geo.vec4(1.0, 0.0, 1.0, 1.0))  // material 5: magenta
+        _ = atlas.addMaterial(geo.vec4(1.0, 1.0, 1.0, 1.0))  // material 6: white
+        _ = atlas.addMaterial(geo.vec4(1.0, 0.5, 0.0, 1.0))  // material 7: orange
+
+        // Directly visible opaque spheres, all in front of the mirror sphere.
+        // kind: 0 = OPAQUE sphere, 1 = MIRROR sphere, 2 = MIRROR plane
+        _ = atlas.addObject(0, 0, geo.vec3(-0.05, 0.00, 0.10), 0.06, 0) // red
+        _ = atlas.addObject(0, 0, geo.vec3( 0.12, 0.04, 0.15), 0.07, 1) // green
+        _ = atlas.addObject(0, 0, geo.vec3(-0.15,-0.06, 0.20), 0.09, 2) // blue
+        _ = atlas.addObject(0, 0, geo.vec3( 0.00, 0.10, 0.22), 0.07, 3) // yellow
+        _ = atlas.addObject(0, 0, geo.vec3( 0.00,-0.10, 0.18), 0.06, 5) // magenta
+
+        // Neutral mirror sphere in front of the camera; it reflects the
+        // colorful opaque spheres behind the camera.
+        _ = atlas.addObject(0, 1, geo.vec3(0.0, 0.0, 2.0), sqrt(3.0), 6)
+
+        // Colorful objects behind the camera, visible through the mirror.
+        _ = atlas.addObject(0, 0, geo.vec3( 0.10, 0.10,-0.30), 0.15, 4) // cyan
+        _ = atlas.addObject(0, 0, geo.vec3(-0.12,-0.08,-0.35), 0.16, 5) // magenta
+        _ = atlas.addObject(0, 0, geo.vec3( 0.00, 0.00,-0.45), 0.18, 7) // orange
+
+        // Camera is always at the chart origin; specify an orthonormal frame.
+        atlas.setCamera(
+            1.0,
+            16.0 / 9.0,
+            geo.vec3(1, 0, 0),
+            geo.vec3(0, 1, 0),
+            geo.vec3(0, 0, 1)
+        )
+
+        atlas.setControls(
+            5,
+            0.05,
+            0.15,
+            0.95
+        )
+
+        // Validate and flatten into the camera chart.
+        let result = atlas.build(cameraChart, 64)
+
+        if result == 0 {
+            self.sceneBuffer = device.makeBuffer(
+                bytes: atlas.packetData(),
+                length: atlas.packetSize(),
+                options: .storageModeShared
+            )
+            // Upload `buffer` to Metal as slot 0.
+        } else {
+            fatalError("build failed with code \(result)")
+        }
+        /* guard let ptr = atlas.packetData() else {
+            return
+        }
+        let size = atlas.packetSize()
+        guard let buffer = device.makeBuffer(bytes: ptr, length: size, options: .storageModeShared) else {
+            fatalError("Failed to create scene buffer")
+        }
+        self.sceneBuffer = buffer */
+        
+        argumentTable.setAddress(sceneBuffer.gpuAddress, index: 0)
+        residencySet.addAllocation(sceneBuffer)
+        self.residencySet.commit()
+        self.residencySet.requestResidency()
     }
 
-    func mtkView(
-        _ view: MTKView,
-        drawableSizeWillChange size: CGSize
-    ) {
+    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
+        guard size.width > 0, size.height > 0 else {
+            return
+        }
+        
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: view.colorPixelFormat, width: Int(size.width), height: Int(size.height), mipmapped: false)
+        
+        descriptor.storageMode = .private
+        descriptor.usage = [.shaderWrite]
+        
+        guard let texture = device.makeTexture(descriptor: descriptor) else {
+            fatalError("Failed to create render texture")
+        }
+        
+        renderTexture = texture
+        
+        residencySet.addAllocation(texture)
+        residencySet.commit()
     }
 
     func draw(in view: MTKView) {
@@ -88,24 +217,36 @@ final class Renderer: NSObject, MTKViewDelegate {
             let commandQueue,
             let commandBuffer,
             let commandAllocator,
-            let drawable = view.currentDrawable,
-            let descriptor = view.currentMTL4RenderPassDescriptor
+            let renderTexture,
+            let drawable = view.currentDrawable
         else {
             return
         }
+        
+        argumentTable.setTexture(renderTexture.gpuResourceID, index: 0)
 
         commandAllocator.reset()
         commandBuffer.beginCommandBuffer(allocator: commandAllocator)
 
-        guard let encoder =
-            commandBuffer.makeRenderCommandEncoder(
-                descriptor: descriptor
-            )
-        else {
+        guard let encoder = commandBuffer.makeComputeCommandEncoder() else {
             return
         }
 
-        // No drawing yet. The render pass only clears the drawable.
+        encoder.setComputePipelineState(pipeline)
+        encoder.setArgumentTable(argumentTable)
+        
+        let width = drawable.texture.width
+        let height = drawable.texture.height
+        
+        let threadWidth = pipeline.threadExecutionWidth
+        let threadHeight = max(1, pipeline.maxTotalThreadsPerThreadgroup / threadWidth)
+
+        let threadsPerGroup = MTLSize(width: threadWidth, height: threadHeight, depth: 1)
+        let threadsPerGrid = MTLSize(width: width, height: height, depth: 1)
+        
+        encoder.dispatchThreads(threadsPerGrid: threadsPerGrid, threadsPerThreadgroup: threadsPerGroup)
+        encoder.copy(sourceTexture: renderTexture, destinationTexture: drawable.texture)
+
         encoder.endEncoding()
 
         commandBuffer.endCommandBuffer()

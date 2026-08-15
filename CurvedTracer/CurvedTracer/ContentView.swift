@@ -24,13 +24,6 @@ struct ContentView: View {
             .fixedSize()
             .padding(12)
         }
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world! \(String(geo.geometryCoreName()))")
-        }
-        .padding()
     }
 }
 

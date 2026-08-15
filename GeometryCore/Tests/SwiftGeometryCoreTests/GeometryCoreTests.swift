@@ -47,12 +47,15 @@ final class GeometryCoreTests: XCTestCase {
         // Swift-visible packet byte vector (std::vector<UInt8> by value).
         let packet = atlas.packetBytes()
         XCTAssertEqual(packet.size(), 128 + 32 + 16)
-        XCTAssertEqual(Int(atlas.packetSize()), packet.size())
+        XCTAssertEqual(atlas.packetSize(), packet.size())
+
+        // Swift-visible direct byte pointer for MTLBuffer upload.
+        XCTAssertNotNil(atlas.packetData())
 
         // Packet magic and contract version are the first two int32 fields.
         let bytes = [UInt8](packet)
         XCTAssertEqual(bytes.count, 128 + 32 + 16)
-        XCTAssertEqual(bytes[0], 0x43)  // little-endian bytes of 0x4E545243 ("NTRC")
+        XCTAssertEqual(bytes[0], 0x43)
         XCTAssertEqual(bytes[1], 0x52)
         XCTAssertEqual(bytes[2], 0x54)
         XCTAssertEqual(bytes[3], 0x4E)

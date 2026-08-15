@@ -105,14 +105,53 @@ bool planeFrom3(const vec3& p0, const vec3& p1, const vec3& p2, vec3& n, float& 
 }
 } // namespace
 
-void Mobius::applySphere(const vec3& c, float r, vec3& oc, float& orr, bool& op) const {
-    const vec3 e1(1, 0, 0), e2(0, 1, 0), e3(0, 0, 1);
-    vec3 src[4] = { c + e1 * r, c - e1 * r, c + e2 * r, c + e3 * r };
+namespace {
 
+void makeOrthonormalBasis(const vec3& n, vec3& u, vec3& v) {
+    vec3 helper = (mhAbs(n.x) < 0.9f) ? vec3(1, 0, 0) : vec3(0, 1, 0);
+    u = normalize(cross(n, helper));
+    v = cross(n, u);
+}
+
+// Four points on an H3 sphere, chosen strictly inside the unit ball.  This is
+// needed for H3 mirror spheres: their Euclidean center lies outside the ball
+// and axis-aligned samples such as c +/- e_i*r would leave the Poincare ball
+// (where H3::ballToModel is undefined).  The inside portion is the spherical
+// cap looking toward the origin; its angular half-width gives beta < 1/r.
+void sampleH3SphereInside(const vec3& c, float r, vec3 src[4]) {
+    float clen = length(c);
+    if (clen < 1e-12f) {
+        const vec3 e1(1, 0, 0), e2(0, 1, 0), e3(0, 0, 1);
+        src[0] = c + e1 * r;
+        src[1] = c - e1 * r;
+        src[2] = c + e2 * r;
+        src[3] = c + e3 * r;
+        return;
+    }
+    vec3 n = c / clen;
+    vec3 u, v;
+    makeOrthonormalBasis(n, u, v);
+    float beta = 0.75f / r;
+    vec3 w0 = -n;
+    vec3 w1 = normalize(-n + u * beta);
+    vec3 w2 = normalize(-n + v * beta);
+    vec3 w3 = normalize(-n - u * beta);   // opposite of w1: stays inside the cap
+    src[0] = c + w0 * r;
+    src[1] = c + w1 * r;
+    src[2] = c + w2 * r;
+    src[3] = c + w3 * r;
+}
+
+// Common sample-and-fit used by applySphere and applyPlane.  Four source points
+// on the primitive are pushed through the Mobius map; the image is fitted with a
+// Euclidean sphere, or a plane when one sample lands at infinity / points are
+// coplanar.
+void fitTransformedPrimitive(const Mobius& self, const vec3 src[4],
+                             vec3& oc, float& orr, bool& op) {
     vec3 fin[4];
     int nfinite = 0;
     for (int i = 0; i < 4; ++i) {
-        vec3 p = apply(src[i]);
+        vec3 p = self.apply(src[i]);
         if (std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z)) {
             fin[nfinite++] = p;
         }
@@ -129,15 +168,54 @@ void Mobius::applySphere(const vec3& c, float r, vec3& oc, float& orr, bool& op)
             float radius = length(center - fin[0]);
             if (radius < 1e6f) { oc = center; orr = radius; op = false; return; }
         }
-        // Coplanar: image is a plane.
+        // Coplanar (or nearly coplanar): image is a plane.
         if (planeFrom3(fin[0], fin[1], fin[2], oc, orr)) { op = true; return; }
     } else if (nfinite == 3) {
-        // One sample landed at infinity: the sphere passed through the projection point.
+        // One sample landed at infinity: the primitive passed through the projection point.
         if (planeFrom3(fin[0], fin[1], fin[2], oc, orr)) { op = true; return; }
     }
 
-    // Degenerate fallback.
-    oc = vec3(0, 0, 0); orr = 0.0f; op = false;
+    // Degenerate fallback: finite and harmless (avoids NaN crossing the seam).
+    oc = vec3(0, 0, 0);
+    orr = 0.0f;
+    op = false;
+}
+
+} // namespace
+
+void Mobius::applySphere(const vec3& c, float r, vec3& oc, float& orr, bool& op) const {
+    vec3 src[4];
+    if (kind == ModelKind::H3 && length(c) + r >= 1.0f) {
+        // H3 mirror sphere (center outside the unit ball): sample the cap that
+        // lies inside the Poincare ball, where the chart map is defined.
+        sampleH3SphereInside(c, r, src);
+    } else {
+        const vec3 e1(1, 0, 0), e2(0, 1, 0), e3(0, 0, 1);
+        src[0] = c + e1 * r;
+        src[1] = c - e1 * r;
+        src[2] = c + e2 * r;
+        src[3] = c + e3 * r;
+    }
+    fitTransformedPrimitive(*this, src, oc, orr, op);
+}
+
+void Mobius::applyPlane(const vec3& normal, float offset,
+                        vec3& oc, float& orr, bool& op) const {
+    // Build four points in the plane: p0 (closest to the origin) plus a small
+    // asymmetric set.  H3 chart points must stay strictly inside the unit ball,
+    // so the set is shrunk there (valid mirror planes pass through the origin).
+    vec3 n = normalize(normal);
+    vec3 u, v;
+    makeOrthonormalBasis(n, u, v);
+    // Four points in the plane, deliberately NOT concyclic: three on one line
+    // plus one off it.  A Mobius map sends concyclic source points to coplanar
+    // image points, which would make the sphere fit degenerate.
+    // For H3 the points must stay strictly inside the unit ball; valid mirror
+    // planes pass through the origin, so 0.45 / 0.9 is safely inside.
+    float s = (kind == ModelKind::H3) ? 0.45f : 1.0f;
+    vec3 p0 = n * offset;
+    vec3 src[4] = { p0, p0 + u * s, p0 + v * s, p0 + u * (2.0f * s) };
+    fitTransformedPrimitive(*this, src, oc, orr, op);
 }
 
 } // namespace geo

@@ -21,13 +21,13 @@ Three seams connect the sides; only (A) and (B) reach the Metal/Swift side, (C) 
 
 - **(A) Shared math (source-level).** One set of MSL-safe headers, `#include`d verbatim by C++ host and `.metal` shaders.
 - **(B) Scene packet (byte-level).** Flat POD buffer built by C++, uploaded verbatim by Swift, read by MSL as `constant`.
-- **(C) Intrinsic atlas (C++-internal).** Charts + overlap graph + Möbius transitions + flattening. Swift reaches it only through the C API (§6); Metal never touches it.
+- **(C) Intrinsic atlas (C++-internal).** Charts + overlap graph + Möbius transitions + flattening. Swift reaches it through the `geo::Atlas` C++ API exposed by the GeometryCore Swift package (§6); Metal never touches it.
 
 ---
 
 ## 2. Shared math header rules (Seam A)
 
-Shared headers live under `Sources/GeometryCore/include/GeometryCore/` and are compiled by **both** C++ (clang) and MSL (`#ifdef __METAL_VERSION__`). MSL is C++14-ish with restrictions, therefore:
+Shared headers live under `Sources/include/GeometryCore/` inside the `GeometryCore` Swift package and are compiled by **both** C++ (clang) and MSL (`#ifdef __METAL_VERSION__`). MSL is C++14-ish with restrictions, therefore:
 
 1. **No** `<std*>` headers, no STL, no exceptions, no RTTI, no virtual functions, no dynamic allocation, no recursion, no templates over user types.
 2. **float32 only** for geometry. `half` allowed only for GPU output colors/accumulation.
@@ -46,7 +46,6 @@ Shared headers live under `Sources/GeometryCore/include/GeometryCore/` and are c
 | `Mobius.h` | no (host) | transition map (4×4), `apply/compose/inverse/applySphere` |
 | `Chart.h` | no (host) | `Chart`, `ChartObject`, `Atlas`, flattening |
 | `Scene.h` | **yes** | POD structs for Seam B (canonical layout, §5) |
-| `CCApi.h` | no (host) | `extern "C"` API for Swift (§6) |
 
 The Metal side `#include`s only `Math.h`, `Intersect.h`, `Scene.h` (and any other header marked shared). It never re-implements math; it composes the shared functions into control flow.
 
@@ -85,7 +84,7 @@ An object is homed in exactly one chart and stored in that chart's coordinates:
 | `MIRROR` (1) | sphere `{center, radius}` | a mirror = geodesic hyperplane / great sphere (reflected across) |
 | `PLANE` (2) | `{normal, offset}` | a mirror through the chart center (the r→∞ limit of a mirror sphere) |
 
-**Mirror validity** (the condition that makes reflection = sphere inversion an isometry, validated by `geo_scene_build`):
+**Mirror validity** (the condition that makes reflection = sphere inversion an isometry, validated by `geo::Atlas::build`):
 
 - H³ mirror sphere: `|center|² == radius² + 1` (orthogonal to the unit-sphere boundary).
 - S³ mirror sphere: `|center|² == radius² − 1` (image of a great sphere).
@@ -95,7 +94,7 @@ An object is homed in exactly one chart and stored in that chart's coordinates:
 
 ### 3.4 Consistency = cocycle condition (replaces the anchor)
 
-Because the atlas *is* its transition maps and nothing else, the maps must agree around every loop, or "the same point" would have different coordinates depending on path. `geo_scene_build` verifies: **every closed loop composes to identity within tolerance**. Group-built atlases (tessellation) satisfy this by construction; hand-authored atlases are checked and rejected on violation. Island charts (zero edges) are also rejected.
+Because the atlas *is* its transition maps and nothing else, the maps must agree around every loop, or "the same point" would have different coordinates depending on path. `geo::Atlas::build` verifies: **every closed loop composes to identity within tolerance**. Group-built atlases (tessellation) satisfy this by construction; hand-authored atlases are checked and rejected on violation. Island charts (zero edges) are also rejected.
 
 ---
 
@@ -109,7 +108,7 @@ Because the atlas *is* its transition maps and nothing else, the maps must agree
 
 ## 5. Scene packet (Seam B, normative)
 
-Single contiguous byte buffer: built by C++ (`geo_scene_build`), uploaded verbatim by Swift → `MTLBuffer`, read by MSL as `constant`. Layout is fixed; equality across C++/Swift/MSL is a hard requirement (Swift asserts sizes with `MemoryLayout`; C++ `static_assert`s them).
+Single contiguous byte buffer: built by C++ (`geo::Atlas::build`), uploaded verbatim by Swift → `MTLBuffer`, read by MSL as `constant`. Layout is fixed; equality across C++/Swift/MSL is a hard requirement (Swift asserts sizes with `MemoryLayout`; C++ `static_assert`s them).
 
 All integers **int32**, floats **float32**, little-endian. The packet is the **camera chart** coordinate frame: every object is already transformed into the camera chart (§7); the camera is at the origin.
 
@@ -187,44 +186,52 @@ Fixed header total: **128 bytes**.
 
 ### 5.3 Capacity limits (v2)
 
-`MAX_OBJECTS = 4096`, `MAX_MATERIALS = 256`, `MAX_CHART_DEPTH = 64` (flattening BFS bound). Exceeding them is rejected by `geo_scene_build`.
+`MAX_OBJECTS = 4096`, `MAX_MATERIALS = 256`, `MAX_CHART_DEPTH = 64` (flattening BFS bound). Exceeding them is rejected by `geo::Atlas::build`.
 
 ---
 
-## 6. C API (Seam B, Swift side)
+## 6. C++ API (Seam B, Swift side)
 
-Swift calls plain C functions (no C++ interop mode required). The atlas is built through this API; Metal never sees it.
+Swift imports the `GeometryCore` Swift package and calls the host C++ classes directly with Swift C++ interop. Metal never sees the atlas or these classes.
 
 **v2 surface (signatures are spec; C++ owner implements):**
 
-```c
-int32 geo_contract_version(void);                 // == 2
+```cpp
+namespace geo {
 
-// Build an intrinsic chart atlas.
-void  geo_scene_begin(int32 modelKind);           // 0 = H3, 1 = S3
-int32 geo_chart_seed(void);                       // anchorless base chart, returns 0
-int32 geo_chart_add(int32 fromChart, const float m[16], int32 safeFlag);   // link new chart to existing via Mobius; returns new id
-void  geo_chart_link(int32 a, int32 b, const float m_ab[16], int32 safeFlag);
+class Atlas {
+public:
+    // 0 = H3, 1 = S3. Resets the atlas. Swift uses `start`; `begin` is the
+    // same method but Swift C++ interop reserves `begin` for C++ iterators.
+    void start(int modelKind);
 
-// Objects live in a chart, in that chart's Euclidean coordinates.
-// kind: 0 = OPAQUE sphere, 1 = MIRROR sphere, 2 = MIRROR plane.
-// sphere: (c0,c1,c2)=center, radiusOrOffset=radius.  plane: (c0,c1,c2)=normal, radiusOrOffset=offset.
-void  geo_object_add(int32 chartId, int32 kind,
-                     float c0, float c1, float c2, float radiusOrOffset, int32 colorIdx);
+    int seed();                                      // anchorless base chart, returns 0
+    int add(int fromChart, const float m[16], bool safe);          // link new chart; returns new id
+    void link(int a, int b, const float m_ab[16], bool safe);
 
-// Camera (always rendered at the camera chart origin) + controls.
-void  geo_camera_set(float fovTan, float aspect,
-                     const float right[3], const float up[3], const float fwd[3]);
-void  geo_controls_set(int32 maxBounces, float falloffK, float ambient, float bounceAttenuation);
+    // kind: 0 = OPAQUE sphere, 1 = MIRROR sphere, 2 = MIRROR plane.
+    // sphere: center + radiusOrOffset=radius.  plane: center=normal, radiusOrOffset=offset.
+    int addObject(int chartId, int kind, const vec3& center, float radiusOrOffset, int colorIdx);
+    int addMaterial(const vec4& color);
 
-// Validate (cocycle, islands, mirror/interior conditions) then flatten into the camera chart.
-// Populates the packet accessible via geo_packet_ptr/geo_packet_size. Returns 0 on success.
-int32 geo_scene_build(int32 cameraChart, int32 maxChartDepth);
+    void setCamera(float fovTan, float aspect,
+                   const vec3& right, const vec3& up, const vec3& fwd);
+    void setControls(int maxBounces, float falloffK, float ambient, float bounceAttenuation);
 
-const void* geo_packet_ptr(void);                 // immutable ScenePacket
-int32 geo_packet_size(void);                      // total bytes incl. arrays
-const char* geo_error_string(int32 code);
+    // Validate (cocycle, islands, mirror/interior conditions) then flatten into
+    // the camera chart. Returns 0 on success and fills the packet snapshot.
+    int build(int cameraChart, int maxChartDepth);
+
+    // Packet bytes. Swift reads the byte vector via packetBytes() (packet()
+    // returns a C++ reference and is hidden by Swift C++ interop).
+    std::vector<uint8_t> packetBytes() const;
+    int packetSize() const;
+};
+
+}
 ```
+
+If no material is authored before `build`, the builder emits one default white material at index 0.
 
 **Error codes:** `0` OK; `1` island chart; `2` cocycle violation; `3` invalid object (mirror/interior condition); `4` unknown camera chart; `5` capacity exceeded; `6` model/kind mismatch.
 
@@ -284,7 +291,7 @@ This is the exact algorithm the CPU reference tracer implements (`Tools/Referenc
 
 **Metal/Swift side (macOS):**
 - [ ] Swift mirrors structs; `MemoryLayout` matches the sizes above
-- [ ] uploads `geo_packet_ptr()` → `MTLBuffer` verbatim
+- [ ] uploads `packetBytes()` → `MTLBuffer` verbatim
 - [ ] shader `#include`s `Math.h` / `Intersect.h` / `Scene.h`; no local re-implementation of `geo::` math
 - [ ] reflection loop flat, bounded by `maxBounces`, uses `invertSphere` (§7.2)
 - [ ] CPU/GPU diff within tolerance (§8)

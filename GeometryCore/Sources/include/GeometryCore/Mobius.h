@@ -26,6 +26,11 @@ struct Mobius {
     //   outIsPlane = true, outCenter = unit normal, outRadius = signed offset.
     void applySphere(const vec3& center, float radius,
                      vec3& outCenter, float& outRadius, bool& outIsPlane) const;
+
+    // Image of a Euclidean plane {x : dot(n, x) = offset} under this map.
+    // The image is a sphere or, if it passes through the projection point, a plane.
+    void applyPlane(const vec3& normal, float offset,
+                    vec3& outCenter, float& outRadius, bool& outIsPlane) const;
 };
 
 } // namespace geo

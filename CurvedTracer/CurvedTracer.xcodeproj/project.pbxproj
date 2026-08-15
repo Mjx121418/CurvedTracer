@@ -1,0 +1,603 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		07CCCBF130301504000D5EBF /* GeometryCore in Frameworks */ = {isa = PBXBuildFile; productRef = 07CCCBF030301504000D5EBF /* GeometryCore */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		07CCCBD0303009D1000D5EBF /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 07CCCBBA303009CF000D5EBF /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 07CCCBC1303009CF000D5EBF;
+			remoteInfo = CurvedTracer;
+		};
+		07CCCBDA303009D1000D5EBF /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 07CCCBBA303009CF000D5EBF /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 07CCCBC1303009CF000D5EBF;
+			remoteInfo = CurvedTracer;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		07CCCBC2303009CF000D5EBF /* CurvedTracer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CurvedTracer.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		07CCCBCF303009D1000D5EBF /* CurvedTracerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CurvedTracerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		07CCCBD9303009D1000D5EBF /* CurvedTracerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CurvedTracerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		07CCCBC4303009CF000D5EBF /* CurvedTracer */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = CurvedTracer;
+			sourceTree = "<group>";
+		};
+		07CCCBD2303009D1000D5EBF /* CurvedTracerTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = CurvedTracerTests;
+			sourceTree = "<group>";
+		};
+		07CCCBDC303009D1000D5EBF /* CurvedTracerUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = CurvedTracerUITests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		07CCCBBF303009CF000D5EBF /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				07CCCBF130301504000D5EBF /* GeometryCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		07CCCBCC303009D1000D5EBF /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		07CCCBD6303009D1000D5EBF /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		07CCCBB9303009CF000D5EBF = {
+			isa = PBXGroup;
+			children = (
+				07CCCBC4303009CF000D5EBF /* CurvedTracer */,
+				07CCCBD2303009D1000D5EBF /* CurvedTracerTests */,
+				07CCCBDC303009D1000D5EBF /* CurvedTracerUITests */,
+				07CCCBC3303009CF000D5EBF /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		07CCCBC3303009CF000D5EBF /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				07CCCBC2303009CF000D5EBF /* CurvedTracer.app */,
+				07CCCBCF303009D1000D5EBF /* CurvedTracerTests.xctest */,
+				07CCCBD9303009D1000D5EBF /* CurvedTracerUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		07CCCBC1303009CF000D5EBF /* CurvedTracer */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 07CCCBE3303009D1000D5EBF /* Build configuration list for PBXNativeTarget "CurvedTracer" */;
+			buildPhases = (
+				07CCCBBE303009CF000D5EBF /* Sources */,
+				07CCCBBF303009CF000D5EBF /* Frameworks */,
+				07CCCBC0303009CF000D5EBF /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				07CCCBC4303009CF000D5EBF /* CurvedTracer */,
+			);
+			name = CurvedTracer;
+			packageProductDependencies = (
+				07CCCBF030301504000D5EBF /* GeometryCore */,
+			);
+			productName = CurvedTracer;
+			productReference = 07CCCBC2303009CF000D5EBF /* CurvedTracer.app */;
+			productType = "com.apple.product-type.application";
+		};
+		07CCCBCE303009D1000D5EBF /* CurvedTracerTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 07CCCBE6303009D1000D5EBF /* Build configuration list for PBXNativeTarget "CurvedTracerTests" */;
+			buildPhases = (
+				07CCCBCB303009D1000D5EBF /* Sources */,
+				07CCCBCC303009D1000D5EBF /* Frameworks */,
+				07CCCBCD303009D1000D5EBF /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				07CCCBD1303009D1000D5EBF /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				07CCCBD2303009D1000D5EBF /* CurvedTracerTests */,
+			);
+			name = CurvedTracerTests;
+			packageProductDependencies = (
+			);
+			productName = CurvedTracerTests;
+			productReference = 07CCCBCF303009D1000D5EBF /* CurvedTracerTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		07CCCBD8303009D1000D5EBF /* CurvedTracerUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 07CCCBE9303009D1000D5EBF /* Build configuration list for PBXNativeTarget "CurvedTracerUITests" */;
+			buildPhases = (
+				07CCCBD5303009D1000D5EBF /* Sources */,
+				07CCCBD6303009D1000D5EBF /* Frameworks */,
+				07CCCBD7303009D1000D5EBF /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				07CCCBDB303009D1000D5EBF /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				07CCCBDC303009D1000D5EBF /* CurvedTracerUITests */,
+			);
+			name = CurvedTracerUITests;
+			packageProductDependencies = (
+			);
+			productName = CurvedTracerUITests;
+			productReference = 07CCCBD9303009D1000D5EBF /* CurvedTracerUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		07CCCBBA303009CF000D5EBF /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2660;
+				LastUpgradeCheck = 2660;
+				TargetAttributes = {
+					07CCCBC1303009CF000D5EBF = {
+						CreatedOnToolsVersion = 26.6;
+					};
+					07CCCBCE303009D1000D5EBF = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = 07CCCBC1303009CF000D5EBF;
+					};
+					07CCCBD8303009D1000D5EBF = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = 07CCCBC1303009CF000D5EBF;
+					};
+				};
+			};
+			buildConfigurationList = 07CCCBBD303009CF000D5EBF /* Build configuration list for PBXProject "CurvedTracer" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 07CCCBB9303009CF000D5EBF;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				07CCCBEF30301504000D5EBF /* XCLocalSwiftPackageReference "../GeometryCore" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 07CCCBC3303009CF000D5EBF /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				07CCCBC1303009CF000D5EBF /* CurvedTracer */,
+				07CCCBCE303009D1000D5EBF /* CurvedTracerTests */,
+				07CCCBD8303009D1000D5EBF /* CurvedTracerUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		07CCCBC0303009CF000D5EBF /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		07CCCBCD303009D1000D5EBF /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		07CCCBD7303009D1000D5EBF /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		07CCCBBE303009CF000D5EBF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		07CCCBCB303009D1000D5EBF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		07CCCBD5303009D1000D5EBF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		07CCCBD1303009D1000D5EBF /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 07CCCBC1303009CF000D5EBF /* CurvedTracer */;
+			targetProxy = 07CCCBD0303009D1000D5EBF /* PBXContainerItemProxy */;
+		};
+		07CCCBDB303009D1000D5EBF /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 07CCCBC1303009CF000D5EBF /* CurvedTracer */;
+			targetProxy = 07CCCBDA303009D1000D5EBF /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		07CCCBE1303009D1000D5EBF /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 5827UM88NW;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OBJC_INTEROP_MODE = objcxx;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		07CCCBE2303009D1000D5EBF /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 5827UM88NW;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OBJC_INTEROP_MODE = objcxx;
+			};
+			name = Release;
+		};
+		07CCCBE4303009D1000D5EBF /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 5827UM88NW;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mjx121418.CurvedTracer;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		07CCCBE5303009D1000D5EBF /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 5827UM88NW;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mjx121418.CurvedTracer;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		07CCCBE7303009D1000D5EBF /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 5827UM88NW;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mjx121418.CurvedTracerTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/CurvedTracer.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/CurvedTracer";
+			};
+			name = Debug;
+		};
+		07CCCBE8303009D1000D5EBF /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 5827UM88NW;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mjx121418.CurvedTracerTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/CurvedTracer.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/CurvedTracer";
+			};
+			name = Release;
+		};
+		07CCCBEA303009D1000D5EBF /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 5827UM88NW;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mjx121418.CurvedTracerUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = CurvedTracer;
+			};
+			name = Debug;
+		};
+		07CCCBEB303009D1000D5EBF /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 5827UM88NW;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mjx121418.CurvedTracerUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = CurvedTracer;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		07CCCBBD303009CF000D5EBF /* Build configuration list for PBXProject "CurvedTracer" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				07CCCBE1303009D1000D5EBF /* Debug */,
+				07CCCBE2303009D1000D5EBF /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		07CCCBE3303009D1000D5EBF /* Build configuration list for PBXNativeTarget "CurvedTracer" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				07CCCBE4303009D1000D5EBF /* Debug */,
+				07CCCBE5303009D1000D5EBF /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		07CCCBE6303009D1000D5EBF /* Build configuration list for PBXNativeTarget "CurvedTracerTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				07CCCBE7303009D1000D5EBF /* Debug */,
+				07CCCBE8303009D1000D5EBF /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		07CCCBE9303009D1000D5EBF /* Build configuration list for PBXNativeTarget "CurvedTracerUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				07CCCBEA303009D1000D5EBF /* Debug */,
+				07CCCBEB303009D1000D5EBF /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		07CCCBEF30301504000D5EBF /* XCLocalSwiftPackageReference "../GeometryCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../GeometryCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		07CCCBF030301504000D5EBF /* GeometryCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = GeometryCore;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 07CCCBBA303009CF000D5EBF /* Project object */;
+}

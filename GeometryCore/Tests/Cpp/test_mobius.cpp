@@ -117,4 +117,38 @@ void test_mobius() {
         CHECK_NEAR(oc.z, 0.0f, 1e-3);
         CHECK_NEAR(orr, 0.0f, 1e-3);
     }
+
+    // ---- applyPlane: H3 plane through origin -> sphere or plane ----
+    {
+        vec3 oc; float orr; bool op = false;
+        // Boost along x; the plane x=0 maps to the sphere orthogonal to the
+        // boundary with center coth(rho) and radius csch(rho) on the x-axis.
+        Mobius hboost;
+        hboost.kind = ModelKind::H3;
+        hboost.m = lorentzBoostX(0.5f);
+        hboost.applyPlane(vec3(1, 0, 0), 0.0f, oc, orr, op);
+        CHECK(!op);
+        float expectedC = 1.0f / mhTanh(0.5f);    // coth
+        float expectedR = 1.0f / mhSinh(0.5f);    // csch
+        CHECK_NEAR(oc.x, expectedC, 1e-3);
+        CHECK_NEAR(oc.y, 0.0f, 1e-3);
+        CHECK_NEAR(oc.z, 0.0f, 1e-3);
+        CHECK_NEAR(orr, expectedR, 1e-3);
+
+        // Plane y=0 is invariant under the x-boost and stays a plane through 0.
+        hboost.applyPlane(vec3(0, 1, 0), 0.0f, oc, orr, op);
+        CHECK(op);
+        CHECK_NEAR(mhAbs(oc.y), 1.0f, 1e-3);
+        CHECK_NEAR(orr, 0.0f, 1e-3);
+
+        // S3 rotation by pi in (x,w) leaves model plane x=0 invariant.
+        Mobius rotPi;
+        rotPi.kind = ModelKind::S3;
+        rotPi.m = rotationX1X4(3.14159265f);
+        vec3 soc; float sorr; bool sop = false;
+        rotPi.applyPlane(vec3(1, 0, 0), 0.0f, soc, sorr, sop);
+        CHECK(sop);
+        CHECK_NEAR(mhAbs(soc.x), 1.0f, 1e-3);
+        CHECK_NEAR(sorr, 0.0f, 1e-3);
+    }
 }

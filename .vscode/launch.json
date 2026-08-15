@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:workspace}/GeometryCore",
+            "name": "Debug geometry_tests (GeometryCore)",
+            "target": "geometry_tests",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug geometry_tests (GeometryCore)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:workspace}/GeometryCore",
+            "name": "Release geometry_tests (GeometryCore)",
+            "target": "geometry_tests",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release geometry_tests (GeometryCore)"
+        }
+    ]
+}

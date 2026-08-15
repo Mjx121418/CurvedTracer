@@ -8,10 +8,16 @@ The seam between the two is `CONTRACT.md` (v2).
 
 ## How to build & test (in this container)
 
+All commands run inside the `GeometryCore` folder (the Swift package root).
+
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-ctest --test-dir build --output-on-failure
+cd GeometryCore
+
+# Swift package + Swift C++ interop smoke tests
+swift test
+
+# Full C++ test suite, built by SwiftPM as an executable target
+swift run geometry_tests
 ```
 
 ---
@@ -40,7 +46,7 @@ ctest --test-dir build --output-on-failure
 - **Intrinsic atlas, no anchor chart, no stored embedding coordinate** — charts hold only overlap edges `{neighbor, Möbius 4×4, safe}`. Consistency is the **cocycle condition** (loops compose to identity).
 - **Objects are chart-local Euclidean spheres/planes** (`OPAQUE` / `MIRROR` sphere / `MIRROR` plane). A mirror is valid only under `|center|² = radius² ± 1` (H³ `+`, S³ `−`); this is what makes reflection = sphere inversion an isometry.
 - **Renderer packet is chart-native** (128-byte header + `objects[]` + `materials[]`); camera always at the chart origin; GPU does straight rays + sphere inversion (§7 of CONTRACT).
-- **C++ reaches Swift only through a pure-C `extern "C"` API** (`CCApi.h`) — no C++ ABI crosses the boundary; the packet is an immutable byte snapshot.
+- **Swift reaches C++ through the `GeometryCore` Swift package using C++ interop** — the API surface is `geo::Atlas` and the shared `geo::` packet structs; the packet is an immutable byte snapshot (`packetBytes()`).
 
 ### Bugs found & fixed by the tests
 
@@ -53,7 +59,7 @@ ctest --test-dir build --output-on-failure
 
 ---
 
-## Phase 2 — plan (next)
+## Phase 2 — completed ✅
 
 **Objective:** make the intrinsic chart atlas work end-to-end on the C++ side, producing the renderer packet the Metal side will upload. Everything stays testable in this container.
 
@@ -80,23 +86,43 @@ MSL-safe (no `<std*>`, no allocation). Unit tests: hit/miss, tangent, plane hit,
 - `Atlas`: `seed()`, `add(from, M, safe)`, `link(a,b,M,safe)`, `addObject(...)`.
 - `build(cameraChart, maxDepth)`: validate **islands**, **cocycle** (loops → identity), **mirror/interior conditions**; then **flatten** — BFS over safe edges, compose `Mobius` along path, `applySphere` into the camera chart, emit `ScenePacket`.
 
-### 2.4 `CCApi.h` / `CCApi.cpp` — the Swift-facing C API (`CONTRACT.md` §6)
+### 2.4 Swift-facing C++ API (`CONTRACT.md` §6)
 
-`geo_scene_begin / geo_chart_seed / geo_chart_add / geo_chart_link / geo_object_add / geo_camera_set / geo_controls_set / geo_scene_build / geo_packet_ptr / geo_packet_size / geo_error_string / geo_contract_version`. Single internal `Atlas`; snapshot is valid until the next build; errors returned as codes (no exceptions across the boundary).
+`geo::Atlas` (`start` / `seed` / `add` / `link` / `addObject` / `addMaterial` / `setCamera` / `setControls` / `build` / `packetBytes` / `packetSize`). Single internal `Atlas`; snapshot is valid until the next build; errors returned as codes. The original pure-C `CCApi.h` / `CCApi.cpp` were removed when the Swift package moved to direct C++ interop.
 
 ### 2.5 Phase-2 tests (`test_atlas.cpp` + extend `test_intersect.cpp`)
 
 - Intersect: hit/miss/tangent/plane/inversion cases.
 - Atlas: seed+link, cocycle valid vs injected-invalid (must reject), island rejection, flatten **path-independence** (same chart reached via different safe paths ⇒ identical packet), **two-chart scene == direct camera-chart scene**, S³ antipode renders without NaN.
-- Packet: `static_assert`s + end-to-end build via C API and byte-layout verification.
+- Packet: `static_assert`s + end-to-end build via `geo::Atlas` and byte-layout verification.
 
-### 2.6 (optional, after 2.1–2.5) Swift binding proof
+### What was built
 
-`Package.swift` + `RenderCore` Swift target + `swift test` on Linux calling `geo_scene_*` and asserting the returned `ScenePacket` bytes match `CONTRACT.md` §5 via `MemoryLayout`. Proves the C++↔Swift seam in this container before any Mac build.
+| File | Purpose |
+|---|---|
+| `Sources/include/GeometryCore/Intersect.h` | Shared with MSL. `raySphere`, `rayPlane`, `invertSphere`, `reflectPlane`. |
+| `Sources/include/GeometryCore/Scene.h` | Shared with MSL. POD packet structs, `GEO_CONTRACT_VERSION`, size `static_assert`s. |
+| `Sources/include/GeometryCore/Chart.h` + `Sources/src/Chart.cpp` | Host-only `Atlas`, chart graph, cocycle validation, flattening, packet emission. |
+| `Mobius.h` / `Mobius.cpp` | Added `applyPlane` and robust H3 sphere sampling (inside the unit ball). |
+| `Tests/Cpp/test_intersect.cpp`, `test_atlas.cpp`, `test_mobius.cpp` | Filled Phase-2 suites. |
+
+**Test status:** `geometry_tests` — **197 checks, all passing.**
+
+### 2.6 Swift package + C++ interop proof
+
+`GeometryCore/Package.swift` exposes `GeometryCore` as a Swift Package Manager C++ target (`Sources`). The Swift test target (`Tests/SwiftGeometryCoreTests`) imports it directly with Swift C++ interop.
+
+- C++ target sources: `Sources/src/Mobius.cpp`, `Sources/src/Chart.cpp`; public headers under `Sources/include/GeometryCore`.
+- `Atlas::start` added as the Swift-visible alias for `begin` (Swift C++ interop reserves `begin` as a C++ iterator method).
+- `Atlas::packetBytes()` / `Atlas::packetSize()` expose the built packet to Swift (Swift hides `packet()` because it returns a C++ reference).
+- `swift test` verifies packet struct sizes via `MemoryLayout`, builds a scene, and reads packet bytes.
+- `swift run geometry_tests` runs the full 197-check C++ test suite through SwiftPM.
+
+**Container note:** `swift test` requires a clang that accepts `-index-store-path`; in this container `/usr/bin/clang` and `/usr/bin/clang++` are symlinked to `clang-21`.
 
 ### Acceptance criteria for Phase 2
 
-- `ctest` green, including cocycle/island/NaN guards and flatten correctness.
+- `swift run geometry_tests` green, including cocycle/island/NaN guards and flatten correctness.
 - A scene authored in two charts flattens identically to the same scene authored directly in the camera chart.
 - The produced `ScenePacket` byte layout matches `CONTRACT.md` §5 exactly (asserted, not assumed).
 

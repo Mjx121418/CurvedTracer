@@ -4,9 +4,23 @@
 #include "GeometryCore/Mobius.h"
 #include "GeometryCore/Scene.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
+
+// Swift C++ interop annotation for pointer-returning helper methods.
+#ifndef SWIFT_RETURNS_INDEPENDENT_VALUE
+#if defined(__has_attribute)
+#if __has_attribute(swift_attr)
+#define SWIFT_RETURNS_INDEPENDENT_VALUE __attribute__((swift_attr("import_unsafe")))
+#else
+#define SWIFT_RETURNS_INDEPENDENT_VALUE
+#endif
+#else
+#define SWIFT_RETURNS_INDEPENDENT_VALUE
+#endif
+#endif
 
 namespace geo {
 
@@ -60,9 +74,11 @@ public:
 
     const std::vector<uint8_t>& packet() const { return packet_; }
     // Swift-friendly packet access: Swift C++ interop hides methods returning
-    // interior pointers or references, but can import std::vector by value.
+    // interior pointers or references unless annotated, and can import
+    // std::vector by value.
     std::vector<uint8_t> packetBytes() const { return packet_; }
-    int packetSize() const { return static_cast<int>(packet_.size()); }
+    const void* packetData() const SWIFT_RETURNS_INDEPENDENT_VALUE { return packet_.data(); }
+    std::size_t packetSize() const { return packet_.size(); }
     int lastError() const { return lastError_; }
     int modelKind() const { return modelKind_; }
 

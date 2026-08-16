@@ -83,6 +83,11 @@ public:
     // the right/up/fwd orientation used by the next build().
     void cameraRotate(const vec3& axis, float deltaRadians);
 
+    // Current camera frame (orthonormal, chart-space).
+    vec3 cameraRight() const { return cameraRight_; }
+    vec3 cameraUp() const { return cameraUp_; }
+    vec3 cameraFwd() const { return cameraFwd_; }
+
     // Validate and flatten.  Returns 0, or CONTRACT.md §6 error code:
     // 1 island chart, 2 cocycle violation, 3 invalid object, 4 unknown camera chart,
     // 5 capacity exceeded, 6 model/kind mismatch.

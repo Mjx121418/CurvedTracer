@@ -8,6 +8,7 @@ import SwiftUI
 import MetalKit
 import GeometryCore
 import Darwin
+import AppKit
 
 enum AmbientSpace: String, CaseIterable, Identifiable {
     case sphere = "S^3"
@@ -43,10 +44,14 @@ struct MetalView: NSViewRepresentable {
         )
         
         view.framebufferOnly = false
+        DispatchQueue.main.async {
+            view.window?.acceptsMouseMovedEvents = true
+        }
 
         context.coordinator.configure(device: device, view: view)
         context.coordinator.ambientSpace = ambientSpace
         context.coordinator.setScenePacket()
+        context.coordinator.installEventMonitors()
 
         view.delegate = context.coordinator
 
@@ -82,7 +87,50 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var cameraChart: Int32 = 0
     private var atlas = geo.Atlas()
 
+    private var mouseMonitor: Any?
+    private var keyMonitor: Any?
+    private var cameraControlEnabled = false
+    private var pendingMouseDX: Float = 0
+    private var pendingMouseDY: Float = 0
+    private let mouseSensitivity: Float = 0.005
+
     var ambientSpace: AmbientSpace = .sphere
+
+    func installEventMonitors() {
+        mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { [weak self] event in
+            if let self, self.cameraControlEnabled {
+                self.queueMouseDelta(dx: event.deltaX, dy: event.deltaY)
+            }
+            return event
+        }
+
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.keyCode == 48 {   // Tab
+                if let self {
+                    self.setCameraControlEnabled(!self.cameraControlEnabled)
+                }
+                return nil
+            }
+            return event
+        }
+    }
+
+    private func queueMouseDelta(dx: CGFloat, dy: CGFloat) {
+        pendingMouseDX += Float(dx)
+        pendingMouseDY += Float(dy)
+    }
+
+    private func setCameraControlEnabled(_ enabled: Bool) {
+        cameraControlEnabled = enabled
+        pendingMouseDX = 0
+        pendingMouseDY = 0
+
+        if enabled {
+            NSCursor.hide()
+        } else {
+            NSCursor.unhide()
+        }
+    }
 
     func configure(device: MTLDevice, view: MTKView) {
         self.device = device
@@ -233,9 +281,23 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
 
     private func updateScene() {
-        // Per-frame modification example: orbit the camera around +y.
-        // Replace this with whatever animation/input logic you need.
-        atlas.cameraRotate(geo.vec3(0, 1, 0), 0.01)
+        guard cameraControlEnabled else {
+            return
+        }
+
+        guard pendingMouseDX != 0 || pendingMouseDY != 0 else {
+            return
+        }
+
+        // Right/left mouse swipe -> yaw around the camera's local up axis.
+        atlas.cameraRotate(atlas.cameraUp(), pendingMouseDX * mouseSensitivity)
+
+        // Forward/backward mouse swipe -> pitch around the camera's local right axis.
+        // Negative sign makes an upward swipe look upward.
+        atlas.cameraRotate(atlas.cameraRight(), pendingMouseDY * mouseSensitivity)
+
+        pendingMouseDX = 0
+        pendingMouseDY = 0
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {

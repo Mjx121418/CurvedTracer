@@ -13,6 +13,7 @@ struct ContentView: View {
         ZStack(alignment: .topTrailing) {
             MetalView(ambientSpace: $ambienSpace)
                 .ignoresSafeArea()
+                .aspectRatio(16.0 / 9.0, contentMode: .fit)
             
             Picker("Ambient Space", selection: $ambienSpace) {
                 ForEach(AmbientSpace.allCases) { space in

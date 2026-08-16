@@ -7,6 +7,7 @@
 import SwiftUI
 import MetalKit
 import GeometryCore
+import Darwin
 
 enum AmbientSpace: String, CaseIterable, Identifiable {
     case sphere = "S^3"
@@ -62,7 +63,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var device: (any MTLDevice)!
 
     private var pipeline: (any MTLComputePipelineState)!
-    private var sceneBuffer: (any MTLBuffer)!
+    private var sceneBuffers: [any MTLBuffer] = []
     
     private var commandQueue: (any MTL4CommandQueue)!
     private var commandBuffers: [any MTL4CommandBuffer] = []
@@ -77,6 +78,9 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var residencySet: (any MTLResidencySet)!
     
     private var renderTexture: (any MTLTexture)!
+
+    private var cameraChart: Int32 = 0
+    private var atlas = geo.Atlas()
 
     var ambientSpace: AmbientSpace = .sphere
 
@@ -120,7 +124,16 @@ final class Renderer: NSObject, MTKViewDelegate {
             fatalError("Failed to create residency set: \(error)")
         }
         self.commandQueue.addResidencySet(self.residencySet)
-        
+
+        let maxPacketSize = 128 + 4096 * 32 + 256 * 16
+        for _ in 0..<maxFramesInFlight {
+            guard let buffer = device.makeBuffer(length: maxPacketSize, options: .storageModeShared) else {
+                fatalError("Failed to create scene buffer")
+            }
+            sceneBuffers.append(buffer)
+            residencySet.addAllocation(buffer)
+        }
+
         let descriptor = MTL4ArgumentTableDescriptor()
         descriptor.maxBufferBindCount = 1
         descriptor.maxTextureBindCount = 1
@@ -130,11 +143,11 @@ final class Renderer: NSObject, MTKViewDelegate {
     
     func setScenePacket() {
         // Create the atlas. 0 = H³, 1 = S³.
-        var atlas = geo.Atlas()
+        atlas = geo.Atlas()
         atlas.start(0)
 
         // The anchorless base chart is always id 0.
-        let cameraChart = atlas.seed()
+        cameraChart = atlas.seed()
 
         // Add materials first; colorIdx refers to these in order.
         _ = atlas.addMaterial(geo.vec4(1.0, 0.0, 0.0, 1.0))  // material 0: red
@@ -181,30 +194,39 @@ final class Renderer: NSObject, MTKViewDelegate {
 
         // Validate and flatten into the camera chart.
         let result = atlas.build(cameraChart, 64)
-
-        if result == 0 {
-            self.sceneBuffer = device.makeBuffer(
-                bytes: atlas.packetData(),
-                length: atlas.packetSize(),
-                options: .storageModeShared
-            )
-            // Upload `buffer` to Metal as slot 0.
-        } else {
+        if result != 0 {
             fatalError("build failed with code \(result)")
         }
-        /* guard let ptr = atlas.packetData() else {
-            return
+
+        // Copy the initial packet into every frame slot.
+        for buffer in sceneBuffers {
+            copyAtlasPacket(to: buffer)
+            let b = buffer.contents().assumingMemoryBound(to: UInt8.self)
+            print("packet bytes:", b[0], b[1], b[2], b[3])
         }
-        let size = atlas.packetSize()
-        guard let buffer = device.makeBuffer(bytes: ptr, length: size, options: .storageModeShared) else {
-            fatalError("Failed to create scene buffer")
+        if let firstBuffer = sceneBuffers.first {
+            argumentTable.setAddress(firstBuffer.gpuAddress, index: 0)
         }
-        self.sceneBuffer = buffer */
-        
-        argumentTable.setAddress(sceneBuffer.gpuAddress, index: 0)
-        residencySet.addAllocation(sceneBuffer)
+
         self.residencySet.commit()
         self.residencySet.requestResidency()
+    }
+
+    private func copyAtlasPacket(to buffer: any MTLBuffer) {
+        // Use the by-value packetBytes() accessor. The raw packetData() pointer
+        // is an interior pointer into a C++ value type and is not safe to use
+        // from Swift when atlas is a stored property.
+        let packet = [UInt8](atlas.packetBytes())
+        let contents = buffer.contents()
+        _ = packet.withUnsafeBytes { rawBuffer in
+            memcpy(contents, rawBuffer.baseAddress!, rawBuffer.count)
+        }
+    }
+
+    private func updateScene() {
+        // Per-frame modification example: orbit the camera around +y.
+        // Replace this with whatever animation/input logic you need.
+        atlas.cameraRotate(geo.vec3(0, 1, 0), 0.01)
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
@@ -248,10 +270,19 @@ final class Renderer: NSObject, MTKViewDelegate {
             : 0
         _ = frameEvent.wait(untilSignaledValue: waitValue, timeoutMS: 1000)
 
-        argumentTable.setTexture(renderTexture.gpuResourceID, index: 0)
+        updateScene()
+        let result = atlas.build(cameraChart, 64)
+        guard result == 0 else {
+            return
+        }
+
+        copyAtlasPacket(to: sceneBuffers[index])
 
         commandAllocator.reset()
         commandBuffer.beginCommandBuffer(allocator: commandAllocator)
+
+        argumentTable.setAddress(sceneBuffers[index].gpuAddress, index: 0)
+        argumentTable.setTexture(renderTexture.gpuResourceID, index: 0)
 
         guard let encoder = commandBuffer.makeComputeCommandEncoder() else {
             return

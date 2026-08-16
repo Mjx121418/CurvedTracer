@@ -39,6 +39,7 @@ final class GeometryCoreTests: XCTestCase {
 
         // Camera and controls are data, not shader edits.
         atlas.setCamera(0.8, 1.6, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0), geo.vec3(0, 0, 1))
+        atlas.cameraRotate(geo.vec3(0, 1, 0), 0.0)   // smoke-test the Swift-visible camera rotation API
         atlas.setControls(5, 0.1, 0.2, 0.7)
 
         // Build the packet from camera chart 0; 0 means success.

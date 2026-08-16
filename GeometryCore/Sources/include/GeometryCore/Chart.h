@@ -67,6 +67,11 @@ public:
     void setCamera(float fovTan, float aspect, const vec3& right, const vec3& up, const vec3& fwd);
     void setControls(int maxBounces, float falloffK, float ambient, float bounceAttenuation);
 
+    // Rotate the camera frame around an arbitrary chart-space axis by
+    // deltaRadians. The camera remains at the chart origin; this only changes
+    // the right/up/fwd orientation used by the next build().
+    void cameraRotate(const vec3& axis, float deltaRadians);
+
     // Validate and flatten.  Returns 0, or CONTRACT.md §6 error code:
     // 1 island chart, 2 cocycle violation, 3 invalid object, 4 unknown camera chart,
     // 5 capacity exceeded, 6 model/kind mismatch.

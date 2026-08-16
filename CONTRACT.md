@@ -218,6 +218,10 @@ public:
                    const vec3& right, const vec3& up, const vec3& fwd);
     void setControls(int maxBounces, float falloffK, float ambient, float bounceAttenuation);
 
+    // Rotate the camera orientation around an arbitrary chart-space axis by
+    // deltaRadians. The camera stays at the chart origin.
+    void cameraRotate(const vec3& axis, float deltaRadians);
+
     // Validate (cocycle, islands, mirror/interior conditions) then flatten into
     // the camera chart. Returns 0 on success and fills the packet snapshot.
     int build(int cameraChart, int maxChartDepth);

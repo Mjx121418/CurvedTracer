@@ -191,6 +191,35 @@ void Atlas::setControls(int maxBounces, float falloffK, float ambient, float bou
     setError(0);
 }
 
+void Atlas::cameraRotate(const vec3& axis, float deltaRadians) {
+    clearPacket();
+    if (!finiteVec(axis) || !finiteFloat(deltaRadians)) {
+        setError(3);
+        return;
+    }
+    float axisLenSq = lengthSq(axis);
+    if (axisLenSq < 1e-12f) {
+        setError(3);
+        return;
+    }
+
+    vec3 n = axis * mhSqrt(1.0f / axisLenSq);
+    float c = mhCos(deltaRadians);
+    float s = mhSin(deltaRadians);
+    float oneMinusC = 1.0f - c;
+
+    auto rotateVector = [&](const vec3& v) {
+        return v * c
+             + cross(n, v) * s
+             + n * (dot(n, v) * oneMinusC);
+    };
+
+    cameraRight_ = normalize(rotateVector(cameraRight_));
+    cameraUp_ = normalize(rotateVector(cameraUp_));
+    cameraFwd_ = normalize(rotateVector(cameraFwd_));
+    setError(0);
+}
+
 int Atlas::validateObjectBasics(const ChartObject& o, int materialCount) const {
     if (!validChartId(o.chartId)) return 3;
     if (o.kind < GEO_OBJECT_OPAQUE || o.kind > GEO_OBJECT_PLANE) return 3;

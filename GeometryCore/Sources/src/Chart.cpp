@@ -348,7 +348,7 @@ bool Atlas::mobiusClose(const Mobius& a, const Mobius& b, float tol) const {
         vec3(-0.1f, 0.2f, 0.05f),
     };
     for (const auto& s : samples) {
-        vec3 p = diff.apply(s);
+        vec3 p = diff.applyChartPoint(s);
         if (!finiteVec(p)) return false;
         if (length(p - s) > tol) return false;
     }

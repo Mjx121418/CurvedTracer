@@ -156,16 +156,18 @@ void sampleH3SphereInside(const vec3& c, float r, vec3 src[4]) {
     src[3] = c + w3 * r;
 }
 
+} // namespace
+
 // Common sample-and-fit used by applySphere and applyPlane.  Four source points
 // on the primitive are pushed through the Mobius map; the image is fitted with a
 // Euclidean sphere, or a plane when one sample lands at infinity / points are
 // coplanar.
-void fitTransformedPrimitive(const Mobius& self, const vec3 src[4],
-                             vec3& oc, float& orr, bool& op) {
+void Mobius::fitTransformedPrimitive(const vec3 src[4],
+                                     vec3& oc, float& orr, bool& op) const {
     vec3 fin[4];
     int nfinite = 0;
     for (int i = 0; i < 4; ++i) {
-        vec3 p = self.apply(src[i]);
+        vec3 p = apply(src[i]);
         if (std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z)) {
             fin[nfinite++] = p;
         }
@@ -195,8 +197,6 @@ void fitTransformedPrimitive(const Mobius& self, const vec3 src[4],
     op = false;
 }
 
-} // namespace
-
 void Mobius::applySphere(const vec3& c, float r, vec3& oc, float& orr, bool& op) const {
     vec3 src[4];
     if (kind == ModelKind::H3 && length(c) + r >= 1.0f) {
@@ -210,7 +210,7 @@ void Mobius::applySphere(const vec3& c, float r, vec3& oc, float& orr, bool& op)
         src[2] = c + e2 * r;
         src[3] = c + e3 * r;
     }
-    fitTransformedPrimitive(*this, src, oc, orr, op);
+    fitTransformedPrimitive(src, oc, orr, op);
 }
 
 void Mobius::applyPlane(const vec3& normal, float offset,
@@ -229,7 +229,7 @@ void Mobius::applyPlane(const vec3& normal, float offset,
     float s = (kind == ModelKind::H3) ? 0.45f : 1.0f;
     vec3 p0 = n * offset;
     vec3 src[4] = { p0, p0 + u * s, p0 + v * s, p0 + u * (2.0f * s) };
-    fitTransformedPrimitive(*this, src, oc, orr, op);
+    fitTransformedPrimitive(src, oc, orr, op);
 }
 
 void Mobius::applySurface(const vec3& a, float b, float c,

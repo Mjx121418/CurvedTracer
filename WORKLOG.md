@@ -2,7 +2,7 @@
 
 Non-Euclidean ray tracer for 3-dimensional spherical (S³) and hyperbolic (H³) space.
 C++ owns the geometry/atlas; the Metal owner owns the GPU render loop + SwiftUI.
-The seam between the two is `CONTRACT.md` (v2).
+The seam between the two is `CONTRACT.md` (v4).
 
 ---
 
@@ -19,6 +19,22 @@ swift test
 # Full C++ test suite, built by SwiftPM as an executable target
 swift run geometry_tests
 ```
+
+---
+
+## Current status — v4 disk-chart core (in progress)
+
+- `CONTRACT.md` is v4 (disk charts on S³, variable chart radii).
+- GeometryCore C++ and Swift APIs are v4:
+  - `seed(radius)`, `add(radius, from, M, safe)`
+  - `addObject(chartId, kind, a, b, c, colorIdx)`
+  - `addLight(...)`, `addMaterial(...)`
+  - `Mobius::applyChartPoint`, `Mobius::applySurface`
+- Old public `Mobius::apply` / `applySphere` / `applyPlane` APIs removed from the header; internal Poincaré helpers remain private.
+- `tracer.metal` still needs the v4 disk-chart intersection/reflection update.
+- Current tests:
+  - `swift test` → 3 passed
+  - `swift run geometry_tests` → 149 passed
 
 ---
 
@@ -128,18 +144,23 @@ MSL-safe (no `<std*>`, no allocation). Unit tests: hit/miss, tangent, plane hit,
 
 ---
 
-## Phase 3+ (preview)
-
-### Lighting v3 — implemented
+## Phase 3 — lighting v3 (historical)
 
 - Contract bumped to `GEO_CONTRACT_VERSION = 3`.
-- Packet now has a `lights[]` array (`PointLight`: 32 bytes) after `materials[]`; `Counts.lightCount` added.
-- `Atlas::addLight(chartId, position, color, intensity)` authors point lights in any chart; `Atlas::build` flattens them into the camera chart.
-- Tracer shader shades `OPAQUE` hits with local tangent-space point lighting (no global directional lights).
+- Packet added `lights[]` (`PointLight`: 32 bytes) after `materials[]`; `Counts.lightCount` added.
+- `Atlas::addLight(chartId, position, color, intensity)` authored point lights in any chart.
 - `MAX_LIGHTS = 16`.
+
+## Phase 4 — v4 disk charts (current)
+
+- Contract bumped to `GEO_CONTRACT_VERSION = 4`.
+- Charts are open disks on S³ with variable radius.
+- Objects are hyperplane sections `a·x + b·sqrt(1-|x|²) = c`.
+- C++ GeometryCore and Swift API implemented.
+- Remaining: `tracer.metal` v4 intersection/reflection, then reference tracer and goldens.
 
 ### Not started
 
 - `Tools/ReferenceTracer`: chart-native CPU tracer (straight rays + unfold-the-world inversion) → PNG; model-space cross-check tracer must agree.
 - Golden images (H³ single-chart, H³ multi-chart, S³ antipode) + macOS CI CPU/GPU diff.
-- Off-center camera (Möbius view transform), object splitting at the S³ projection point (CONTRACT §12).
+- Off-center camera (Möbius view transform).

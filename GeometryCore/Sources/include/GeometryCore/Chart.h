@@ -73,7 +73,7 @@ public:
     int add(float radius, int fromChart, const float m[16], bool safe) { return addChart(radius, fromChart, m, safe); }
     void link(int a, int b, const float m_ab[16], bool safe) { linkCharts(a, b, m_ab, safe); }
     int addObject(int chartId, int kind, const vec3& a, float b, float c, int colorIdx);
-    int addMaterial(const vec4& color);
+    int addMaterial(const vec4& color, const vec4& specular);
     int addLight(int chartId, const vec3& position, const vec3& color, float intensity);
     void setCamera(float fovTan, float aspect, const vec3& right, const vec3& up, const vec3& fwd);
     void setControls(int maxBounces, float falloffK, float ambient, float bounceAttenuation);
@@ -103,7 +103,7 @@ private:
     std::vector<Chart> charts_;
     std::vector<ChartObject> objects_;
     std::vector<ChartLight> lights_;
-    std::vector<vec4> materials_;
+    std::vector<Material> materials_;
     vec3 cameraRight_ = vec3(1, 0, 0);
     vec3 cameraUp_ = vec3(0, 1, 0);
     vec3 cameraFwd_ = vec3(0, 0, 1);

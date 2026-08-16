@@ -6,7 +6,7 @@ using namespace metal;
 // ============================================================
 
 constant int PACKET_MAGIC            = 0x4E545243;
-constant int CONTRACT_VERSION        = 4;
+constant int CONTRACT_VERSION        = 5;
 constant int PACKET_HEADER_SIZE      = 128;
 constant int OBJECT_SIZE             = 32;
 
@@ -97,6 +97,11 @@ struct PointLight {
     packed_float3 color;
 
     float intensity;
+};
+
+struct Material {
+    float4 color;
+    float4 specular;
 };
 
 
@@ -536,6 +541,83 @@ float3 computeLighting(
             );
 
         result += lights[i].color * lights[i].intensity * diffuse;
+    }
+
+    return result;
+}
+
+
+// ============================================================
+// Point-light specular
+// ============================================================
+
+float3 computeSpecular(
+    float3 position,
+    float3 normal,
+    float kappa,
+    float4x4 transform,
+    device const PointLight* lights,
+    int lightCount
+) {
+    float4 P =
+        liftPoint(
+            position,
+            kappa
+        );
+
+    float3 viewDirection =
+        -normalize(position);
+
+    float3 result =
+        float3(0.0f);
+
+    for (
+        int i = 0;
+        i < lightCount;
+        ++i
+    ) {
+        float4 Q =
+            transform *
+            liftPoint(
+                lights[i].position,
+                kappa
+            );
+
+        float4 V =
+            Q - P * dot(P, Q);
+
+        float3 chartL =
+            unliftTangent(
+                P,
+                V
+            );
+
+        float chartL2 =
+            dot(chartL, chartL);
+
+        if (chartL2 < EPS * EPS) {
+            continue;
+        }
+
+        float3 L =
+            chartL * rsqrt(chartL2);
+
+        float3 H =
+            normalize(L + viewDirection);
+
+        float specular =
+            pow(
+                max(
+                    dot(normal, H),
+                    0.0f
+                ),
+                32.0f
+            );
+
+        result +=
+            lights[i].color
+            * lights[i].intensity
+            * specular;
     }
 
     return result;
@@ -1093,16 +1175,16 @@ kernel void raytrace(
         PACKET_HEADER_SIZE
         + uint(objectCount) * OBJECT_SIZE;
 
-    device const float4* materials =
+    device const Material* materials =
         reinterpret_cast<
-            device const float4*
+            device const Material*
         >(
             packet + materialOffset
         );
 
     uint lightOffset =
         materialOffset
-        + uint(materialCount) * 16;
+        + uint(materialCount) * 32;
 
     device const PointLight* lights =
         reinterpret_cast<
@@ -1225,7 +1307,7 @@ kernel void raytrace(
             break;
         }
 
-        float4 material =
+        Material material =
             materials[obj.colorIdx];
 
         // ----------------------------------------------------
@@ -1252,8 +1334,18 @@ kernel void raytrace(
                     * chartDistance
                 );
 
-            float3 lighting =
+            float3 diffuseLighting =
                 computeLighting(
+                    hit.position,
+                    hit.normal,
+                    kappa,
+                    transform,
+                    lights,
+                    lightCount
+                );
+
+            float3 specularLighting =
+                computeSpecular(
                     hit.position,
                     hit.normal,
                     kappa,
@@ -1264,10 +1356,16 @@ kernel void raytrace(
 
             radiance +=
                 throughput
-                * material.rgb
                 * (
-                    header->controls.ambient
-                    + falloff * lighting
+                    material.color.rgb
+                    * (
+                        header->controls.ambient
+                        + falloff * diffuseLighting
+                    )
+                    + falloff
+                    * material.specular.rgb
+                    * material.specular.a
+                    * specularLighting
                 );
 
             break;
@@ -1293,7 +1391,8 @@ kernel void raytrace(
             }
 
             throughput *=
-                material.rgb
+                material.specular.rgb
+                * material.specular.a
                 * header
                     ->controls
                     .bounceAttenuation;

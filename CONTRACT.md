@@ -1,6 +1,6 @@
 # CONTRACT.md — C++ ⇄ Metal/Swift Seam
 
-**Status:** v4 — disk-chart atlas on S³ (supersedes v3 stereographic charts).
+**Status:** v5 — disk-chart atlas on S³ with unified material specular.
 **Owner:** C++ side maintains this file and the shared artifacts it describes. The Metal/Swift side must be able to code against this document alone **without reading C++ sources**. Any change requires both sides to agree (see §9).
 
 ---
@@ -166,7 +166,7 @@ ScenePacket
 ├── RenderControls (32 B, offset  80)
 ├── Counts         (16 B, offset 112)
 ├── objects[]      (32 B each, offset 128)
-├── materials[]    (16 B each, after objects[])
+├── materials[]    (32 B each, after objects[])
 └── lights[]       (32 B each, after materials[])
 ```
 
@@ -179,7 +179,7 @@ Fixed header total: **128 bytes**.
 | Off | Name | Type | Value |
 |---|---|---|---|
 | 0 | `magic` | int32 | `0x4E545243` ("NTRC") |
-| 4 | `contractVersion` | int32 | = `GEO_CONTRACT_VERSION` (currently **4**) |
+| 4 | `contractVersion` | int32 | = `GEO_CONTRACT_VERSION` (currently **5**) |
 | 8 | `objectSize` | int32 | 32 |
 | 12 | `packetHeaderSize` | int32 | 128 |
 
@@ -232,9 +232,14 @@ The shader culls a hit when:
 | 24 | `colorIdx` | int32 | index into `materials[]` |
 | 28 | pad | int32 | zero |
 
-**materials[] (16 B each)** — unchanged.
+**Material (32 B each)** — unified diffuse + specular material.
 
-**PointLight (32 B each)** — unchanged from v3.
+| Off | Name | Type | Meaning |
+|---|---|---|---|
+| 0 | `color` | vec4 | diffuse rgba |
+| 16 | `specular` | vec4 | specular rgb + intensity in `a` |
+
+**PointLight (32 B each)** — unchanged.
 
 ### 5.2 Buffer slots
 
@@ -278,7 +283,7 @@ public:
     int addObject(int chartId, int kind,
                   const vec3& a, float b, float c, int colorIdx);
 
-    int addMaterial(const vec4& color);
+    int addMaterial(const vec4& color, const vec4& specular);
 
     // Author a point light in any chart; it is flattened into the camera chart.
     int addLight(int chartId, const vec3& position, const vec3& color, float intensity);
@@ -366,9 +371,11 @@ At an OPAQUE hit point `p`, for each point light at current chart position `q`, 
 ```text
 falloff = 1 / (1 + controls.falloffK * t)
 
-radiance = material.rgb
+radiance = material.color.rgb
          * (controls.ambient
             + falloff * Σ light.color * light.intensity * max(dot(N, L), 0))
+         + falloff * material.specular.rgb * material.specular.a
+         * Σ light.color * light.intensity * pow(max(dot(N, H), 0), 32)
 ```
 
 ---
@@ -383,7 +390,7 @@ radiance = material.rgb
 
 ## 9. Versioning & change workflow (normative)
 
-- `GEO_CONTRACT_VERSION` is currently **4**. `PacketMeta.contractVersion` must match; mismatch → upload rejected (and Swift-side assert).
+- `GEO_CONTRACT_VERSION` is currently **5**. `PacketMeta.contractVersion` must match; mismatch → upload rejected (and Swift-side assert).
 - Any change to struct layout, enum values, coordinate/unit conventions, solver behavior, or any number in this document → **discuss first, bump version, land with tests + regrown goldens in the same change**.
 - Adding a field extends the struct **at the end**; never reorder.
 - Metal side reports shader-observed issues (NaN, precision, edge cases) to the C++ owner with a repro; C++ owner fixes shared math, adds a regression test, regrows goldens, bumps version.

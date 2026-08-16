@@ -166,13 +166,17 @@ int Atlas::addObject(int chartId, int kind, const vec3& a, float b, float c, int
     return objId;
 }
 
-int Atlas::addMaterial(const vec4& color) {
+int Atlas::addMaterial(const vec4& color, const vec4& specular) {
     clearPacket();
     if (!validModelKind()) { setError(6); return -1; }
-    if (!finiteVec(vec3(color.x, color.y, color.z)) || !finiteFloat(color.w)) { setError(3); return -1; }
+    if (!finiteVec(vec3(color.x, color.y, color.z)) || !finiteFloat(color.w) ||
+        !finiteVec(vec3(specular.x, specular.y, specular.z)) || !finiteFloat(specular.w)) { setError(3); return -1; }
     if (static_cast<int>(materials_.size()) >= GEO_MAX_MATERIALS) { capacityExceeded_ = true; setError(5); return -1; }
+    Material mat;
+    mat.color = color;
+    mat.specular = specular;
     int idx = static_cast<int>(materials_.size());
-    materials_.push_back(color);
+    materials_.push_back(mat);
     setError(0);
     return idx;
 }
@@ -622,8 +626,12 @@ int Atlas::build(int cameraChart, int maxChartDepth) {
 
     for (int i = 0; i < materialCount; ++i) {
         Material mat;
-        if (i < authoredMaterialCount) mat.color = materials_[i];
-        else mat.color = vec4(1.0f, 1.0f, 1.0f, 1.0f);   // default white
+        if (i < authoredMaterialCount) {
+            mat = materials_[i];
+        } else {
+            mat.color = vec4(1.0f, 1.0f, 1.0f, 1.0f);   // default white
+            mat.specular = vec4(0.0f, 0.0f, 0.0f, 1.0f);
+        }
         std::memcpy(packet_.data() + off, &mat, sizeof(mat));
         off += sizeof(mat);
     }

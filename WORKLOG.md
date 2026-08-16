@@ -2,7 +2,7 @@
 
 Non-Euclidean ray tracer for 3-dimensional spherical (S³) and hyperbolic (H³) space.
 C++ owns the geometry/atlas; the Metal owner owns the GPU render loop + SwiftUI.
-The seam between the two is `CONTRACT.md` (v4).
+The seam between the two is `CONTRACT.md` (v5).
 
 ---
 
@@ -22,9 +22,9 @@ swift run geometry_tests
 
 ---
 
-## Current status — v4 disk-chart core (in progress)
+## Current status — v5 disk-chart core (in progress)
 
-- `CONTRACT.md` is v4 (disk charts on S³, variable chart radii).
+- `CONTRACT.md` is v5 (disk charts on S³, variable chart radii, unified diffuse+specular material).
 - GeometryCore C++ and Swift APIs are v4:
   - `seed(radius)`, `add(radius, from, M, safe)`
   - `addObject(chartId, kind, a, b, c, colorIdx)`

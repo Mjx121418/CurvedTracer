@@ -52,10 +52,10 @@ void test_atlas() {
     CHECK(sizeof(RenderControls) == 32);
     CHECK(sizeof(Counts) == 16);
     CHECK(sizeof(Object) == 32);
-    CHECK(sizeof(Material) == 16);
+    CHECK(sizeof(Material) == 32);
     CHECK(sizeof(PointLight) == 32);
     CHECK(sizeof(ScenePacketHeader) == 128);
-    CHECK(GEO_CONTRACT_VERSION == 4);
+    CHECK(GEO_CONTRACT_VERSION == 5);
 
     // ------------------------------------------------------------------
     // Single-chart H3 scene and packet layout.
@@ -64,7 +64,7 @@ void test_atlas() {
         Atlas atlas;
         atlas.start(GEO_MODEL_H3);
         CHECK(atlas.seed(1.5707963f) == 0);   // π/2
-        atlas.addMaterial(vec4(1.0f, 0.5f, 0.25f, 1.0f));
+        atlas.addMaterial(vec4(1.0f, 0.5f, 0.25f, 1.0f), vec4(0.1f, 0.1f, 0.1f, 1.0f));
         atlas.addObject(0, GEO_OBJECT_OPAQUE, vec3(0, 0, 0), 1.0f, 0.8f, 0);   // w=0.8 sphere around origin
         atlas.addLight(0, vec3(0.0f, 0.0f, -0.4f), vec3(1.0f, 1.0f, 0.9f), 0.8f);
         atlas.setCamera(0.8f, 1.6f, vec3(1, 0, 0), vec3(0, 1, 0), vec3(0, 0, 1));
@@ -72,7 +72,7 @@ void test_atlas() {
 
         int code = atlas.build(0, GEO_MAX_CHART_DEPTH);
         CHECK(code == 0);
-        CHECK(atlas.packetSize() == 128 + 1 * 32 + 1 * 16 + 1 * 32);
+        CHECK(atlas.packetSize() == 128 + 1 * 32 + 1 * 32 + 1 * 32);
 
         ScenePacketHeader h = readHeader(atlas);
         CHECK(h.meta.magic == GEO_PACKET_MAGIC);
@@ -112,7 +112,7 @@ void test_atlas() {
         CHECK(atlasA.add(1.0f, 0, I, 1) == 1);
         CHECK(atlasA.add(1.0f, 1, I, 1) == 2);
         atlasA.link(0, 2, I, 1);
-        atlasA.addMaterial(vec4(1,1,1,1));
+        atlasA.addMaterial(vec4(1,1,1,1), vec4(0,0,0,1));
         atlasA.addObject(2, GEO_OBJECT_OPAQUE, vec3(0,0,0), 1.0f, 0.9f, 0);
         CHECK(atlasA.build(0, GEO_MAX_CHART_DEPTH) == 0);
         std::vector<unsigned char> bytesA(atlasA.packet().begin(), atlasA.packet().end());
@@ -123,7 +123,7 @@ void test_atlas() {
         CHECK(atlasB.add(1.0f, 0, I, 1) == 1);
         CHECK(atlasB.add(1.0f, 1, I, 1) == 2);
         atlasB.link(0, 2, I, 0);   // unsafe direct hop
-        atlasB.addMaterial(vec4(1,1,1,1));
+        atlasB.addMaterial(vec4(1,1,1,1), vec4(0,0,0,1));
         atlasB.addObject(2, GEO_OBJECT_OPAQUE, vec3(0,0,0), 1.0f, 0.9f, 0);
         CHECK(atlasB.build(0, GEO_MAX_CHART_DEPTH) == 0);
         CHECK(atlasB.packet().size() == bytesA.size());

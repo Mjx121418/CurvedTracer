@@ -3,7 +3,7 @@
 // POD structs only; static_asserts are host-only so MSL sees pure declarations.
 #include "GeometryCore/Math.h"
 
-#define GEO_CONTRACT_VERSION 4
+#define GEO_CONTRACT_VERSION 5
 #define GEO_PACKET_MAGIC 0x4E545243  // "NTRC" as an int32 field
 
 #define GEO_MAX_OBJECTS 4096
@@ -71,9 +71,10 @@ struct Object {
     int pad0;               // 28
 };
 
-// 16 bytes
+// 32 bytes
 struct Material {
-    vec4 color;             // r,g,b,a
+    vec4 color;             // diffuse rgba
+    vec4 specular;          // specular rgb + intensity/alpha
 };
 
 // 32 bytes
@@ -99,7 +100,7 @@ static_assert(sizeof(Camera) == 64, "Camera must be 64 bytes");
 static_assert(sizeof(RenderControls) == 32, "RenderControls must be 32 bytes");
 static_assert(sizeof(Counts) == 16, "Counts must be 16 bytes");
 static_assert(sizeof(Object) == 32, "Object must be 32 bytes");
-static_assert(sizeof(Material) == 16, "Material must be 16 bytes");
+static_assert(sizeof(Material) == 32, "Material must be 32 bytes");
 static_assert(sizeof(PointLight) == 32, "PointLight must be 32 bytes");
 static_assert(sizeof(ScenePacketHeader) == 128, "ScenePacketHeader must be 128 bytes");
 #endif

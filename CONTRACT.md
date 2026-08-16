@@ -119,7 +119,8 @@ ScenePacket
 ├── RenderControls (32 B, offset  80)
 ├── Counts         (16 B, offset 112)
 ├── objects[]      (32 B each, offset 128)
-└── materials[]    (16 B each, after objects[])
+├── materials[]    (16 B each, after objects[])
+└── lights[]       (32 B each, after materials[])
 ```
 
 Fixed header total: **128 bytes**.
@@ -131,7 +132,7 @@ Fixed header total: **128 bytes**.
 | Off | Name | Type | Value |
 |---|---|---|---|
 | 0 | `magic` | int32 | `0x4E545243` ("NTRC") |
-| 4 | `contractVersion` | int32 | = `GEO_CONTRACT_VERSION` (currently **2**) |
+| 4 | `contractVersion` | int32 | = `GEO_CONTRACT_VERSION` (currently **3**) |
 | 8 | `objectSize` | int32 | 32 |
 | 12 | `packetHeaderSize` | int32 | 128 |
 
@@ -163,7 +164,8 @@ Fixed header total: **128 bytes**.
 |---|---|---|---|
 | 0 | `objectCount` | int32 | length of `objects[]` |
 | 4 | `materialCount` | int32 | length of `materials[]` |
-| 8,12 | pad | int32, int32 | zero |
+| 8 | `lightCount` | int32 | length of `lights[]` |
+| 12 | pad | int32 | zero |
 
 **Object (32 B)** — one chart-local primitive.
 
@@ -177,6 +179,15 @@ Fixed header total: **128 bytes**.
 
 **materials[] (16 B each)** — `vec4(r, g, b, a)` color table indexed by `colorIdx`.
 
+**PointLight (32 B each)** — one point light in the camera chart.
+
+| Off | Name | Type | Meaning |
+|---|---|---|---|
+| 0 | `position` | vec3 + pad | chart-space light position |
+| 12 | pad | float | zero |
+| 16 | `color` | vec3 | linear light color |
+| 28 | `intensity` | float | multiplier, typically `0..1` |
+
 ### 5.2 Buffer slots (Swift/Metal side)
 
 | Slot | Buffer |
@@ -184,9 +195,9 @@ Fixed header total: **128 bytes**.
 | 0 | ScenePacket (header + arrays as one upload) |
 | 1 | optional: golden reference texture, if CPU/GPU diff runs in-app |
 
-### 5.3 Capacity limits (v2)
+### 5.3 Capacity limits (v3)
 
-`MAX_OBJECTS = 4096`, `MAX_MATERIALS = 256`, `MAX_CHART_DEPTH = 64` (flattening BFS bound). Exceeding them is rejected by `geo::Atlas::build`.
+`MAX_OBJECTS = 4096`, `MAX_MATERIALS = 256`, `MAX_LIGHTS = 16`, `MAX_CHART_DEPTH = 64` (flattening BFS bound). Exceeding them is rejected by `geo::Atlas::build`.
 
 ---
 
@@ -214,6 +225,9 @@ public:
     int addObject(int chartId, int kind, const vec3& center, float radiusOrOffset, int colorIdx);
     int addMaterial(const vec4& color);
 
+    // Author a point light in any chart; it is flattened into the camera chart.
+    int addLight(int chartId, const vec3& position, const vec3& color, float intensity);
+
     void setCamera(float fovTan, float aspect,
                    const vec3& right, const vec3& up, const vec3& fwd);
     void setControls(int maxBounces, float falloffK, float ambient, float bounceAttenuation);
@@ -235,7 +249,7 @@ public:
 }
 ```
 
-If no material is authored before `build`, the builder emits one default white material at index 0.
+If no material is authored before `build`, the builder emits one default white material at index 0. If no light is authored, `lightCount` is 0 and opaque surfaces are lit only by `controls.ambient`.
 
 **Error codes:** `0` OK; `1` island chart; `2` cocycle violation; `3` invalid object (mirror/interior condition); `4` unknown camera chart; `5` capacity exceeded; `6` model/kind mismatch.
 
@@ -260,9 +274,40 @@ On a MIRROR hit, instead of bending the ray into a circular arc, the shader appl
 Per pixel:
 
 1. nearest intersection of `p(t)=t·d` with the current sphere/plane list (Euclidean quadratics);
-2. OPAQUE hit → shade with Euclidean normals (conformal ⇒ correct angles), distance falloff from `controls`; return;
+2. OPAQUE hit → shade with Euclidean normals and the point lights in the current ray chart using the lighting convention in §7.3; return;
 3. MIRROR hit → invert the whole object list across that mirror; continue;
 4. no hit → background gradient.
+
+### 7.3 Lighting convention (v3, normative)
+
+Lights are **point lights in chart coordinates**. There is no global inner product in H³/S³, so a light direction must be computed in the tangent space of each hit point.
+
+At an OPAQUE hit point `p` in the current ray chart, for each point light at current chart position `q`:
+
+1. Lift `p` and `q` to the ambient model point `P` and `Q`.
+2. Compute the unit ambient tangent vector `V` at `P` pointing toward `Q`:
+   - S³ (`κ = +1`): `V = Q - P * dot(P, Q)`
+   - H³ (`κ = -1`): `V = Q + P * mdot(P, Q)`
+3. Map `V` back to the chart tangent `L` at `p`.
+4. Compute the Lambert term:
+
+```text
+diffuse = max(dot(N, L), 0)
+```
+
+where `N` is the hit-point normal in the current chart. Because the stereographic chart is conformal, this chart-space dot product gives the correct local angle in the ambient metric.
+
+**Shading equation:**
+
+```text
+falloff = 1 / (1 + controls.falloffK * chartDistance)
+
+radiance = material.rgb
+         * (controls.ambient
+            + falloff * Σ light.color * light.intensity * max(dot(N, L), 0))
+```
+
+where `chartDistance` is the camera-chart distance from the origin to the hit point (§7.2). Lights are authored in any chart, flattened by C++ into the camera chart, and then transformed by the shader into the current ray chart after each mirror bounce. A point light must lie inside the Poincaré ball for H³; S³ has no interior bound. v3 uses **no light-distance attenuation**; chart distance is not intrinsic geodesic distance.
 
 This is the exact algorithm the CPU reference tracer implements (`Tools/ReferenceTracer`), so the Metal owner transcribes rather than derives, and the CPU/GPU diff (macOS CI) validates the port.
 
@@ -278,7 +323,7 @@ This is the exact algorithm the CPU reference tracer implements (`Tools/Referenc
 
 ## 9. Versioning & change workflow (normative)
 
-- `GEO_CONTRACT_VERSION` is currently **2**. `PacketMeta.contractVersion` must match; mismatch → upload rejected (and Swift-side assert).
+- `GEO_CONTRACT_VERSION` is currently **3**. `PacketMeta.contractVersion` must match; mismatch → upload rejected (and Swift-side assert).
 - Any change to struct layout, enum values, coordinate/unit conventions, solver behavior, or any number in this document → **discuss first, bump version, land with tests + regrown goldens in the same change**.
 - Adding a field extends the struct **at the end**; never reorder.
 - Metal side reports shader-observed issues (NaN, precision, edge cases) to the C++ owner with a repro; C++ owner fixes shared math, adds a regression test, regrows goldens, bumps version.

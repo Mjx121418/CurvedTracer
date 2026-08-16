@@ -106,7 +106,7 @@ MSL-safe (no `<std*>`, no allocation). Unit tests: hit/miss, tangent, plane hit,
 | `Mobius.h` / `Mobius.cpp` | Added `applyPlane` and robust H3 sphere sampling (inside the unit ball). |
 | `Tests/Cpp/test_intersect.cpp`, `test_atlas.cpp`, `test_mobius.cpp` | Filled Phase-2 suites. |
 
-**Test status:** `geometry_tests` — **197 checks, all passing.**
+**Test status:** `geometry_tests` — **217 checks, all passing.**
 
 ### 2.6 Swift package + C++ interop proof
 
@@ -116,7 +116,7 @@ MSL-safe (no `<std*>`, no allocation). Unit tests: hit/miss, tangent, plane hit,
 - `Atlas::start` added as the Swift-visible alias for `begin` (Swift C++ interop reserves `begin` as a C++ iterator method).
 - `Atlas::packetBytes()` / `Atlas::packetSize()` expose the built packet to Swift (Swift hides `packet()` because it returns a C++ reference).
 - `swift test` verifies packet struct sizes via `MemoryLayout`, builds a scene, and reads packet bytes.
-- `swift run geometry_tests` runs the full 197-check C++ test suite through SwiftPM.
+- `swift run geometry_tests` runs the full 217-check C++ test suite through SwiftPM.
 
 **Container note:** `swift test` requires a clang that accepts `-index-store-path`; in this container `/usr/bin/clang` and `/usr/bin/clang++` are symlinked to `clang-21`.
 
@@ -128,7 +128,17 @@ MSL-safe (no `<std*>`, no allocation). Unit tests: hit/miss, tangent, plane hit,
 
 ---
 
-## Phase 3+ (preview, not started)
+## Phase 3+ (preview)
+
+### Lighting v3 — implemented
+
+- Contract bumped to `GEO_CONTRACT_VERSION = 3`.
+- Packet now has a `lights[]` array (`PointLight`: 32 bytes) after `materials[]`; `Counts.lightCount` added.
+- `Atlas::addLight(chartId, position, color, intensity)` authors point lights in any chart; `Atlas::build` flattens them into the camera chart.
+- Tracer shader shades `OPAQUE` hits with local tangent-space point lighting (no global directional lights).
+- `MAX_LIGHTS = 16`.
+
+### Not started
 
 - `Tools/ReferenceTracer`: chart-native CPU tracer (straight rays + unfold-the-world inversion) → PNG; model-space cross-check tracer must agree.
 - Golden images (H³ single-chart, H³ multi-chart, S³ antipode) + macOS CI CPU/GPU diff.

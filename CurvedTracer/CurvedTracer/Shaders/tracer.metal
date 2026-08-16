@@ -6,7 +6,7 @@ using namespace metal;
 // ============================================================
 
 constant int PACKET_MAGIC            = 0x4E545243;
-constant int CONTRACT_VERSION        = 2;
+constant int CONTRACT_VERSION        = 3;
 constant int PACKET_HEADER_SIZE      = 128;
 constant int OBJECT_SIZE             = 32;
 
@@ -18,6 +18,7 @@ constant int OBJECT_MIRROR_SPHERE    = 1;
 constant int OBJECT_MIRROR_PLANE     = 2;
 
 constant int MAX_BOUNCES             = 64;
+constant int MAX_LIGHTS               = 16;
 
 constant float EPS                   = 1e-5f;
 constant float SELF_HIT_EPS          = 1e-4f;
@@ -64,8 +65,8 @@ struct RenderControls {
 struct Counts {
     int objectCount;
     int materialCount;
+    int lightCount;
     int pad0;
-    int pad1;
 };
 
 struct PacketHeader {
@@ -86,6 +87,17 @@ struct SceneObject {
 
     int pad0;
     int pad1;
+};
+
+struct PointLight {
+    // Must be packed: packet stores exactly 12 bytes here.
+    packed_float3 position;
+
+    float pad0;
+
+    packed_float3 color;
+
+    float intensity;
 };
 
 
@@ -250,6 +262,31 @@ float4 liftTangent(
         -4.0f * kappa * xv / (D * D);
 
     return float4(spatial, w);
+}
+
+
+// Inverse of liftPoint. Works for both S3 and H3:
+//
+//      X = (2x, 1 - k|x|^2) / (1 + k|x|^2)
+//  =>  x = X.xyz / (1 + X.w)
+float3 unliftPoint(float4 X, float kappa)
+{
+    return X.xyz / (1.0f + X.w);
+}
+
+
+// Inverse differential of liftPoint at X.
+float3 unliftTangent(float4 X, float4 V)
+{
+    float denom = 1.0f + X.w;
+    return (V.xyz - X.xyz * (V.w / denom)) / denom;
+}
+
+
+// Minkowski inner product for H3.
+float mdot(float4 a, float4 b)
+{
+    return a.x * b.x + a.y * b.y + a.z * b.z - a.w * b.w;
 }
 
 
@@ -509,6 +546,84 @@ float forwardOrder(
         s += TWO_PI;
 
     return s;
+}
+
+
+// ============================================================
+// Point-light shading
+// ============================================================
+
+float3 computeLighting(
+    float3 position,
+    float3 normal,
+    float kappa,
+    float4x4 transform,
+    device const PointLight* lights,
+    int lightCount
+) {
+    float4 P =
+        liftPoint(
+            position,
+            kappa
+        );
+
+    float3 result =
+        float3(0.0f);
+
+    for (
+        int i = 0;
+        i < lightCount;
+        ++i
+    ) {
+        // Light position is authored in the camera chart; transform it
+        // into the current ray chart like the objects.
+        float4 Q =
+            transform *
+            liftPoint(
+                lights[i].position,
+                kappa
+            );
+
+        // Unit ambient tangent at P pointing toward Q.
+        float4 V;
+        if (kappa > 0.0f) {
+            V = Q - P * dot(P, Q);
+        } else {
+            V = Q + P * mdot(P, Q);
+        }
+
+        float3 chartL =
+            unliftTangent(
+                P,
+                V
+            );
+
+        float chartL2 =
+            dot(
+                chartL,
+                chartL
+            );
+
+        if (chartL2 < EPS * EPS) {
+            continue;
+        }
+
+        float3 L =
+            chartL * rsqrt(chartL2);
+
+        float diffuse =
+            max(
+                dot(
+                    normal,
+                    L
+                ),
+                0.0f
+            );
+
+        result += lights[i].color * lights[i].intensity * diffuse;
+    }
+
+    return result;
 }
 
 
@@ -951,11 +1066,16 @@ kernel void raytrace(
     int materialCount =
         header->counts.materialCount;
 
+    int lightCount =
+        header->counts.lightCount;
+
     if (
         objectCount < 0 ||
         objectCount > 4096 ||
         materialCount < 0 ||
-        materialCount > 256
+        materialCount > 256 ||
+        lightCount < 0 ||
+        lightCount > MAX_LIGHTS
     ) {
         output.write(
             float4(1, 0, 1, 1),
@@ -985,6 +1105,17 @@ kernel void raytrace(
             device const float4*
         >(
             packet + materialOffset
+        );
+
+    uint lightOffset =
+        materialOffset
+        + uint(materialCount) * 16;
+
+    device const PointLight* lights =
+        reinterpret_cast<
+            device const PointLight*
+        >(
+            packet + lightOffset
         );
 
     // --------------------------------------------------------
@@ -1128,19 +1259,23 @@ kernel void raytrace(
                     * chartDistance
                 );
 
-            float brightness =
-                header->controls.ambient
-                +
-                (
-                    1.0f
-                    - header->controls.ambient
-                )
-                * falloff;
+            float3 lighting =
+                computeLighting(
+                    hit.position,
+                    hit.normal,
+                    kappa,
+                    transform,
+                    lights,
+                    lightCount
+                );
 
             radiance +=
                 throughput
                 * material.rgb
-                * brightness;
+                * (
+                    header->controls.ambient
+                    + falloff * lighting
+                );
 
             break;
         }

@@ -49,21 +49,29 @@ Object readObject(const Atlas& atlas, int idx) {
     return o;
 }
 
+PointLight readPointLight(const Atlas& atlas, int objectCount, int materialCount, int idx) {
+    PointLight light;
+    size_t off = sizeof(ScenePacketHeader) + objectCount * sizeof(Object) + materialCount * sizeof(Material);
+    std::memcpy(&light, atlas.packet().data() + off + idx * sizeof(PointLight), sizeof(light));
+    return light;
+}
+
 } // namespace
 
 void test_atlas() {
     // ------------------------------------------------------------------
     // Scene packet sizes, printed for the Swift MemoryLayout check.
     // ------------------------------------------------------------------
-    std::printf("Scene sizes: PacketMeta=%zu Camera=%zu RenderControls=%zu Counts=%zu Object=%zu Material=%zu Header=%zu\n",
+    std::printf("Scene sizes: PacketMeta=%zu Camera=%zu RenderControls=%zu Counts=%zu Object=%zu Material=%zu PointLight=%zu Header=%zu\n",
                 sizeof(PacketMeta), sizeof(Camera), sizeof(RenderControls), sizeof(Counts),
-                sizeof(Object), sizeof(Material), sizeof(ScenePacketHeader));
+                sizeof(Object), sizeof(Material), sizeof(PointLight), sizeof(ScenePacketHeader));
     CHECK(sizeof(PacketMeta) == 16);
     CHECK(sizeof(Camera) == 64);
     CHECK(sizeof(RenderControls) == 32);
     CHECK(sizeof(Counts) == 16);
     CHECK(sizeof(Object) == 32);
     CHECK(sizeof(Material) == 16);
+    CHECK(sizeof(PointLight) == 32);
     CHECK(sizeof(ScenePacketHeader) == 128);
 
     // ------------------------------------------------------------------
@@ -79,12 +87,13 @@ void test_atlas() {
         CHECK(atlas.add(0, I, 1) == 1);
         atlas.addMaterial(vec4(1.0f, 0.5f, 0.25f, 1.0f));
         atlas.addObject(0, GEO_OBJECT_OPAQUE, vec3(0.2f, 0.0f, 0.0f), 0.3f, 0);
+        atlas.addLight(0, vec3(0.0f, 0.0f, -0.4f), vec3(1.0f, 1.0f, 0.9f), 0.8f);
         atlas.setCamera(0.8f, 1.6f, vec3(1, 0, 0), vec3(0, 1, 0), vec3(0, 0, 1));
         atlas.setControls(5, 0.1f, 0.2f, 0.7f);
 
         int code = atlas.build(0, GEO_MAX_CHART_DEPTH);
         CHECK(code == 0);
-        CHECK(atlas.packetSize() == 128 + 1 * 32 + 1 * 16);
+        CHECK(atlas.packetSize() == 128 + 1 * 32 + 1 * 16 + 1 * 32);
 
         ScenePacketHeader h = readHeader(atlas);
         CHECK(h.meta.magic == GEO_PACKET_MAGIC);
@@ -100,6 +109,7 @@ void test_atlas() {
         CHECK(h.controls.bounceAttenuation == 0.7f);
         CHECK(h.counts.objectCount == 1);
         CHECK(h.counts.materialCount == 1);
+        CHECK(h.counts.lightCount == 1);
 
         Object o = readObject(atlas, 0);
         CHECK(o.kind == GEO_OBJECT_OPAQUE);
@@ -108,6 +118,15 @@ void test_atlas() {
         CHECK_NEAR(o.center.y, 0.0f, 1e-6);
         CHECK_NEAR(o.center.z, 0.0f, 1e-6);
         CHECK_NEAR(o.radiusOrOffset, 0.3f, 1e-6);
+
+        PointLight light = readPointLight(atlas, h.counts.objectCount, h.counts.materialCount, 0);
+        CHECK_NEAR(light.position.x, 0.0f, 1e-6);
+        CHECK_NEAR(light.position.y, 0.0f, 1e-6);
+        CHECK_NEAR(light.position.z, -0.4f, 1e-6);
+        CHECK_NEAR(light.color.x, 1.0f, 1e-6);
+        CHECK_NEAR(light.color.y, 1.0f, 1e-6);
+        CHECK_NEAR(light.color.z, 0.9f, 1e-6);
+        CHECK_NEAR(light.intensity, 0.8f, 1e-6);
     }
 
     // ------------------------------------------------------------------
@@ -144,6 +163,38 @@ void test_atlas() {
         CHECK(directAtlas.packetSize() == twoAtlas.packetSize());
 
         // Byte compare the full packet (object order is canonical).
+        CHECK(twoAtlas.packet().size() == directAtlas.packet().size());
+        CHECK(std::memcmp(twoAtlas.packet().data(), directAtlas.packet().data(), twoAtlas.packet().size()) == 0);
+    }
+
+    // ------------------------------------------------------------------
+    // Two-chart light flattens identically to direct camera-chart light.
+    // ------------------------------------------------------------------
+    {
+        const float rho = 0.5f;
+        mat4 boostMat = lorentzBoostX(rho);
+        Mobius boost = mobiusH3(boostMat);
+        Mobius binv = boost.inverse();
+        vec3 homeLight(0.1f, -0.2f, 0.05f);
+        vec3 directLight = binv.apply(homeLight);
+
+        Atlas twoAtlas;
+        twoAtlas.start(GEO_MODEL_H3);
+        CHECK(twoAtlas.seed() == 0);
+        CHECK(twoAtlas.add(0, boostMat.m, 1) == 1);
+        twoAtlas.addMaterial(vec4(1.0f, 1.0f, 1.0f, 1.0f));
+        twoAtlas.addObject(0, GEO_OBJECT_OPAQUE, vec3(0.0f, 0.0f, 0.1f), 0.05f, 0);
+        twoAtlas.addLight(1, homeLight, vec3(1.0f, 0.9f, 0.8f), 0.7f);
+        CHECK(twoAtlas.build(0, GEO_MAX_CHART_DEPTH) == 0);
+
+        Atlas directAtlas;
+        directAtlas.start(GEO_MODEL_H3);
+        CHECK(directAtlas.seed() == 0);
+        directAtlas.addMaterial(vec4(1.0f, 1.0f, 1.0f, 1.0f));
+        directAtlas.addObject(0, GEO_OBJECT_OPAQUE, vec3(0.0f, 0.0f, 0.1f), 0.05f, 0);
+        directAtlas.addLight(0, directLight, vec3(1.0f, 0.9f, 0.8f), 0.7f);
+        CHECK(directAtlas.build(0, GEO_MAX_CHART_DEPTH) == 0);
+
         CHECK(twoAtlas.packet().size() == directAtlas.packet().size());
         CHECK(std::memcmp(twoAtlas.packet().data(), directAtlas.packet().data(), twoAtlas.packet().size()) == 0);
     }
@@ -230,6 +281,19 @@ void test_atlas() {
         CHECK(atlas4.seed() == 0);
         atlas4.addObject(0, GEO_OBJECT_OPAQUE, vec3(0.0f, 0.0f, 0.0f), -0.5f, 0);   // negative radius
         CHECK(atlas4.build(0, GEO_MAX_CHART_DEPTH) == 3);
+
+        // Invalid lights are rejected by build.
+        Atlas atlas5;
+        atlas5.start(GEO_MODEL_H3);
+        CHECK(atlas5.seed() == 0);
+        atlas5.addLight(0, vec3(0.0f, 0.0f, 0.0f), vec3(1.0f, 1.0f, 1.0f), -0.1f);  // negative intensity
+        CHECK(atlas5.build(0, GEO_MAX_CHART_DEPTH) == 3);
+
+        Atlas atlas6;
+        atlas6.start(GEO_MODEL_H3);
+        CHECK(atlas6.seed() == 0);
+        atlas6.addLight(0, vec3(0.0f, 0.0f, 1.0f), vec3(1.0f, 1.0f, 1.0f), 1.0f);   // H3 light on/outside ball
+        CHECK(atlas6.build(0, GEO_MAX_CHART_DEPTH) == 3);
     }
 
     // ------------------------------------------------------------------

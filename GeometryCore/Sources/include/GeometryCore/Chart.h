@@ -35,6 +35,13 @@ struct ChartObject {
     int colorIdx = 0;
 };
 
+struct ChartLight {
+    int chartId = -1;
+    vec3 position;                     // chart-space point light position
+    vec3 color;                        // linear light color
+    float intensity = 1.0f;
+};
+
 struct ChartEdge {
     int neighborId = -1;
     Mobius toNeighbor;                 // maps a point from this chart to neighbor chart
@@ -45,6 +52,7 @@ struct Chart {
     int id = -1;
     std::vector<ChartEdge> edges;
     std::vector<int> objectIds;
+    std::vector<int> lightIds;
 };
 
 class Atlas {
@@ -64,6 +72,7 @@ public:
     void link(int a, int b, const float m_ab[16], bool safe) { linkCharts(a, b, m_ab, safe); }
     int addObject(int chartId, int kind, const vec3& center, float radiusOrOffset, int colorIdx);
     int addMaterial(const vec4& color);
+    int addLight(int chartId, const vec3& position, const vec3& color, float intensity);
     void setCamera(float fovTan, float aspect, const vec3& right, const vec3& up, const vec3& fwd);
     void setControls(int maxBounces, float falloffK, float ambient, float bounceAttenuation);
 
@@ -91,6 +100,7 @@ private:
     int modelKind_ = GEO_MODEL_H3;
     std::vector<Chart> charts_;
     std::vector<ChartObject> objects_;
+    std::vector<ChartLight> lights_;
     std::vector<vec4> materials_;
     vec3 cameraRight_ = vec3(1, 0, 0);
     vec3 cameraUp_ = vec3(0, 1, 0);
@@ -117,6 +127,7 @@ private:
     void upsertEdge(int a, int b, const Mobius& m_ab, bool safe);
     int validateObjectBasics(const ChartObject& o, int materialCount) const;
     int validateObjectModel(const ChartObject& o) const;
+    int validateLight(const ChartLight& light) const;
 
     struct UEdge {
         int a;

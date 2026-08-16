@@ -14,6 +14,7 @@ final class GeometryCoreTests: XCTestCase {
         XCTAssertEqual(MemoryLayout<geo.Counts>.size, 16)
         XCTAssertEqual(MemoryLayout<geo.Object>.size, 32)
         XCTAssertEqual(MemoryLayout<geo.Material>.size, 16)
+        XCTAssertEqual(MemoryLayout<geo.PointLight>.size, 32)
         XCTAssertEqual(MemoryLayout<geo.ScenePacketHeader>.size, 128)
     }
 
@@ -32,10 +33,11 @@ final class GeometryCoreTests: XCTestCase {
         ]
         XCTAssertEqual(atlas.add(0, identity, true), 1)
 
-        // Author an H3 OPAQUE sphere in chart 0 and a material.
+        // Author an H3 OPAQUE sphere, a material, and a point light.
         let center = geo.vec3(0.2, 0.0, 0.0)
         XCTAssertEqual(atlas.addObject(0, 0, center, 0.3, 0), 0)
         XCTAssertEqual(atlas.addMaterial(geo.vec4(1.0, 0.5, 0.25, 1.0)), 0)
+        XCTAssertEqual(atlas.addLight(0, geo.vec3(0.0, 0.0, -0.4), geo.vec3(1.0, 1.0, 0.9), 0.8), 0)
 
         // Camera and controls are data, not shader edits.
         atlas.setCamera(0.8, 1.6, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0), geo.vec3(0, 0, 1))
@@ -47,7 +49,7 @@ final class GeometryCoreTests: XCTestCase {
 
         // Swift-visible packet byte vector (std::vector<UInt8> by value).
         let packet = atlas.packetBytes()
-        XCTAssertEqual(packet.size(), 128 + 32 + 16)
+        XCTAssertEqual(packet.size(), 128 + 32 + 16 + 32)
         XCTAssertEqual(atlas.packetSize(), packet.size())
 
         // Swift-visible direct byte pointer for MTLBuffer upload.
@@ -55,7 +57,7 @@ final class GeometryCoreTests: XCTestCase {
 
         // Packet magic and contract version are the first two int32 fields.
         let bytes = [UInt8](packet)
-        XCTAssertEqual(bytes.count, 128 + 32 + 16)
+        XCTAssertEqual(bytes.count, 128 + 32 + 16 + 32)
         XCTAssertEqual(bytes[0], 0x43)
         XCTAssertEqual(bytes[1], 0x52)
         XCTAssertEqual(bytes[2], 0x54)

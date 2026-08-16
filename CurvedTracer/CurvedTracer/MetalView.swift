@@ -125,7 +125,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
         self.commandQueue.addResidencySet(self.residencySet)
 
-        let maxPacketSize = 128 + 4096 * 32 + 256 * 16
+        let maxPacketSize = 128 + 4096 * 32 + 256 * 16 + 16 * 32
         for _ in 0..<maxFramesInFlight {
             guard let buffer = device.makeBuffer(length: maxPacketSize, options: .storageModeShared) else {
                 fatalError("Failed to create scene buffer")
@@ -176,6 +176,11 @@ final class Renderer: NSObject, MTKViewDelegate {
         _ = atlas.addObject(0, 0, geo.vec3(-0.12,-0.08,-0.35), 0.16, 5) // magenta
         _ = atlas.addObject(0, 0, geo.vec3( 0.00, 0.00,-0.45), 0.18, 7) // orange
 
+        // Point lights in the camera chart. H3 light positions must be inside
+        // the Poincare ball.
+        _ = atlas.addLight(0, geo.vec3( 0.30, 0.20, 0.10), geo.vec3(1.00, 0.95, 0.80), 1.0)  // warm key
+        _ = atlas.addLight(0, geo.vec3(-0.40,-0.20, 0.15), geo.vec3(0.60, 0.70, 1.00), 0.5)  // cool fill
+
         // Camera is always at the chart origin; specify an orthonormal frame.
         atlas.setCamera(
             1.0,
@@ -186,7 +191,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         )
 
         atlas.setControls(
-            5,
+            3,
             0.05,
             0.15,
             0.95
@@ -201,8 +206,6 @@ final class Renderer: NSObject, MTKViewDelegate {
         // Copy the initial packet into every frame slot.
         for buffer in sceneBuffers {
             copyAtlasPacket(to: buffer)
-            let b = buffer.contents().assumingMemoryBound(to: UInt8.self)
-            print("packet bytes:", b[0], b[1], b[2], b[3])
         }
         if let firstBuffer = sceneBuffers.first {
             argumentTable.setAddress(firstBuffer.gpuAddress, index: 0)

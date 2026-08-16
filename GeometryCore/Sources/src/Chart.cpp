@@ -25,6 +25,7 @@ void Atlas::resetToDefaults() {
     modelKind_ = GEO_MODEL_H3;
     charts_.clear();
     objects_.clear();
+    lights_.clear();
     materials_.clear();
     cameraRight_ = vec3(1, 0, 0);
     cameraUp_ = vec3(0, 1, 0);
@@ -163,6 +164,27 @@ int Atlas::addMaterial(const vec4& color) {
     return idx;
 }
 
+int Atlas::addLight(int chartId, const vec3& position, const vec3& color, float intensity) {
+    clearPacket();
+    if (!validModelKind()) { setError(6); return -1; }
+    if (static_cast<int>(lights_.size()) >= GEO_MAX_LIGHTS) { capacityExceeded_ = true; setError(5); return -1; }
+
+    // Store lights even if they are invalid; Atlas::build is the single
+    // validation point and must return the CONTRACT error code.
+    ChartLight light;
+    light.chartId = chartId;
+    light.position = position;
+    light.color = color;
+    light.intensity = intensity;
+    int lightId = static_cast<int>(lights_.size());
+    lights_.push_back(light);
+    if (validChartId(chartId)) {
+        charts_[chartId].lightIds.push_back(lightId);
+    }
+    setError(0);
+    return lightId;
+}
+
 void Atlas::setCamera(float fovTan, float aspect, const vec3& right, const vec3& up, const vec3& fwd) {
     clearPacket();
     if (!finiteFloat(fovTan) || !finiteFloat(aspect) ||
@@ -263,6 +285,17 @@ int Atlas::validateObjectModel(const ChartObject& o) const {
     return 0;
 }
 
+int Atlas::validateLight(const ChartLight& light) const {
+    if (!validChartId(light.chartId)) return 3;
+    if (!finiteVec(light.position) || !finiteVec(light.color) || !finiteFloat(light.intensity)) return 3;
+    if (light.intensity < 0.0f) return 3;
+    if (modelKind_ == GEO_MODEL_H3) {
+        // H3 chart is the Poincare ball; a finite point light must be inside it.
+        if (length(light.position) >= 1.0f - 1e-4f) return 3;
+    }
+    return 0;
+}
+
 std::vector<Atlas::UEdge> Atlas::buildUndirectedEdges() const {
     std::vector<UEdge> uedges;
     int n = static_cast<int>(charts_.size());
@@ -337,11 +370,20 @@ int Atlas::build(int cameraChart, int maxChartDepth) {
     if (authoredMaterialCount > GEO_MAX_MATERIALS) { setError(5); return 5; }
     const int materialCount = authoredMaterialCount > 0 ? authoredMaterialCount : 1;   // default white
 
+    const int lightCount = static_cast<int>(lights_.size());
+    if (lightCount > GEO_MAX_LIGHTS) { setError(5); return 5; }
+
     // ---- object validation (authoring chart coordinates) ----
     for (const auto& o : objects_) {
         int code = validateObjectBasics(o, materialCount);
         if (code != 0) { setError(code); return code; }
         code = validateObjectModel(o);
+        if (code != 0) { setError(code); return code; }
+    }
+
+    // ---- light validation (authoring chart coordinates) ----
+    for (const auto& light : lights_) {
+        int code = validateLight(light);
         if (code != 0) { setError(code); return code; }
     }
 
@@ -516,6 +558,45 @@ int Atlas::build(int cameraChart, int maxChartDepth) {
         }
     }
 
+    // ---- transform lights into the camera chart ----
+    struct FlatLight {
+        vec3 position;
+        vec3 color;
+        float intensity;
+    };
+    std::vector<FlatLight> flatLights;
+    flatLights.reserve(lightCount);
+
+    for (int x = 0; x < n; ++x) {
+        if (charts_[x].lightIds.empty()) continue;
+        Mobius toCam = (x == cameraChart) ? identityMobius() : flattenPath[x].inverse();
+        const bool copyDirect = (x == cameraChart) || isIdentity(toCam);
+        for (int lightId : charts_[x].lightIds) {
+            if (lightId < 0 || lightId >= lightCount) { setError(3); return 3; }
+            const ChartLight& light = lights_[lightId];
+            vec3 lp = light.position;
+            if (!copyDirect) {
+                lp = toCam.apply(light.position);
+                if (!finiteVec(lp)) { setError(3); return 3; }
+                if (modelKind_ == GEO_MODEL_H3 && length(lp) >= 1.0f - 1e-4f) { setError(3); return 3; }
+            }
+            flatLights.push_back({lp, light.color, light.intensity});
+        }
+    }
+
+    std::sort(flatLights.begin(), flatLights.end(), [](const FlatLight& a, const FlatLight& b) {
+        if (a.position.x != b.position.x) return a.position.x < b.position.x;
+        if (a.position.y != b.position.y) return a.position.y < b.position.y;
+        if (a.position.z != b.position.z) return a.position.z < b.position.z;
+        if (a.color.x != b.color.x) return a.color.x < b.color.x;
+        if (a.color.y != b.color.y) return a.color.y < b.color.y;
+        if (a.color.z != b.color.z) return a.color.z < b.color.z;
+        return a.intensity < b.intensity;
+    });
+
+    const int flatLightCount = static_cast<int>(flatLights.size());
+    if (flatLightCount > GEO_MAX_LIGHTS) { setError(5); return 5; }
+
     // Canonical object order so the packet is deterministic and independent of
     // authoring order / BFS traversal order.
     std::sort(flat.begin(), flat.end(), [](const FlatObject& a, const FlatObject& b) {
@@ -532,7 +613,7 @@ int Atlas::build(int cameraChart, int maxChartDepth) {
 
     // ---- emit ScenePacket bytes ----
     const size_t headerSize = sizeof(ScenePacketHeader);
-    const size_t totalSize = headerSize + sizeof(Object) * flatCount + sizeof(Material) * materialCount;
+    const size_t totalSize = headerSize + sizeof(Object) * flatCount + sizeof(Material) * materialCount + sizeof(PointLight) * flatLightCount;
     packet_.assign(totalSize, 0);
 
     ScenePacketHeader hdr{};
@@ -560,8 +641,8 @@ int Atlas::build(int cameraChart, int maxChartDepth) {
     hdr.controls.pad2 = 0.0f;
     hdr.counts.objectCount = flatCount;
     hdr.counts.materialCount = materialCount;
+    hdr.counts.lightCount = flatLightCount;
     hdr.counts.pad0 = 0;
-    hdr.counts.pad1 = 0;
 
     std::memcpy(packet_.data(), &hdr, headerSize);
     size_t off = headerSize;
@@ -584,6 +665,16 @@ int Atlas::build(int cameraChart, int maxChartDepth) {
         else mat.color = vec4(1.0f, 1.0f, 1.0f, 1.0f);   // default white
         std::memcpy(packet_.data() + off, &mat, sizeof(mat));
         off += sizeof(mat);
+    }
+
+    for (const auto& light : flatLights) {
+        PointLight outLight{};
+        outLight.position = light.position;
+        outLight.pad0 = 0.0f;
+        outLight.color = light.color;
+        outLight.intensity = light.intensity;
+        std::memcpy(packet_.data() + off, &outLight, sizeof(outLight));
+        off += sizeof(outLight);
     }
 
     setError(0);

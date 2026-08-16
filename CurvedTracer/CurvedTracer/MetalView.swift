@@ -65,8 +65,13 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var sceneBuffer: (any MTLBuffer)!
     
     private var commandQueue: (any MTL4CommandQueue)!
-    private var commandBuffer: (any MTL4CommandBuffer)!
-    private var commandAllocator: (any MTL4CommandAllocator)!
+    private var commandBuffers: [any MTL4CommandBuffer] = []
+    private var commandAllocators: [any MTL4CommandAllocator] = []
+
+    private var frameEvent: (any MTLSharedEvent)!
+    private var frameEventValue: UInt64 = 0
+    private var frameIndex: Int = 0
+    private let maxFramesInFlight = 3
     
     private var argumentTable: (any MTL4ArgumentTable)!
     private var residencySet: (any MTLResidencySet)!
@@ -84,17 +89,26 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
         self.pipeline = try! device.makeComputePipelineState(function: function)
 
-        guard
-            let commandQueue = device.makeMTL4CommandQueue(),
-            let commandBuffer = device.makeCommandBuffer(),
-            let commandAllocator = device.makeCommandAllocator()
-        else {
-            fatalError("Failed to create Metal 4 command objects")
+        guard let commandQueue = device.makeMTL4CommandQueue() else {
+            fatalError("Failed to create Metal 4 command queue")
         }
-
         self.commandQueue = commandQueue
-        self.commandBuffer = commandBuffer
-        self.commandAllocator = commandAllocator
+
+        guard let frameEvent = device.makeSharedEvent() else {
+            fatalError("Failed to create shared event")
+        }
+        self.frameEvent = frameEvent
+
+        for _ in 0..<maxFramesInFlight {
+            guard
+                let commandBuffer = device.makeCommandBuffer(),
+                let commandAllocator = device.makeCommandAllocator()
+            else {
+                fatalError("Failed to create Metal 4 command objects")
+            }
+            commandBuffers.append(commandBuffer)
+            commandAllocators.append(commandAllocator)
+        }
 
         self.commandQueue.addResidencySet(view.residencySet)
         
@@ -111,7 +125,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         descriptor.maxBufferBindCount = 1
         descriptor.maxTextureBindCount = 1
         
-        self.argumentTable = try! device.makeArgumentTable(descriptor: descriptor)    }
+        self.argumentTable = try! device.makeArgumentTable(descriptor: descriptor)
+    }
     
     func setScenePacket() {
         // Create the atlas. 0 = H³, 1 = S³.
@@ -215,14 +230,24 @@ final class Renderer: NSObject, MTKViewDelegate {
     func draw(in view: MTKView) {
         guard
             let commandQueue,
-            let commandBuffer,
-            let commandAllocator,
             let renderTexture,
             let drawable = view.currentDrawable
         else {
             return
         }
-        
+
+        let index = frameIndex % maxFramesInFlight
+        let commandAllocator = commandAllocators[index]
+        let commandBuffer = commandBuffers[index]
+
+        // The same allocator was last used maxFramesInFlight frames ago. Wait
+        // until the GPU has signaled that the old command buffer completed
+        // before resetting and reusing the allocator.
+        let waitValue = frameIndex >= maxFramesInFlight
+            ? UInt64(frameIndex - maxFramesInFlight + 1)
+            : 0
+        _ = frameEvent.wait(untilSignaledValue: waitValue, timeoutMS: 1000)
+
         argumentTable.setTexture(renderTexture.gpuResourceID, index: 0)
 
         commandAllocator.reset()
@@ -248,13 +273,19 @@ final class Renderer: NSObject, MTKViewDelegate {
         encoder.copy(sourceTexture: renderTexture, destinationTexture: drawable.texture)
 
         encoder.endEncoding()
+        
+        // Schedule the event signal, then close encoding and commit.
+        frameEventValue += 1
+        commandQueue.signalEvent(frameEvent, value: frameEventValue)
 
         commandBuffer.endCommandBuffer()
 
         commandQueue.waitForDrawable(drawable)
         commandQueue.commit([commandBuffer])
         commandQueue.signalDrawable(drawable)
-
+        
         drawable.present()
+        
+        frameIndex += 1
     }
 }

@@ -31,7 +31,7 @@ swift run geometry_tests
   - `addLight(...)`, `addMaterial(...)`
   - `Mobius::applyChartPoint`, `Mobius::applySurface`
 - Old public `Mobius::apply` / `applySphere` / `applyPlane` APIs removed from the header; internal Poincaré helpers remain private.
-- `tracer.metal` still needs the v4 disk-chart intersection/reflection update.
+- `tracer.metal` updated to v4 disk-chart intersection/reflection (needs Xcode compile verification).
 - Current tests:
   - `swift test` → 3 passed
   - `swift run geometry_tests` → 149 passed

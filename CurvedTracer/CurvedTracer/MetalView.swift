@@ -159,14 +159,25 @@ final class Renderer: NSObject, MTKViewDelegate {
         _ = atlas.addMaterial(geo.vec4(1.0, 1.0, 1.0, 1.0))  // material 6: white
         _ = atlas.addMaterial(geo.vec4(1.0, 0.5, 0.0, 1.0))  // material 7: orange
 
-        // Simple v4 disk-chart objects: geodesic balls around the origin are
-        // a=0, b=1, c=cos(radius). c=0.8 means disk radius sqrt(1-0.8²).
-        _ = atlas.addObject(0, 0, geo.vec3(0, 0, 0), 1.0, 0.80, 0) // red
-        _ = atlas.addObject(0, 0, geo.vec3(0, 0, 0), 1.0, 0.55, 1) // green
-        _ = atlas.addObject(0, 0, geo.vec3(0, 0, 0), 1.0, 0.30, 2) // blue
+        // v4 disk-chart objects arranged like the pre-v4 H3 scene.
+        // Each OPAQUE is the disk-chart hyperplane section corresponding to a
+        // Poincare-ball sphere center p0 / radius r:
+        //   a = p0
+        //   b = (1 - |p0|² + r²) / 2
+        //   c = (1 + |p0|² - r²) / 2
+        _ = atlas.addObject(0, 0, geo.vec3(-0.05, 0.00, 0.10), 0.4956, 0.5044, 0) // red
+        _ = atlas.addObject(0, 0, geo.vec3( 0.12, 0.04, 0.15), 0.4832, 0.5168, 1) // green
+        _ = atlas.addObject(0, 0, geo.vec3(-0.15,-0.06, 0.20), 0.4710, 0.5290, 2) // blue
+        _ = atlas.addObject(0, 0, geo.vec3( 0.00, 0.10, 0.22), 0.4732, 0.5268, 3) // yellow
+        _ = atlas.addObject(0, 0, geo.vec3( 0.00,-0.10, 0.18), 0.4806, 0.5194, 5) // magenta
 
-        // H3 mirror hyperplane through the origin: a unit, b=0, c=0.
-        _ = atlas.addObject(0, 1, geo.vec3(0, 0, 1), 0.0, 0.0, 6)
+        // Old H3 mirror sphere c=(0,0,2), r=√3 becomes disk plane z=0.5.
+        _ = atlas.addObject(0, 1, geo.vec3(0, 0, 1), 0.0, 0.5, 6)
+
+        // Colorful objects behind the camera, visible through the mirror.
+        _ = atlas.addObject(0, 0, geo.vec3( 0.10, 0.10,-0.30), 0.4563, 0.5438, 4) // cyan
+        _ = atlas.addObject(0, 0, geo.vec3(-0.12,-0.08,-0.35), 0.4412, 0.5588, 5) // magenta
+        _ = atlas.addObject(0, 0, geo.vec3( 0.00, 0.00,-0.45), 0.4150, 0.5850, 7) // orange
 
         // Point lights in the camera chart. H3 light positions must be inside
         // the Poincare ball.

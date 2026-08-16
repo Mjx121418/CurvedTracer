@@ -6,7 +6,7 @@ using namespace metal;
 // ============================================================
 
 constant int PACKET_MAGIC            = 0x4E545243;
-constant int CONTRACT_VERSION        = 3;
+constant int CONTRACT_VERSION        = 4;
 constant int PACKET_HEADER_SIZE      = 128;
 constant int OBJECT_SIZE             = 32;
 
@@ -15,7 +15,6 @@ constant int MODEL_S3                = 1;
 
 constant int OBJECT_OPAQUE_SPHERE    = 0;
 constant int OBJECT_MIRROR_SPHERE    = 1;
-constant int OBJECT_MIRROR_PLANE     = 2;
 
 constant int MAX_BOUNCES             = 64;
 constant int MAX_LIGHTS               = 16;
@@ -45,8 +44,8 @@ struct Camera {
 
     float fovTan;
     float aspect;
-    float pad0;
-    float pad1;
+    float chartRadiusSin;
+    float chartRadiusCos;
 };
 
 struct RenderControls {
@@ -78,15 +77,15 @@ struct PacketHeader {
 
 struct SceneObject {
     // Must be packed: packet stores exactly 12 bytes here.
-    packed_float3 center;
+    packed_float3 a;
 
-    float radiusOrOffset;
+    float b;
+    float c;
 
     int kind;
     int colorIdx;
 
     int pad0;
-    int pad1;
 };
 
 struct PointLight {
@@ -105,41 +104,148 @@ struct PointLight {
 // Internal representations
 // ============================================================
 
-// A generalized Euclidean sphere:
+// A disk-chart surface:
 //
-//      a |x|² + b·x + c = 0
-//
-// This includes planes when a = 0.
-//
-// Under a Möbius transformation, spheres and planes remain in
-// this family.
+//     a·x + b·sqrt(1-|x|²) = c
+struct SurfaceCoeffs {
+    float3 a;
+    float b;
+    float c;
+};
+
+
+// ============================================================
+// H3 Poincare-ball helpers (used for H3 mirror unfold only)
+// ============================================================
+
 struct QuadraticSurface {
     float a;
     float3 b;
     float c;
 };
 
-
-// Ambient representation:
-//
-//      <n, X>_κ = h
-//
-// where
-//
-//      <X,Y>_κ = X.xyz·Y.xyz + κ X.w Y.w
-//
-// κ = +1 for S³
-// κ = -1 for H³.
-//
-// An ambient isometry simply transforms n by:
-//
-//      n' = T n
-//
-// while h remains unchanged.
 struct AmbientSurface {
     float4 n;
     float h;
 };
+
+float3 diskToPoincare(float3 x)
+{
+    float w = sqrt(max(0.0f, 1.0f - dot(x, x)));
+    return x / (1.0f + w);
+}
+
+float3 poincareToDisk(float3 p)
+{
+    float r2 = dot(p, p);
+    return p * (2.0f / (1.0f + r2));
+}
+
+// Differential of disk -> Poincare.
+float3 diskToPoincareTangent(
+    float3 x,
+    float3 v
+) {
+    float w = sqrt(max(0.0f, 1.0f - dot(x, x)));
+    float denom = 1.0f + w;
+    return v / denom
+         + x * (dot(x, v) / max(w * denom * denom, EPS));
+}
+
+// Old H3 lift: Poincare ball -> hyperboloid.
+float4 liftPointPoincare(float3 p)
+{
+    float r2 = dot(p, p);
+    float D = 1.0f - r2;
+    return float4(
+        2.0f * p / D,
+        (1.0f + r2) / D
+    );
+}
+
+float4 liftTangentPoincare(
+    float3 p,
+    float3 v
+) {
+    float r2 = dot(p, p);
+    float pv = dot(p, v);
+    float D = 1.0f - r2;
+
+    return float4(
+        (2.0f / D) * (v + (2.0f * pv / D) * p),
+        4.0f * pv / (D * D)
+    );
+}
+
+AmbientSurface quadraticToAmbient(
+    QuadraticSurface q,
+    float kappa
+) {
+    AmbientSurface s;
+    s.n = float4(q.b, -q.a + kappa * q.c);
+    s.h = -(kappa * q.a + q.c);
+    return s;
+}
+
+QuadraticSurface ambientToQuadratic(
+    AmbientSurface s,
+    float kappa
+) {
+    QuadraticSurface q;
+    q.a = -0.5f * (s.n.w + kappa * s.h);
+    q.b = s.n.xyz;
+    q.c = 0.5f * (kappa * s.n.w - s.h);
+    return q;
+}
+
+// Disk surface (a,b,c) -> Poincare quadratic.
+QuadraticSurface diskSurfaceToPoincare(
+    float3 a,
+    float b,
+    float c
+) {
+    // Disk equation a·x + b·w = c, with p = x/(1+w).
+    // Poincare equation: (b+c)|p|² - 2a·p + (c-b) = 0.
+    QuadraticSurface q;
+    q.a = b + c;
+    q.b = -2.0f * a;
+    q.c = c - b;
+    return q;
+}
+
+// Poincare quadratic -> disk surface (a,b,c).
+SurfaceCoeffs poincareToDiskSurface(
+    QuadraticSurface q
+) {
+    SurfaceCoeffs s;
+    s.a = q.b * -0.5f;
+    s.b = (q.a - q.c) * 0.5f;
+    s.c = (q.a + q.c) * 0.5f;
+    return s;
+}
+
+// Transform a disk surface through an H3 Lorentz transform.
+SurfaceCoeffs transformedSurfaceH3(
+    SceneObject obj,
+    float4x4 transform
+) {
+    QuadraticSurface q =
+        diskSurfaceToPoincare(
+            float3(obj.a.x, obj.a.y, obj.a.z),
+            obj.b,
+            obj.c
+        );
+
+    AmbientSurface s =
+        quadraticToAmbient(q, -1.0f);
+
+    s.n = transform * s.n;
+
+    QuadraticSurface q2 =
+        ambientToQuadratic(s, -1.0f);
+
+    return poincareToDiskSurface(q2);
+}
 
 
 // Hit information in the CURRENT ray chart.
@@ -171,15 +277,6 @@ float modelKappa(int modelKind)
     return (modelKind == MODEL_S3) ? 1.0f : -1.0f;
 }
 
-float3 objectCenter(SceneObject obj)
-{
-    return float3(
-        obj.center.x,
-        obj.center.y,
-        obj.center.z
-    );
-}
-
 float4x4 identity4()
 {
     return float4x4(
@@ -201,215 +298,70 @@ float3x3 identity3()
 
 
 // ============================================================
-// Chart <-> ambient model
-// ============================================================
+// Chart <-> ambient disk model (CONTRACT v4)
 //
-// Unified convention:
+//     X(x) = (x, sqrt(1 - |x|²))
 //
-//              ( 2x , 1 - κ|x|² )
-//      X(x) = ---------------------
-//                   1 + κ|x|²
-//
-// κ = +1:
-//
-//      S³ ⊂ R⁴
-//
-// κ = -1:
-//
-//      H³ ⊂ R^{3,1}
-//
-// For H³, |x| < 1.
-//
-// At x = 0:
-//
-//      X = (0,0,0,1).
-//
+// For both H³ and S³ the ambient model is S³.
 // ============================================================
 
 float4 liftPoint(float3 x, float kappa)
 {
     float r2 = dot(x, x);
-    float D = 1.0f + kappa * r2;
-
-    return float4(
-        2.0f * x / D,
-        (1.0f - kappa * r2) / D
-    );
+    float w = sqrt(max(0.0f, 1.0f - r2));
+    return float4(x, w);
 }
 
 
 // Differential of liftPoint.
-//
-// v is a Euclidean chart tangent vector at x.
 float4 liftTangent(
     float3 x,
     float3 v,
     float kappa
 ) {
-    float r2 = dot(x, x);
-    float xv = dot(x, v);
-
-    float D = 1.0f + kappa * r2;
-
-    float3 spatial =
-        (2.0f / D) *
-        (
-            v
-            - (2.0f * kappa * xv / D) * x
-        );
-
-    float w =
-        -4.0f * kappa * xv / (D * D);
-
-    return float4(spatial, w);
+    float w = sqrt(max(0.0f, 1.0f - dot(x, x)));
+    return float4(v, -dot(x, v) / max(w, EPS));
 }
 
 
-// Inverse of liftPoint. Works for both S3 and H3:
-//
-//      X = (2x, 1 - k|x|^2) / (1 + k|x|^2)
-//  =>  x = X.xyz / (1 + X.w)
 float3 unliftPoint(float4 X, float kappa)
 {
-    return X.xyz / (1.0f + X.w);
+    return X.xyz;
 }
 
 
-// Inverse differential of liftPoint at X.
 float3 unliftTangent(float4 X, float4 V)
 {
-    float denom = 1.0f + X.w;
-    return (V.xyz - X.xyz * (V.w / denom)) / denom;
-}
-
-
-// Minkowski inner product for H3.
-float mdot(float4 a, float4 b)
-{
-    return a.x * b.x + a.y * b.y + a.z * b.z - a.w * b.w;
+    return V.xyz;
 }
 
 
 // ============================================================
-// Packet object -> generalized sphere
+// Packet object -> disk-chart surface coefficients
 // ============================================================
 
-QuadraticSurface objectToQuadratic(SceneObject obj)
-{
-    QuadraticSurface q;
-
-    float3 x = objectCenter(obj);
-
-    if (
-        obj.kind == OBJECT_OPAQUE_SPHERE ||
-        obj.kind == OBJECT_MIRROR_SPHERE
-    ) {
-        // |p - center|² = radius²
-        //
-        // =>
-        //
-        // |p|² - 2 center·p
-        // + |center|² - radius² = 0
-
-        float r = obj.radiusOrOffset;
-
-        q.a = 1.0f;
-        q.b = -2.0f * x;
-        q.c = dot(x, x) - r * r;
-    }
-    else {
-        // normal·p = offset
-
-        q.a = 0.0f;
-        q.b = x;
-        q.c = -obj.radiusOrOffset;
-    }
-
-    return q;
-}
-
-
-// ============================================================
-// Generalized sphere <-> ambient hypersurface
-// ============================================================
-//
-// For
-//
-//      q(x) = a|x|² + b·x + c,
-//
-// define
-//
-//      n.xyz = b
-//      n.w   = -a + κc
-//      h     = -(κa + c)
-//
-// Then:
-//
-//      <n, X(x)>_κ - h
-//
-//             2 q(x)
-//      = ----------------
-//          1 + κ|x|².
-//
-// Therefore q=0 exactly when <n,X>=h.
-// ============================================================
-
-AmbientSurface quadraticToAmbient(
-    QuadraticSurface q,
-    float kappa
-) {
-    AmbientSurface s;
-
-    s.n = float4(
-        q.b,
-        -q.a + kappa * q.c
-    );
-
-    s.h =
-        -(kappa * q.a + q.c);
-
-    return s;
-}
-
-
-QuadraticSurface ambientToQuadratic(
-    AmbientSurface s,
-    float kappa
-) {
-    QuadraticSurface q;
-
-    q.a =
-        -0.5f * (s.n.w + kappa * s.h);
-
-    q.b = s.n.xyz;
-
-    q.c =
-        0.5f * (kappa * s.n.w - s.h);
-
-    return q;
-}
-
-
-// Transform an original packet object into the current ray chart.
-QuadraticSurface transformedObject(
+SurfaceCoeffs transformedSurface(
     SceneObject obj,
-    float4x4 transform,
-    float kappa
+    float4x4 transform
 ) {
-    QuadraticSurface q =
-        objectToQuadratic(obj);
+    float4 A =
+        float4(
+            obj.a.x,
+            obj.a.y,
+            obj.a.z,
+            obj.b
+        );
 
-    AmbientSurface s =
-        quadraticToAmbient(q, kappa);
+    // The shader operates in the disk model, where both H³ and S³ use S³
+    // ambient isometries. A plane A·X = c transforms as A' = M A, c' = c.
+    float4 Ap =
+        transform * A;
 
-    // If X_current = T X_original, then
-    //
-    //     n_current = T n_original
-    //
-    // because T preserves the ambient metric.
-    s.n = transform * s.n;
-
-    return ambientToQuadratic(s, kappa);
+    SurfaceCoeffs surface;
+    surface.a = Ap.xyz;
+    surface.b = Ap.w;
+    surface.c = obj.c;
+    return surface;
 }
 
 
@@ -499,53 +451,19 @@ Roots solveQuadratic(
 }
 
 
-// Convert a chart root into an ordering parameter along the
-// FORWARD intrinsic geodesic.
-//
-// H³:
-//
-//      t = tanh(s/2), 0 < t < 1.
-//
-// So ordering by t is enough.
-//
-// S³:
-//
-//      t = tan(s/2).
-//
-// Forward motion from s=0:
-//
-//      0 < s < π      => t > 0
-//      π < s < 2π     => t < 0.
-//
-// Therefore negative t values are valid: they represent the
-// continuation after passing through the stereographic point
-// at infinity.
+// Chart roots are ordered by t. In the disk model t = |x| and geodesic
+// distance is monotone in t for both H³ and S³.
 float forwardOrder(
     float t,
-    int modelKind
+    float radiusSin
 ) {
-    if (fabs(t) <= SELF_HIT_EPS)
+    if (t <= SELF_HIT_EPS)
         return INF;
 
-    if (modelKind == MODEL_H3) {
-        if (
-            t <= SELF_HIT_EPS ||
-            t >= 1.0f - EPS
-        ) {
-            return INF;
-        }
+    if (t >= radiusSin - EPS)
+        return INF;
 
-        // Monotone with hyperbolic distance.
-        return t;
-    }
-
-    // S³
-    float s = 2.0f * atan(t);
-
-    if (s <= SELF_HIT_EPS)
-        s += TWO_PI;
-
-    return s;
+    return t;
 }
 
 
@@ -584,13 +502,10 @@ float3 computeLighting(
                 kappa
             );
 
-        // Unit ambient tangent at P pointing toward Q.
-        float4 V;
-        if (kappa > 0.0f) {
-            V = Q - P * dot(P, Q);
-        } else {
-            V = Q + P * mdot(P, Q);
-        }
+        // Unit ambient tangent at P pointing toward Q. The disk model embeds
+        // both H³ and S³ in S³, so use the sphere tangent projection.
+        float4 V =
+            Q - P * dot(P, Q);
 
         float3 chartL =
             unliftTangent(
@@ -634,7 +549,7 @@ float3 computeLighting(
 Hit findNearestHit(
     float3 rayDirection,
     float4x4 transform,
-    float kappa,
+    float radiusSin,
     int modelKind,
     device const SceneObject* objects,
     int objectCount
@@ -652,22 +567,38 @@ Hit findNearestHit(
 
         SceneObject obj = objects[i];
 
-        QuadraticSurface q =
-            transformedObject(
-                obj,
-                transform,
-                kappa
-            );
+        SurfaceCoeffs surface =
+            (modelKind == MODEL_H3)
+                ? transformedSurfaceH3(obj, transform)
+                : transformedSurface(obj, transform);
 
-        float linear =
-            dot(q.b, rayDirection);
+        float3 a = surface.a;
+        float b = surface.b;
+        float c = surface.c;
 
-        Roots roots =
-            solveQuadratic(
-                q.a,
-                linear,
-                q.c
-            );
+        float ad = dot(a, rayDirection);
+
+        Roots roots;
+        roots.count = 0;
+        roots.r0 = 0.0f;
+        roots.r1 = 0.0f;
+
+        if (fabs(b) < EPS) {
+            // a·x = c  =>  t = c / (a·d)
+            if (fabs(ad) < EPS)
+                continue;
+            roots.count = 1;
+            roots.r0 = c / ad;
+            roots.r1 = roots.r0;
+        } else {
+            // a·(t d) + b·sqrt(1 - t²) = c
+            // Squared: ((a·d)² + b²)t² - 2c(a·d)t + (c² - b²) = 0.
+            float A = ad * ad + b * b;
+            float B = -2.0f * c * ad;
+            float C = c * c - b * b;
+
+            roots = solveQuadratic(A, B, C);
+        }
 
         for (int rootIndex = 0;
              rootIndex < roots.count;
@@ -681,24 +612,35 @@ Hit findNearestHit(
             float order =
                 forwardOrder(
                     t,
-                    modelKind
+                    radiusSin
                 );
 
             if (order >= nearest.order)
                 continue;
 
+            // Verify the original equation (squaring may add roots).
+            float t2 = t * t;
+            if (t2 >= 1.0f - EPS)
+                continue;
+
+            float w =
+                sqrt(max(0.0f, 1.0f - t2));
+
+            float lhs =
+                a.x * t * rayDirection.x
+                + a.y * t * rayDirection.y
+                + a.z * t * rayDirection.z
+                + b * w;
+
+            if (fabs(lhs - c) > 1e-3f)
+                continue;
+
             float3 position =
                 t * rayDirection;
 
-            // Euclidean normal to
-            //
-            //      a|x|² + b·x + c = 0.
-            //
-            // Because the stereographic/Poincaré metric is
-            // conformal, this normal can be used for reflection.
+            // Gradient of a·x + b·sqrt(1-|x|²) - c.
             float3 gradient =
-                2.0f * q.a * position
-                + q.b;
+                a - (b / max(w, EPS)) * position;
 
             float gradient2 =
                 dot(gradient, gradient);
@@ -958,21 +900,21 @@ float4x4 makeReflectionChartChange(
     float4 P =
         liftPoint(
             hitPosition,
-            kappa
+            1.0f
         );
 
     float4 V =
         liftTangent(
             hitPosition,
             normalize(reflectedDirection),
-            kappa
+            1.0f
         );
 
     // First move the hit point to the origin.
     float4x4 B =
         movePointToOrigin(
             P,
-            kappa
+            1.0f
         );
 
     // Tangent after this coordinate change.
@@ -984,6 +926,57 @@ float4x4 makeReflectionChartChange(
 
     // Then rotate around the origin so the reflected tangent
     // becomes the original fixed ray direction.
+    float3x3 R3 =
+        rotationFromTo(
+            movedDirection,
+            targetRayDirection
+        );
+
+    float4x4 R =
+        embedSpatialRotation(R3);
+
+    return R * B;
+}
+
+
+// H3 mirror unfold. The hit point and reflected direction are first converted
+// from disk coordinates to the Poincare ball, then the old H3 hyperboloid
+// machinery builds the Lorentz transition.
+float4x4 makeReflectionChartChangeH3(
+    float3 hitPosition,
+    float3 reflectedDirection,
+    float3 targetRayDirection
+) {
+    float3 hitPoincare =
+        diskToPoincare(hitPosition);
+
+    float3 reflectedPoincare =
+        diskToPoincareTangent(
+            hitPosition,
+            normalize(reflectedDirection)
+        );
+
+    float4 P =
+        liftPointPoincare(hitPoincare);
+
+    float4 V =
+        liftTangentPoincare(
+            hitPoincare,
+            normalize(reflectedPoincare)
+        );
+
+    float4x4 B =
+        movePointToOrigin(
+            P,
+            -1.0f
+        );
+
+    float4 movedV =
+        B * V;
+
+    float3 movedDirection =
+        normalize(movedV.xyz);
+
     float3x3 R3 =
         rotationFromTo(
             movedDirection,
@@ -1157,8 +1150,8 @@ kernel void raytrace(
     int modelKind =
         header->controls.modelKind;
 
-    float kappa =
-        modelKappa(modelKind);
+    // Disk model: both H³ and S³ use S³ ambient isometries.
+    float kappa = 1.0f;
 
     // --------------------------------------------------------
     // Accumulated Möbius/isometry transformation
@@ -1200,7 +1193,7 @@ kernel void raytrace(
             findNearestHit(
                 rayDirection,
                 transform,
-                kappa,
+                header->camera.chartRadiusSin,
                 modelKind,
                 objects,
                 objectCount
@@ -1286,9 +1279,7 @@ kernel void raytrace(
 
         if (
             obj.kind ==
-                OBJECT_MIRROR_SPHERE ||
-            obj.kind ==
-                OBJECT_MIRROR_PLANE
+                OBJECT_MIRROR_SPHERE
         ) {
             // No further reflection allowed.
             if (bounce == maxBounces) {
@@ -1321,12 +1312,18 @@ kernel void raytrace(
             //
             // current chart -> next chart.
             float4x4 step =
-                makeReflectionChartChange(
-                    hit.position,
-                    reflected,
-                    rayDirection,
-                    kappa
-                );
+                (modelKind == MODEL_H3)
+                    ? makeReflectionChartChangeH3(
+                        hit.position,
+                        reflected,
+                        rayDirection
+                    )
+                    : makeReflectionChartChange(
+                        hit.position,
+                        reflected,
+                        rayDirection,
+                        kappa
+                    );
 
             // Original -> current was transform.
             //

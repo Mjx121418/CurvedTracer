@@ -1,6 +1,6 @@
 # CONTRACT.md — C++ ⇄ Metal/Swift Seam
 
-**Status:** v2 — intrinsic chart-atlas design (supersedes v0.1).
+**Status:** v4 — disk-chart atlas on S³ (supersedes v3 stereographic charts).
 **Owner:** C++ side maintains this file and the shared artifacts it describes. The Metal/Swift side must be able to code against this document alone **without reading C++ sources**. Any change requires both sides to agree (see §9).
 
 ---
@@ -12,10 +12,10 @@ This repository is a ray tracer for 3-dimensional spherical (S³) and hyperbolic
 | Side | Language | Owner | Responsibility |
 |---|---|---|---|
 | Geometry core + atlas | C++ | C++ owner | Chart atlas, Möbius transitions, flattening, reference tracer, tests |
-| Render loop on GPU | Metal Shading Language (MSL) | Metal owner | Straight-ray casting, sphere/plane intersection, sphere-inversion reflection, shading |
+| Render loop on GPU | Metal Shading Language (MSL) | Metal owner | Straight-ray casting, disk-chart hyperplane-section intersection, ambient reflection, shading |
 | App / pipeline | Swift + SwiftUI | Metal owner | App shell, Metal pipeline, buffer upload, views |
 
-**The scene is stored intrinsically** (§3): objects are Euclidean spheres/planes inside stereographic charts, charts relate only by pairwise overlap data (Möbius transition matrices), and there is **no** anchor chart and **no** stored embedding coordinate. For each frame, C++ flattens the visible region into a single **camera chart** and hands the Metal side one flat packet. **The renderer always works in one chart** (§7); it never sees the atlas, the transitions, or any hyperbolic/spherical (model-space) math.
+**The scene is stored intrinsically** (§3): objects are hyperplane sections of open disk charts on S³, charts relate only by pairwise overlap data (transition matrices), and there is **no** anchor chart and **no** stored embedding coordinate. Each chart has a radius. For each frame, C++ flattens the visible region into a single **camera chart** and hands the Metal side one flat packet. **The renderer always works in one chart** (§7); it never sees the atlas, the transitions, or any model-space math.
 
 Three seams connect the sides; only (A) and (B) reach the Metal/Swift side, (C) is C++-internal:
 
@@ -35,16 +35,16 @@ Shared headers live under `Sources/include/GeometryCore/` inside the `GeometryCo
 4. **Fast-math caveat:** `acos/acosh` domain clamping must be explicit (clamped argument) so it survives MSL fast-math. Never rely on the operation itself to reject out-of-domain input.
 5. One version macro `GEO_CONTRACT_VERSION`, echoed into the packet; mismatch is a hard error at upload (§6, §9).
 
-**Header inventory (v2):**
+**Header inventory (v4):**
 
 | Header | Shared with MSL? | Contents |
 |---|---|---|
 | `Math.h` | **yes** | `vec3/vec4`, Euclidean ops, `mat4` (identity/mul/apply), scalar wrappers, clamp |
-| `Intersect.h` | **yes** | ray↔Euclidean-sphere/plane intersection, **sphere inversion** (`invertSphere`), all in chart coordinates |
-| `Hyperboloid.h` | no (host) | H³ ↔ Poincaré-ball maps, Minkowski `mdot`, geodesic `exp`, reflection (for Mobius round-trip, tests, cross-check) |
-| `Sphere3.h` | no (host) | S³ ↔ R³ stereographic maps, `exp`, reflection |
-| `Mobius.h` | no (host) | transition map (4×4), `apply/compose/inverse/applySphere` |
-| `Chart.h` | no (host) | `Chart`, `ChartObject`, `Atlas`, flattening |
+| `Intersect.h` | **yes** | disk-chart ray↔hyperplane-section intersection, ambient reflection helpers, all in chart coordinates |
+| `Hyperboloid.h` | no (host) | H³ disk ↔ Poincaré ↔ hyperboloid maps, Minkowski `mdot`, geodesic `exp`, reflection (for round-trip, tests, cross-check) |
+| `Sphere3.h` | no (host) | S³ disk-chart ↔ ambient S³ maps, `exp`, reflection |
+| `Mobius.h` | no (host) | transition map (4×4), `apply/compose/inverse/applySurface` |
+| `Chart.h` | no (host) | `Chart` (with radius), `ChartObject`, `Atlas`, flattening/culling |
 | `Scene.h` | **yes** | POD structs for Seam B (canonical layout, §5) |
 
 The Metal side `#include`s only `Math.h`, `Intersect.h`, `Scene.h` (and any other header marked shared). It never re-implements math; it composes the shared functions into control flow.
@@ -53,56 +53,103 @@ The Metal side `#include`s only `Math.h`, `Intersect.h`, `Scene.h` (and any othe
 
 ## 3. Intrinsic chart atlas (Seam C, C++-internal)
 
-### 3.1 Charts are stereographic projections
+### 3.1 Charts are open disks on S³
 
-For each point of the manifold there is a stereographic chart centered there; the chart is **conformal**. In chart coordinates:
+The ambient model is the unit 3-sphere `S³ = { X ∈ R⁴ : |X| = 1 }`.
 
-- **H³** — the chart is the **Poincaré ball** (unit ball, `|x| < 1`). Center `0` ↔ model point `(0,0,0,1)`; the boundary `|x|=1` is the ideal sphere. No point of H³ maps to infinity (the projection point lies off the model), so the chart is bounded.
-- **S³** — the chart is all of **R³** (unbounded). Center `0` ↔ model point `(0,0,0,−1)` (south pole); the north pole `(0,0,0,1)` is the projection point and maps to **infinity**.
+A chart is a **geodesic ball of radius `r` around an anchor point**. The anchor maps to `(0,0,0,1)`. Chart coordinates are points `x` in the open Euclidean unit ball `B³`. The embedding is:
 
-Maps (host-only, for round-trips and validation):
+```text
+X = (x, w),   w = sqrt(1 - |x|²)
+```
 
-| | chart → model | model → chart |
-|---|---|---|
-| H³ | `(2x, 2y, 2z, 1+r²)/(1−r²)` | `(x, y, z)/(1 + w)` |
-| S³ | `(2x, 2y, 2z, r²−1)/(1+r²)` | `(x, y, z)/(1 − w)` |
+and the inverse is:
 
-### 3.2 Charts relate only by overlap edges
+```text
+x = X.xyz
+```
 
-- A `Chart` stores **only** its overlap edges: `{ neighborId, Mobius transition, numericallySafe flag }`, plus the ids of objects homed in it. No chart stores its center's embedding coordinate.
-- The transition on an edge is a **Möbius transformation** (a conformal map), stored as a 4×4 matrix — Lorentz `O(3,1)` for H³, orthogonal `O(4)` for S³ — column-major, 64 bytes. `compose` = matrix multiply; `inverse` = matrix inverse.
-- **There is no anchor chart.** The first chart created is the anchorless seed (id 0). Every subsequent chart is placed by linking to an existing chart: `chart_add(fromChart, M, safe)`.
-- **Overlap vs close-enough are distinct** (design §3.3): an edge records the transition (overlap) *and* whether one hop keeps float32 distortion bounded (`numericallySafe`). Reachability uses all edges; flattening prefers safe hops.
+The chart domain is:
 
-### 3.3 Objects are chart-local Euclidean spheres/planes
+```text
+|x| < sin(r)
+```
 
-An object is homed in exactly one chart and stored in that chart's coordinates:
+or equivalently, for the ambient anchor-facing coordinate:
 
-| kind | storage | meaning |
-|---|---|---|
-| `OPAQUE` (0) | sphere `{center, radius}` | a solid geodesic ball (shaded, no reflection) |
-| `MIRROR` (1) | sphere `{center, radius}` | a mirror = geodesic hyperplane / great sphere (reflected across) |
-| `PLANE` (2) | `{normal, offset}` | a mirror through the chart center (the r→∞ limit of a mirror sphere) |
+```text
+X.w > cos(r)
+```
 
-**Mirror validity** (the condition that makes reflection = sphere inversion an isometry, validated by `geo::Atlas::build`):
+Charts have **variable size**. `r` is stored per chart and is not required to be `π/2`.
 
-- H³ mirror sphere: `|center|² == radius² + 1` (orthogonal to the unit-sphere boundary).
-- S³ mirror sphere: `|center|² == radius² − 1` (image of a great sphere).
-- PLANE mirrors always pass through the origin; the reflection is plain Euclidean plane reflection.
+- **H³**: H³ is conformally embedded as the upper hemisphere `X.w > 0` of S³. The ideal boundary is the equator `X.w = 0`. A chart radius must satisfy `0 < r ≤ π/2`.
+- **S³**: S³ is the whole 3-sphere. A chart radius must satisfy `0 < r < π`. The chart is a disk around the anchor; `r > π/2` is allowed, but the disk must not contain the antipodal point of the anchor.
 
-**OPAQUE validity:** H³ spheres must satisfy `|center| + radius < 1` (interior). S³ has no interior bound.
+### 3.2 Charts, radii, and overlap edges
 
-### 3.4 Consistency = cocycle condition (replaces the anchor)
+A `Chart` stores:
 
-Because the atlas *is* its transition maps and nothing else, the maps must agree around every loop, or "the same point" would have different coordinates depending on path. `geo::Atlas::build` verifies: **every closed loop composes to identity within tolerance**. Group-built atlases (tessellation) satisfy this by construction; hand-authored atlases are checked and rejected on violation. Island charts (zero edges) are also rejected.
+```text
+{ id, radius, edges[{ neighborId, transition, safe }], objectIds, lightIds }
+```
+
+- The transition on an edge is a 4×4 matrix, column-major, 64 bytes:
+  - S³: `O(4)` isometry
+  - H³: `O(3,1)` Lorentz matrix in the hyperboloid model
+- `compose` = matrix multiply, `inverse` = matrix inverse.
+- There is **no anchor chart**. The first chart is the anchorless seed.
+- Reachability uses all edges; flattening prefers safe hops.
+- The camera chart radius is the **culling boundary** for the packet: objects and lights that lie entirely outside the camera disk are culled by `Atlas::build`.
+
+### 3.3 Objects are hyperplane sections of the disk
+
+An object is homed in exactly one chart and stored as the intersection of the chart disk with an ambient 4D hyperplane:
+
+```text
+a·x + b·w = c,    w = sqrt(1 - |x|²)
+```
+
+where `(a ∈ R³, b ∈ R, c ∈ R)` are chart-local values.
+
+| kind | meaning |
+|---|---|
+| `OPAQUE` (0) | a solid side of the surface; shaded, no reflection |
+| `MIRROR` (1) | an isometric mirror; reflection = ambient reflection across the surface |
+
+There is no separate `PLANE` kind. Old stereographic planes become hyperplane sections.
+
+**Mirror validity** (validated by `geo::Atlas::build`):
+
+- **S³ MIRROR**: a great sphere in S³:
+
+  ```text
+  c == 0,   |(a,b)| == 1
+  ```
+
+- **H³ MIRROR**: a hyperbolic hyperplane, orthogonal to the ideal equator:
+
+  ```text
+  b == 0,   |a| == 1
+  ```
+
+  and the surface must intersect the chart disk.
+
+**OPAQUE validity**: the boundary must be a sphere (not a hyperplane) and the solid side must be representable inside the chart disk. Exact host-side bounds are derived in the implementation spike; `Atlas::build` rejects any opaque boundary that does not lie strictly inside its home chart and inside the camera chart disk.
+
+### 3.4 Consistency = cocycle condition
+
+Unchanged from v3: every closed loop must compose to identity within tolerance. Island charts are rejected.
 
 ---
 
 ## 4. Coordinate systems and units (normative)
 
-- Chart coordinates are **Euclidean R³**. For H³ they are bounded by `|x| < 1`; for S³ they are unbounded and the projection point is at infinity.
-- All sphere radii / plane offsets are **chart (Euclidean) quantities**. Distances/radii are *not* hyperbolic/angular arc lengths — the metric is implicit in the chart. (Host-side model math, when needed for validation, uses the maps in §3.1.)
-- `modelKind`: `0 = H³`, `1 = S³`. One scene has one model; objects, charts, and camera must agree.
+- Chart coordinates are points `x ∈ R³` with `|x| < sin(r)`, where `r` is the chart radius.
+- Ambient points are `X = (x, sqrt(1 - |x|²))`.
+- All object coefficients `(a,b,c)`, light positions, and camera directions are chart quantities.
+- `modelKind`: `0 = H³`, `1 = S³`. One scene has one model.
+- For H³ the largest chart is the upper hemisphere `r = π/2`. For S³ the largest chart is any disk of radius `r < π`.
 
 ---
 
@@ -127,38 +174,45 @@ Fixed header total: **128 bytes**.
 
 ### 5.1 Field specs
 
-**PacketMeta (16 B)** — self-describing; both sides verify and hard-fail on mismatch.
+**PacketMeta (16 B)**
 
 | Off | Name | Type | Value |
 |---|---|---|---|
 | 0 | `magic` | int32 | `0x4E545243` ("NTRC") |
-| 4 | `contractVersion` | int32 | = `GEO_CONTRACT_VERSION` (currently **3**) |
+| 4 | `contractVersion` | int32 | = `GEO_CONTRACT_VERSION` (currently **4**) |
 | 8 | `objectSize` | int32 | 32 |
 | 12 | `packetHeaderSize` | int32 | 128 |
 
-**Camera (64 B)** — the camera is always at the chart origin; orientation is an orthonormal frame.
+**Camera (64 B)** — camera at the chart origin; orientation is an orthonormal frame.
 
 | Off | Name | Type | Meaning |
 |---|---|---|---|
 | 0 | `right` | vec3 + pad | unit tangent, camera right |
 | 16 | `up` | vec3 + pad | unit tangent, camera up |
-| 32 | `fwd` | vec3 + pad | unit tangent, into the scene (`right × up` handedness) |
+| 32 | `fwd` | vec3 + pad | unit tangent, into the scene |
 | 48 | `fovTan` | float | tan(vertical FOV / 2) |
 | 52 | `aspect` | float | width / height |
-| 56,60 | pad | float,float | zero |
+| 56 | `chartRadiusSin` | float | `sin(r)` for the camera chart |
+| 60 | `chartRadiusCos` | float | `cos(r)` for the camera chart |
 
-**RenderControls (32 B)** — tunables are *data*, so tuning never edits a shader.
+The shader culls a hit when:
+
+```text
+|hit.position|² >= chartRadiusSin²
+```
+
+**RenderControls (32 B)** — unchanged from v3.
 
 | Off | Name | Type | Meaning |
 |---|---|---|---|
-| 0 | `maxBounces` | int32 | reflection-loop cap (GPU loop must be bounded by this) |
+| 0 | `maxBounces` | int32 | reflection-loop cap |
 | 4 | `modelKind` | int32 | 0 = H³, 1 = S³ |
-| 8 | `falloffK` | float | distance shading `1/(1 + falloffK·t)`, t = chart distance from origin |
-| 12 | `ambient` | float | background floor added to every sample |
-| 16 | `bounceAttenuation` | float | multiplier applied per reflection |
+| 8 | `falloffK` | float | camera-chart distance falloff |
+| 12 | `ambient` | float | background floor |
+| 16 | `bounceAttenuation` | float | reflection throughput multiplier |
 | 20..28 | pad | float×3 | zero |
 
-**Counts (16 B)**
+**Counts (16 B)** — unchanged from v3.
 
 | Off | Name | Type | Meaning |
 |---|---|---|---|
@@ -167,37 +221,31 @@ Fixed header total: **128 bytes**.
 | 8 | `lightCount` | int32 | length of `lights[]` |
 | 12 | pad | int32 | zero |
 
-**Object (32 B)** — one chart-local primitive.
+**Object (32 B)** — one chart-local hyperplane section.
 
 | Off | Name | Type | Meaning |
 |---|---|---|---|
-| 0 | `center` | vec3 | sphere: Euclidean center; plane: unit normal |
-| 12 | `radiusOrOffset` | float | sphere: Euclidean radius; plane: signed offset (≈0 for mirrors) |
-| 16 | `kind` | int32 | 0 = OPAQUE sphere, 1 = MIRROR sphere, 2 = MIRROR plane |
-| 20 | `colorIdx` | int32 | index into `materials[]` |
-| 24,28 | pad | int32, int32 | zero |
+| 0 | `a` | vec3 | hyperplane normal part |
+| 12 | `b` | float | hyperplane `w` coefficient |
+| 16 | `c` | float | hyperplane right-hand side |
+| 20 | `kind` | int32 | 0 = OPAQUE, 1 = MIRROR |
+| 24 | `colorIdx` | int32 | index into `materials[]` |
+| 28 | pad | int32 | zero |
 
-**materials[] (16 B each)** — `vec4(r, g, b, a)` color table indexed by `colorIdx`.
+**materials[] (16 B each)** — unchanged.
 
-**PointLight (32 B each)** — one point light in the camera chart.
+**PointLight (32 B each)** — unchanged from v3.
 
-| Off | Name | Type | Meaning |
-|---|---|---|---|
-| 0 | `position` | vec3 + pad | chart-space light position |
-| 12 | pad | float | zero |
-| 16 | `color` | vec3 | linear light color |
-| 28 | `intensity` | float | multiplier, typically `0..1` |
-
-### 5.2 Buffer slots (Swift/Metal side)
+### 5.2 Buffer slots
 
 | Slot | Buffer |
 |---|---|
 | 0 | ScenePacket (header + arrays as one upload) |
-| 1 | optional: golden reference texture, if CPU/GPU diff runs in-app |
+| 1 | optional: golden reference texture |
 
-### 5.3 Capacity limits (v3)
+### 5.3 Capacity limits (v4)
 
-`MAX_OBJECTS = 4096`, `MAX_MATERIALS = 256`, `MAX_LIGHTS = 16`, `MAX_CHART_DEPTH = 64` (flattening BFS bound). Exceeding them is rejected by `geo::Atlas::build`.
+`MAX_OBJECTS = 4096`, `MAX_MATERIALS = 256`, `MAX_LIGHTS = 16`, `MAX_CHART_DEPTH = 64`. Exceeding them is rejected by `geo::Atlas::build`.
 
 ---
 
@@ -205,7 +253,7 @@ Fixed header total: **128 bytes**.
 
 Swift imports the `GeometryCore` Swift package and calls the host C++ classes directly with Swift C++ interop. Metal never sees the atlas or these classes.
 
-**v2 surface (signatures are spec; C++ owner implements):**
+**v4 surface (signatures are spec; C++ owner implements):**
 
 ```cpp
 namespace geo {
@@ -216,13 +264,20 @@ public:
     // same method but Swift C++ interop reserves `begin` for C++ iterators.
     void start(int modelKind);
 
-    int seed();                                      // anchorless base chart, returns 0
-    int add(int fromChart, const float m[16], bool safe);          // link new chart; returns new id
+    // Anchorless base chart with radius r (radians).
+    int seed(float radius);
+
+    // Add a new chart of radius r, linked from `fromChart` by the transition
+    // matrix m (column-major). Returns the new chart id.
+    int add(float radius, int fromChart, const float m[16], bool safe);
+
     void link(int a, int b, const float m_ab[16], bool safe);
 
-    // kind: 0 = OPAQUE sphere, 1 = MIRROR sphere, 2 = MIRROR plane.
-    // sphere: center + radiusOrOffset=radius.  plane: center=normal, radiusOrOffset=offset.
-    int addObject(int chartId, int kind, const vec3& center, float radiusOrOffset, int colorIdx);
+    // kind: 0 = OPAQUE, 1 = MIRROR.
+    // Object boundary in chart coordinates: a·x + b·sqrt(1 - |x|²) = c.
+    int addObject(int chartId, int kind,
+                  const vec3& a, float b, float c, int colorIdx);
+
     int addMaterial(const vec4& color);
 
     // Author a point light in any chart; it is flattened into the camera chart.
@@ -232,16 +287,10 @@ public:
                    const vec3& right, const vec3& up, const vec3& fwd);
     void setControls(int maxBounces, float falloffK, float ambient, float bounceAttenuation);
 
-    // Rotate the camera orientation around an arbitrary chart-space axis by
-    // deltaRadians. The camera stays at the chart origin.
     void cameraRotate(const vec3& axis, float deltaRadians);
 
-    // Validate (cocycle, islands, mirror/interior conditions) then flatten into
-    // the camera chart. Returns 0 on success and fills the packet snapshot.
     int build(int cameraChart, int maxChartDepth);
 
-    // Packet bytes. Swift reads the byte vector via packetBytes() (packet()
-    // returns a C++ reference and is hidden by Swift C++ interop).
     std::vector<uint8_t> packetBytes() const;
     int packetSize() const;
 };
@@ -249,9 +298,9 @@ public:
 }
 ```
 
-If no material is authored before `build`, the builder emits one default white material at index 0. If no light is authored, `lightCount` is 0 and opaque surfaces are lit only by `controls.ambient`.
+If no material is authored, `build` emits one default white material. If no light is authored, `lightCount` is 0.
 
-**Error codes:** `0` OK; `1` island chart; `2` cocycle violation; `3` invalid object (mirror/interior condition); `4` unknown camera chart; `5` capacity exceeded; `6` model/kind mismatch.
+**Error codes:** `0` OK; `1` island chart; `2` cocycle violation; `3` invalid object; `4` unknown camera chart; `5` capacity exceeded; `6` model/kind mismatch.
 
 ---
 
@@ -261,55 +310,66 @@ If no material is authored before `build`, the builder emits one default white m
 
 The camera is always at the chart origin. A pixel with NDC `(u,v) ∈ [0,1]²` has direction
 
-```
+```text
 d = normalize( fwd + right·(2u−1)·fovTan·aspect + up·(2v−1)·fovTan )
 ```
 
-and the ray is `p(t) = t·d`, `t > ε` (`ε = 1e-4`). Only rays *through the origin* are straight geodesics in a stereographic chart; a general geodesic is a circular arc — **the GPU never constructs circular arcs** (see §7.2).
+and the ray is `x(t) = t·d`, `t > ε` (`ε = 1e-4`).
 
-### 7.2 Unfold-the-world (reflection = sphere inversion, ray stays straight)
+In a disk chart, rays through the origin are straight geodesics.
 
-On a MIRROR hit, instead of bending the ray into a circular arc, the shader applies the mirror's **inversion to the entire object list** (closed-form: `invertSphere` / plane reflection, shared in `Intersect.h`), multiplies `bounceAttenuation`, and continues the *same* straight ray. Because the mirror is a valid isometry (validated mirror condition, §3.3), this is exact and keeps the renderer purely Euclidean and stateless-per-ray. Loop is flat and bounded by `maxBounces`; re-hitting the same mirror is excluded by `t > ε` + the "which side" test.
+### 7.2 Surface intersection
 
-Per pixel:
-
-1. nearest intersection of `p(t)=t·d` with the current sphere/plane list (Euclidean quadratics);
-2. OPAQUE hit → shade with Euclidean normals and the point lights in the current ray chart using the lighting convention in §7.3; return;
-3. MIRROR hit → invert the whole object list across that mirror; continue;
-4. no hit → background gradient.
-
-### 7.3 Lighting convention (v3, normative)
-
-Lights are **point lights in chart coordinates**. There is no global inner product in H³/S³, so a light direction must be computed in the tangent space of each hit point.
-
-At an OPAQUE hit point `p` in the current ray chart, for each point light at current chart position `q`:
-
-1. Lift `p` and `q` to the ambient model point `P` and `Q`.
-2. Compute the unit ambient tangent vector `V` at `P` pointing toward `Q`:
-   - S³ (`κ = +1`): `V = Q - P * dot(P, Q)`
-   - H³ (`κ = -1`): `V = Q + P * mdot(P, Q)`
-3. Map `V` back to the chart tangent `L` at `p`.
-4. Compute the Lambert term:
+For an object boundary:
 
 ```text
-diffuse = max(dot(N, L), 0)
+a·x + b·sqrt(1 - |x|²) = c
 ```
 
-where `N` is the hit-point normal in the current chart. Because the stereographic chart is conformal, this chart-space dot product gives the correct local angle in the ambient metric.
-
-**Shading equation:**
+and a ray `x(t) = t·d`, `|d| = 1`, the intersection solves:
 
 ```text
-falloff = 1 / (1 + controls.falloffK * chartDistance)
+a·(t d) + b·sqrt(1 - t²) = c
+```
+
+Squaring gives a quadratic in `t`:
+
+```text
+t²·((a·d)² + b²) - 2c·(a·d)·t + (c² - b²) = 0
+```
+
+The shader solves the quadratic, discards roots with `t ≤ ε`, and discards roots outside the chart disk:
+
+```text
+t² ≥ sin²(radius)
+```
+
+### 7.3 Unfold-the-world (reflection keeps the ray straight)
+
+On a MIRROR hit:
+1. Reflect the ray direction across the surface in the ambient 4D sense.
+2. Build the chart transition that maps the hit point to the chart origin and makes the reflected ray coincide with the original fixed ray.
+3. Transform the object list into the new current chart and continue with the same straight ray.
+
+This preserves the flat, bounded loop from v3.
+
+### 7.4 Lighting convention (v4)
+
+Lighting remains point lights in chart coordinates, as in v3, but the lift/unlift maps change:
+
+- `liftPoint(x) = (x, sqrt(1 - |x|²))`
+- `unliftPoint(X) = X.xyz`
+- `liftTangent` and `unliftTangent` are the differentials of those maps.
+
+At an OPAQUE hit point `p`, for each point light at current chart position `q`, compute the ambient tangent `V` at `P` pointing toward `Q`, map it back to the chart tangent `L`, and shade:
+
+```text
+falloff = 1 / (1 + controls.falloffK * t)
 
 radiance = material.rgb
          * (controls.ambient
             + falloff * Σ light.color * light.intensity * max(dot(N, L), 0))
 ```
-
-where `chartDistance` is the camera-chart distance from the origin to the hit point (§7.2). Lights are authored in any chart, flattened by C++ into the camera chart, and then transformed by the shader into the current ray chart after each mirror bounce. A point light must lie inside the Poincaré ball for H³; S³ has no interior bound. v3 uses **no light-distance attenuation**; chart distance is not intrinsic geodesic distance.
-
-This is the exact algorithm the CPU reference tracer implements (`Tools/ReferenceTracer`), so the Metal owner transcribes rather than derives, and the CPU/GPU diff (macOS CI) validates the port.
 
 ---
 
@@ -323,7 +383,7 @@ This is the exact algorithm the CPU reference tracer implements (`Tools/Referenc
 
 ## 9. Versioning & change workflow (normative)
 
-- `GEO_CONTRACT_VERSION` is currently **3**. `PacketMeta.contractVersion` must match; mismatch → upload rejected (and Swift-side assert).
+- `GEO_CONTRACT_VERSION` is currently **4**. `PacketMeta.contractVersion` must match; mismatch → upload rejected (and Swift-side assert).
 - Any change to struct layout, enum values, coordinate/unit conventions, solver behavior, or any number in this document → **discuss first, bump version, land with tests + regrown goldens in the same change**.
 - Adding a field extends the struct **at the end**; never reorder.
 - Metal side reports shader-observed issues (NaN, precision, edge cases) to the C++ owner with a repro; C++ owner fixes shared math, adds a regression test, regrows goldens, bumps version.
@@ -356,8 +416,9 @@ This is the exact algorithm the CPU reference tracer implements (`Tools/Referenc
 
 ---
 
-## 12. Open questions (resolve before v3)
+## 12. Open questions (resolve before v4 implementation)
 
-1. Off-center camera: v2 renders only at the chart origin; a Möbius view-transform for arbitrary camera pose is deferred. Confirm this is acceptable for the first renderer.
-2. Object splitting for spheres that span a chart's projection point (S³): v2 rejects at authoring; splitting heuristic deferred.
-3. `PLANE` mirrors restricted to through-origin planes; general planes (offset ≠ 0) are represented as large mirror spheres. Acceptable?
+1. Exact H³ `OPAQUE` validity bounds in the disk model; derive and write the host-side validation formula.
+2. Exact transformation law for `(a,b,c)` under H³ Lorentz transitions; prove the flattening formula.
+3. Off-center camera: v4 still renders at the chart origin; confirm whether a view-transform is needed for the first v4 renderer.
+4. For S³ charts with `r > π/2`, confirm that the disk boundary should cull in the shader exactly as `|x|² >= sin²(r)`.

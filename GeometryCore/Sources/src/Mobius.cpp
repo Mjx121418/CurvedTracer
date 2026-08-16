@@ -1,4 +1,5 @@
 #include "GeometryCore/Mobius.h"
+#include "GeometryCore/Disk.h"
 #include "GeometryCore/Hyperboloid.h"
 #include "GeometryCore/Sphere3.h"
 
@@ -77,6 +78,19 @@ vec3 Mobius::apply(const vec3& b) const {
     vec4 x = S3::chartToModel(b);
     vec4 y = mat4Apply(m, x);
     return S3::modelToChart(y);
+}
+
+vec3 Mobius::applyChartPoint(const vec3& b) const {
+    if (kind == ModelKind::H3) {
+        vec3 p = disk::toPoincare(b);
+        vec4 x = H3::ballToModel(p);
+        vec4 y = mat4Apply(m, x);
+        vec3 p2 = H3::modelToBall(y);
+        return disk::fromPoincare(p2);
+    }
+    vec4 X = disk::toAmbient(b);
+    vec4 Y = mat4Apply(m, X);
+    return disk::fromAmbient(Y);
 }
 
 Mobius Mobius::compose(const Mobius& other) const {
@@ -216,6 +230,64 @@ void Mobius::applyPlane(const vec3& normal, float offset,
     vec3 p0 = n * offset;
     vec3 src[4] = { p0, p0 + u * s, p0 + v * s, p0 + u * (2.0f * s) };
     fitTransformedPrimitive(*this, src, oc, orr, op);
+}
+
+void Mobius::applySurface(const vec3& a, float b, float c,
+                          vec3& outA, float& outB, float& outC) const {
+    if (kind == ModelKind::S3) {
+        // Direct O(4) ambient transform:
+        //     A·X = c,  Y = M X  =>  A' = M A,  c' = c.
+        vec4 A(a.x, a.y, a.z, b);
+        vec4 Ap = mat4Apply(m, A);
+        outA = Ap.xyz();
+        outB = Ap.w;
+        outC = c;
+        return;
+    }
+
+    // H3: disk surface -> Poincare sphere/plane -> old apply -> disk surface.
+    float Acoef = b + c;
+    vec3 Bcoef = a * -2.0f;
+    float Ccoef = c - b;
+
+    vec3 pc;
+    float pr = 0.0f;
+    bool pp = false;
+
+    if (mhAbs(Acoef) < 1e-7f) {
+        // Poincare plane: Bcoef·p + Ccoef = 0  =>  n·p = offset.
+        float lenB = length(Bcoef);
+        if (lenB < 1e-12f) {
+            outA = a; outB = b; outC = c;
+            return;
+        }
+        vec3 n = Bcoef / lenB;
+        float off = -Ccoef / lenB;
+        applyPlane(n, off, pc, pr, pp);
+    } else {
+        vec3 center = a * (1.0f / Acoef);
+        float radiusSq = (lengthSq(a) + b * b - c * c) / (Acoef * Acoef);
+        if (radiusSq < 0.0f) radiusSq = 0.0f;
+        applySphere(center, mhSqrt(radiusSq), pc, pr, pp);
+    }
+
+    // Convert transformed Poincare sphere/plane back to disk coefficients.
+    float A2;
+    vec3 B2;
+    float C2;
+    if (pp) {
+        A2 = 0.0f;
+        B2 = pc * 2.0f;
+        C2 = -2.0f * pr;
+    } else {
+        A2 = 1.0f;
+        B2 = pc * -2.0f;
+        C2 = lengthSq(pc) - pr * pr;
+    }
+
+    outA = B2 * -0.5f;
+    outB = (A2 - C2) * 0.5f;
+    outC = (A2 + C2) * 0.5f;
 }
 
 } // namespace geo

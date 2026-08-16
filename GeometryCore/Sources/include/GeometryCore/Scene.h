@@ -3,7 +3,7 @@
 // POD structs only; static_asserts are host-only so MSL sees pure declarations.
 #include "GeometryCore/Math.h"
 
-#define GEO_CONTRACT_VERSION 3
+#define GEO_CONTRACT_VERSION 4
 #define GEO_PACKET_MAGIC 0x4E545243  // "NTRC" as an int32 field
 
 #define GEO_MAX_OBJECTS 4096
@@ -16,7 +16,6 @@
 
 #define GEO_OBJECT_OPAQUE 0
 #define GEO_OBJECT_MIRROR 1
-#define GEO_OBJECT_PLANE 2
 
 namespace geo {
 
@@ -38,8 +37,8 @@ struct Camera {
     float padFwd;    // 44
     float fovTan;    // 48
     float aspect;    // 52
-    float pad0;      // 56
-    float pad1;      // 60
+    float chartRadiusSin; // 56
+    float chartRadiusCos; // 60
 };
 
 // 32 bytes
@@ -64,12 +63,12 @@ struct Counts {
 
 // 32 bytes
 struct Object {
-    vec3 center;            // 0   sphere center or plane unit normal
-    float radiusOrOffset;   // 12  sphere radius or plane signed offset
-    int kind;               // 16  GEO_OBJECT_OPAQUE / GEO_OBJECT_MIRROR / GEO_OBJECT_PLANE
-    int colorIdx;           // 20
-    int pad0;               // 24
-    int pad1;               // 28
+    vec3 a;                 // 0   hyperplane normal part
+    float b;                // 12  hyperplane w coefficient
+    float c;                // 16  hyperplane right-hand side
+    int kind;               // 20  GEO_OBJECT_OPAQUE / GEO_OBJECT_MIRROR
+    int colorIdx;           // 24
+    int pad0;               // 28
 };
 
 // 16 bytes

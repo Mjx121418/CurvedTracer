@@ -16,6 +16,9 @@ struct Mobius {
     // Apply this map to a chart point (R3 coordinates in a stereographic chart).
     vec3 apply(const vec3& chartPoint) const;
 
+    // CONTRACT v4: apply this map to a disk-chart point.
+    vec3 applyChartPoint(const vec3& chartPoint) const;
+
     // this ∘ other (kinds must match).
     Mobius compose(const Mobius& other) const;
 
@@ -31,6 +34,12 @@ struct Mobius {
     // The image is a sphere or, if it passes through the projection point, a plane.
     void applyPlane(const vec3& normal, float offset,
                     vec3& outCenter, float& outRadius, bool& outIsPlane) const;
+
+    // CONTRACT v4: transform a disk-chart hyperplane section
+    //     a·x + b·sqrt(1-|x|²) = c
+    // into a new chart.
+    void applySurface(const vec3& a, float b, float c,
+                      vec3& outA, float& outB, float& outC) const;
 };
 
 } // namespace geo

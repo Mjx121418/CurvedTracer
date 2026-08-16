@@ -29,9 +29,10 @@ inline std::string geometryCoreName() { return "Geometry Core"; }
 
 struct ChartObject {
     int chartId = -1;
-    int kind = GEO_OBJECT_OPAQUE;      // GEO_OBJECT_OPAQUE / GEO_OBJECT_MIRROR / GEO_OBJECT_PLANE
-    vec3 center;                       // sphere center or plane unit normal
-    float radiusOrOffset = 0.0f;       // sphere radius or plane signed offset
+    int kind = GEO_OBJECT_OPAQUE;      // GEO_OBJECT_OPAQUE / GEO_OBJECT_MIRROR
+    vec3 a;                            // hyperplane normal part
+    float b = 0.0f;                    // hyperplane w coefficient
+    float c = 0.0f;                    // hyperplane right-hand side
     int colorIdx = 0;
 };
 
@@ -50,6 +51,7 @@ struct ChartEdge {
 
 struct Chart {
     int id = -1;
+    float radius = 1.0f;               // geodesic disk radius, radians
     std::vector<ChartEdge> edges;
     std::vector<int> objectIds;
     std::vector<int> lightIds;
@@ -63,14 +65,14 @@ public:
     // Swift C++ interop treats a method named `begin` as a C++ iterator and
     // hides it; `start` is the Swift-visible alias for begin.
     void start(int modelKind) { begin(modelKind); }
-    int seed();                        // returns 0 (anchorless base chart)
-    int addChart(int fromChart, const float m[16], bool safe);          // returns new chart id
+    int seed(float radius);            // anchorless base chart; returns 0
+    int addChart(float radius, int fromChart, const float m[16], bool safe);   // returns new chart id
     void linkCharts(int a, int b, const float m_ab[16], bool safe);
 
-    // Shorter aliases matching the Phase-2 worklog names.
-    int add(int fromChart, const float m[16], bool safe) { return addChart(fromChart, m, safe); }
+    // Shorter aliases.
+    int add(float radius, int fromChart, const float m[16], bool safe) { return addChart(radius, fromChart, m, safe); }
     void link(int a, int b, const float m_ab[16], bool safe) { linkCharts(a, b, m_ab, safe); }
-    int addObject(int chartId, int kind, const vec3& center, float radiusOrOffset, int colorIdx);
+    int addObject(int chartId, int kind, const vec3& a, float b, float c, int colorIdx);
     int addMaterial(const vec4& color);
     int addLight(int chartId, const vec3& position, const vec3& color, float intensity);
     void setCamera(float fovTan, float aspect, const vec3& right, const vec3& up, const vec3& fwd);
@@ -121,6 +123,7 @@ private:
 
     bool validChartId(int id) const { return id >= 0 && id < static_cast<int>(charts_.size()); }
     bool validModelKind() const { return modelKind_ == GEO_MODEL_H3 || modelKind_ == GEO_MODEL_S3; }
+    bool validChartRadius(float r) const;
     Mobius identityMobius() const;
     Mobius mobiusFromMatrix(const float m[16]) const;
 

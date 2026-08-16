@@ -146,8 +146,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         atlas = geo.Atlas()
         atlas.start(0)
 
-        // The anchorless base chart is always id 0.
-        cameraChart = atlas.seed()
+        // The anchorless base chart is always id 0. H3 chart radius: π/2.
+        cameraChart = atlas.seed(1.5707963267948966)
 
         // Add materials first; colorIdx refers to these in order.
         _ = atlas.addMaterial(geo.vec4(1.0, 0.0, 0.0, 1.0))  // material 0: red
@@ -159,22 +159,14 @@ final class Renderer: NSObject, MTKViewDelegate {
         _ = atlas.addMaterial(geo.vec4(1.0, 1.0, 1.0, 1.0))  // material 6: white
         _ = atlas.addMaterial(geo.vec4(1.0, 0.5, 0.0, 1.0))  // material 7: orange
 
-        // Directly visible opaque spheres, all in front of the mirror sphere.
-        // kind: 0 = OPAQUE sphere, 1 = MIRROR sphere, 2 = MIRROR plane
-        _ = atlas.addObject(0, 0, geo.vec3(-0.05, 0.00, 0.10), 0.06, 0) // red
-        _ = atlas.addObject(0, 0, geo.vec3( 0.12, 0.04, 0.15), 0.07, 1) // green
-        _ = atlas.addObject(0, 0, geo.vec3(-0.15,-0.06, 0.20), 0.09, 2) // blue
-        _ = atlas.addObject(0, 0, geo.vec3( 0.00, 0.10, 0.22), 0.07, 3) // yellow
-        _ = atlas.addObject(0, 0, geo.vec3( 0.00,-0.10, 0.18), 0.06, 5) // magenta
+        // Simple v4 disk-chart objects: geodesic balls around the origin are
+        // a=0, b=1, c=cos(radius). c=0.8 means disk radius sqrt(1-0.8²).
+        _ = atlas.addObject(0, 0, geo.vec3(0, 0, 0), 1.0, 0.80, 0) // red
+        _ = atlas.addObject(0, 0, geo.vec3(0, 0, 0), 1.0, 0.55, 1) // green
+        _ = atlas.addObject(0, 0, geo.vec3(0, 0, 0), 1.0, 0.30, 2) // blue
 
-        // Neutral mirror sphere in front of the camera; it reflects the
-        // colorful opaque spheres behind the camera.
-        _ = atlas.addObject(0, 1, geo.vec3(0.0, 0.0, 2.0), sqrt(3.0), 6)
-
-        // Colorful objects behind the camera, visible through the mirror.
-        _ = atlas.addObject(0, 0, geo.vec3( 0.10, 0.10,-0.30), 0.15, 4) // cyan
-        _ = atlas.addObject(0, 0, geo.vec3(-0.12,-0.08,-0.35), 0.16, 5) // magenta
-        _ = atlas.addObject(0, 0, geo.vec3( 0.00, 0.00,-0.45), 0.18, 7) // orange
+        // H3 mirror hyperplane through the origin: a unit, b=0, c=0.
+        _ = atlas.addObject(0, 1, geo.vec3(0, 0, 1), 0.0, 0.0, 6)
 
         // Point lights in the camera chart. H3 light positions must be inside
         // the Poincare ball.

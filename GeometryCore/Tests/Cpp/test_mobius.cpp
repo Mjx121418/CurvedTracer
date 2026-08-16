@@ -118,6 +118,31 @@ void test_mobius() {
         CHECK_NEAR(orr, 0.0f, 1e-3);
     }
 
+    // ---- v4 disk-chart applyChartPoint and applySurface smoke tests ----
+    {
+        Mobius diskId;
+        diskId.kind = ModelKind::H3;
+        vec3 dp(0.2f, -0.1f, 0.3f);
+        vec3 dq = diskId.applyChartPoint(dp);
+        CHECK_NEAR(dq.x, dp.x, 1e-5);
+        CHECK_NEAR(dq.y, dp.y, 1e-5);
+        CHECK_NEAR(dq.z, dp.z, 1e-5);
+
+        Mobius diskRot;
+        diskRot.kind = ModelKind::S3;
+        diskRot.m = rotationX1X4(1.5707963f);
+        vec3 ro = diskRot.applyChartPoint(vec3(0, 0, 0));
+        CHECK_NEAR(ro.x, -1.0f, 1e-4);
+        CHECK_NEAR(ro.y, 0.0f, 1e-4);
+        CHECK_NEAR(ro.z, 0.0f, 1e-4);
+
+        vec3 oa; float ob; float oc;
+        diskRot.applySurface(vec3(1,0,0), 0.0f, 0.0f, oa, ob, oc);
+        CHECK_NEAR(oa.x, 0.0f, 1e-3);
+        CHECK_NEAR(ob, 1.0f, 1e-3);
+        CHECK_NEAR(oc, 0.0f, 1e-3);
+    }
+
     // ---- applyPlane: H3 plane through origin -> sphere or plane ----
     {
         vec3 oc; float orr; bool op = false;

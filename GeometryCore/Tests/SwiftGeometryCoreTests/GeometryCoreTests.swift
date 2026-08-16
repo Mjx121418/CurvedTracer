@@ -22,7 +22,7 @@ final class GeometryCoreTests: XCTestCase {
         var atlas = geo.Atlas()
         atlas.start(0)   // H3; `start` is the Swift-visible alias for C++ `begin`
 
-        XCTAssertEqual(atlas.seed(), 0)
+        XCTAssertEqual(atlas.seed(1.0), 0)
 
         // Add a second chart linked by an identity Mobius transition.
         let identity: [Float] = [
@@ -31,11 +31,11 @@ final class GeometryCoreTests: XCTestCase {
             0, 0, 1, 0,
             0, 0, 0, 1,
         ]
-        XCTAssertEqual(atlas.add(0, identity, true), 1)
+        XCTAssertEqual(atlas.add(1.0, 0, identity, true), 1)
 
-        // Author an H3 OPAQUE sphere, a material, and a point light.
-        let center = geo.vec3(0.2, 0.0, 0.0)
-        XCTAssertEqual(atlas.addObject(0, 0, center, 0.3, 0), 0)
+        // Author an H3 OPAQUE sphere (w=0.8), a material, and a point light.
+        let a = geo.vec3(0.0, 0.0, 0.0)
+        XCTAssertEqual(atlas.addObject(0, 0, a, 1.0, 0.8, 0), 0)
         XCTAssertEqual(atlas.addMaterial(geo.vec4(1.0, 0.5, 0.25, 1.0)), 0)
         XCTAssertEqual(atlas.addLight(0, geo.vec3(0.0, 0.0, -0.4), geo.vec3(1.0, 1.0, 0.9), 0.8), 0)
 

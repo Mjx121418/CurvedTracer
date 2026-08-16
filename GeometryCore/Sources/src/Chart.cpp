@@ -52,12 +52,22 @@ void Atlas::begin(int modelKind) {
     }
 }
 
-int Atlas::seed() {
+bool Atlas::validChartRadius(float r) const {
+    if (!std::isfinite(r)) return false;
+    if (modelKind_ == GEO_MODEL_H3) {
+        return r > 0.0f && r <= 1.5707963267948966f + 1e-4f;  // π/2 + eps
+    }
+    return r > 0.0f && r < 3.141592653589793f - 1e-4f;          // π - eps
+}
+
+int Atlas::seed(float radius) {
     clearPacket();
     if (!validModelKind()) { setError(6); return -1; }
     if (!charts_.empty()) { setError(5); return -1; }   // anchorless seed is unique
+    if (!validChartRadius(radius)) { setError(3); return -1; }
     Chart c;
     c.id = 0;
+    c.radius = radius;
     charts_.push_back(c);
     setError(0);
     return 0;
@@ -92,10 +102,11 @@ void Atlas::upsertEdge(int a, int b, const Mobius& m_ab, bool safe) {
     charts_[a].edges.push_back(e);
 }
 
-int Atlas::addChart(int fromChart, const float m[16], bool safe) {
+int Atlas::addChart(float radius, int fromChart, const float m[16], bool safe) {
     clearPacket();
     if (!validModelKind()) { setError(6); return -1; }
     if (!validChartId(fromChart)) { setError(4); return -1; }
+    if (!validChartRadius(radius)) { setError(3); return -1; }
     if (!m) { setError(3); return -1; }
     for (int i = 0; i < 16; ++i) {
         if (!std::isfinite(m[i])) { setError(3); return -1; }
@@ -106,6 +117,7 @@ int Atlas::addChart(int fromChart, const float m[16], bool safe) {
 
     Chart c;
     c.id = static_cast<int>(charts_.size());
+    c.radius = radius;
     charts_.push_back(c);
     int newId = c.id;
 
@@ -131,7 +143,7 @@ void Atlas::linkCharts(int a, int b, const float m_ab[16], bool safe) {
     setError(0);
 }
 
-int Atlas::addObject(int chartId, int kind, const vec3& center, float radiusOrOffset, int colorIdx) {
+int Atlas::addObject(int chartId, int kind, const vec3& a, float b, float c, int colorIdx) {
     clearPacket();
     if (!validModelKind()) { setError(6); return -1; }
     if (static_cast<int>(objects_.size()) >= GEO_MAX_OBJECTS) { capacityExceeded_ = true; setError(5); return -1; }
@@ -141,8 +153,9 @@ int Atlas::addObject(int chartId, int kind, const vec3& center, float radiusOrOf
     ChartObject o;
     o.chartId = chartId;
     o.kind = kind;
-    o.center = center;
-    o.radiusOrOffset = radiusOrOffset;
+    o.a = a;
+    o.b = b;
+    o.c = c;
     o.colorIdx = colorIdx;
     int objId = static_cast<int>(objects_.size());
     objects_.push_back(o);
@@ -244,44 +257,33 @@ void Atlas::cameraRotate(const vec3& axis, float deltaRadians) {
 
 int Atlas::validateObjectBasics(const ChartObject& o, int materialCount) const {
     if (!validChartId(o.chartId)) return 3;
-    if (o.kind < GEO_OBJECT_OPAQUE || o.kind > GEO_OBJECT_PLANE) return 3;
-    if (!finiteVec(o.center) || !finiteFloat(o.radiusOrOffset)) return 3;
-    if (o.kind != GEO_OBJECT_PLANE && o.radiusOrOffset <= 0.0f) return 3;
+    if (o.kind < GEO_OBJECT_OPAQUE || o.kind > GEO_OBJECT_MIRROR) return 3;
+    if (!finiteVec(o.a) || !finiteFloat(o.b) || !finiteFloat(o.c)) return 3;
     if (o.colorIdx < 0 || o.colorIdx >= materialCount) return 3;
     return 0;
 }
 
 int Atlas::validateObjectModel(const ChartObject& o) const {
-    if (o.kind == GEO_OBJECT_OPAQUE) {
-        if (modelKind_ == GEO_MODEL_H3) {
-            // OPAQUE spheres must stay strictly inside the unit ball.
-            float r = o.radiusOrOffset;
-            if (length(o.center) + r >= 1.0f) return 3;
-        }
-        return 0;
-    }
+    float radius = charts_[o.chartId].radius;
 
     if (o.kind == GEO_OBJECT_MIRROR) {
-        float r = o.radiusOrOffset;
-        float c2 = lengthSq(o.center);
         if (modelKind_ == GEO_MODEL_H3) {
-            // |center|^2 == radius^2 + 1
-            float target = r * r + 1.0f;
-            float tol = kObjectEps * mhMax(1.0f, target);
-            if (mhAbs(c2 - target) > tol) return 3;
+            // H3 mirror: hyperbolic hyperplane orthogonal to the ideal equator.
+            if (mhAbs(o.b) > kObjectEps) return 3;
+            if (mhAbs(length(o.a) - 1.0f) > kObjectEps) return 3;
+            if (mhAbs(o.c) >= mhSin(radius) - 1e-4f) return 3;
         } else {
-            // |center|^2 == radius^2 - 1
-            float target = r * r - 1.0f;
-            float tol = kObjectEps * mhMax(1.0f, r * r);
-            if (target < 0.0f || mhAbs(c2 - target) > tol) return 3;
+            // S3 mirror: great sphere.
+            if (mhAbs(o.c) > kObjectEps) return 3;
+            if (mhAbs(mhSqrt(lengthSq(o.a) + o.b * o.b) - 1.0f) > kObjectEps) return 3;
         }
         return 0;
     }
 
-    // GEO_OBJECT_PLANE: unit normal through the origin.
-    float normalLen = length(o.center);
-    if (mhAbs(normalLen - 1.0f) > kObjectEps) return 3;
-    if (mhAbs(o.radiusOrOffset) > kPlaneOffsetEps) return 3;
+    // OPAQUE: a small sphere inside the chart disk. The common v4 OPAQUE is
+    // a geodesic ball around the origin: a=0, b=1, c=w0.
+    if (o.c <= mhCos(radius) + 1e-4f) return 3;   // boundary must be inside the disk
+    if (o.c >= 1.0f - 1e-4f) return 3;            // boundary must have positive radius
     return 0;
 }
 
@@ -289,10 +291,8 @@ int Atlas::validateLight(const ChartLight& light) const {
     if (!validChartId(light.chartId)) return 3;
     if (!finiteVec(light.position) || !finiteVec(light.color) || !finiteFloat(light.intensity)) return 3;
     if (light.intensity < 0.0f) return 3;
-    if (modelKind_ == GEO_MODEL_H3) {
-        // H3 chart is the Poincare ball; a finite point light must be inside it.
-        if (length(light.position) >= 1.0f - 1e-4f) return 3;
-    }
+    float radius = charts_[light.chartId].radius;
+    if (length(light.position) >= mhSin(radius) - 1e-4f) return 3;
     return 0;
 }
 
@@ -482,8 +482,9 @@ int Atlas::build(int cameraChart, int maxChartDepth) {
     // ---- transform objects into the camera chart ----
     struct FlatObject {
         int kind;
-        vec3 center;
-        float radiusOrOffset;
+        vec3 a;
+        float b;
+        float c;
         int colorIdx;
     };
     std::vector<FlatObject> flat;
@@ -497,17 +498,6 @@ int Atlas::build(int cameraChart, int maxChartDepth) {
         return true;
     };
 
-    auto validFlatPrimitive = [](bool op, const vec3& c, float r) {
-        if (!finiteVec(c) || !finiteFloat(r)) return false;
-        if (op) {
-            if (mhAbs(length(c) - 1.0f) > 1e-3f) return false;
-            if (mhAbs(r) > 1e-3f) return false;
-        } else {
-            if (r <= 0.0f) return false;
-        }
-        return true;
-    };
-
     for (int x = 0; x < n; ++x) {
         if (charts_[x].objectIds.empty()) continue;
         Mobius toCam = (x == cameraChart) ? identityMobius() : flattenPath[x].inverse();
@@ -516,45 +506,16 @@ int Atlas::build(int cameraChart, int maxChartDepth) {
             if (objId < 0 || objId >= objectCount) { setError(3); return 3; }
             const ChartObject& o = objects_[objId];
 
-            if (copyDirect) {
-                flat.push_back({o.kind, o.center, o.radiusOrOffset, o.colorIdx});
-                continue;
+            vec3 fa = o.a;
+            float fb = o.b;
+            float fc = o.c;
+
+            if (!copyDirect) {
+                toCam.applySurface(o.a, o.b, o.c, fa, fb, fc);
+                if (!finiteVec(fa) || !finiteFloat(fb) || !finiteFloat(fc)) { setError(3); return 3; }
             }
 
-            vec3 oc;
-            float orr = 0.0f;
-            bool op = false;
-
-            if (o.kind == GEO_OBJECT_PLANE) {
-                toCam.applyPlane(o.center, o.radiusOrOffset, oc, orr, op);
-                if (op) {
-                    // A valid mirror plane stays a plane only when it passes
-                    // through the camera-chart origin; clamp tiny drift to 0.
-                    if (mhAbs(orr) <= 1e-3f) orr = 0.0f;
-                    if (!validFlatPrimitive(true, oc, orr)) { setError(3); return 3; }
-                    flat.push_back({GEO_OBJECT_PLANE, oc, orr, o.colorIdx});
-                } else {
-                    if (!validFlatPrimitive(false, oc, orr)) { setError(3); return 3; }
-                    flat.push_back({GEO_OBJECT_MIRROR, oc, orr, o.colorIdx});
-                }
-            } else {
-                toCam.applySphere(o.center, o.radiusOrOffset, oc, orr, op);
-                if (op) {
-                    if (o.kind == GEO_OBJECT_MIRROR) {
-                        if (mhAbs(orr) <= 1e-3f) orr = 0.0f;
-                        if (!validFlatPrimitive(true, oc, orr)) { setError(3); return 3; }
-                        flat.push_back({GEO_OBJECT_PLANE, oc, orr, o.colorIdx});
-                    } else {
-                        // An OPAQUE sphere flattened to a plane would be an
-                        // OPAQUE half-space, which the v2 packet cannot express.
-                        setError(3);
-                        return 3;
-                    }
-                } else {
-                    if (!validFlatPrimitive(false, oc, orr)) { setError(3); return 3; }
-                    flat.push_back({o.kind, oc, orr, o.colorIdx});
-                }
-            }
+            flat.push_back({o.kind, fa, fb, fc, o.colorIdx});
         }
     }
 
@@ -576,9 +537,8 @@ int Atlas::build(int cameraChart, int maxChartDepth) {
             const ChartLight& light = lights_[lightId];
             vec3 lp = light.position;
             if (!copyDirect) {
-                lp = toCam.apply(light.position);
+                lp = toCam.applyChartPoint(light.position);
                 if (!finiteVec(lp)) { setError(3); return 3; }
-                if (modelKind_ == GEO_MODEL_H3 && length(lp) >= 1.0f - 1e-4f) { setError(3); return 3; }
             }
             flatLights.push_back({lp, light.color, light.intensity});
         }
@@ -602,10 +562,11 @@ int Atlas::build(int cameraChart, int maxChartDepth) {
     std::sort(flat.begin(), flat.end(), [](const FlatObject& a, const FlatObject& b) {
         if (a.kind != b.kind) return a.kind < b.kind;
         if (a.colorIdx != b.colorIdx) return a.colorIdx < b.colorIdx;
-        if (a.center.x != b.center.x) return a.center.x < b.center.x;
-        if (a.center.y != b.center.y) return a.center.y < b.center.y;
-        if (a.center.z != b.center.z) return a.center.z < b.center.z;
-        return a.radiusOrOffset < b.radiusOrOffset;
+        if (a.a.x != b.a.x) return a.a.x < b.a.x;
+        if (a.a.y != b.a.y) return a.a.y < b.a.y;
+        if (a.a.z != b.a.z) return a.a.z < b.a.z;
+        if (a.b != b.b) return a.b < b.b;
+        return a.c < b.c;
     });
 
     const int flatCount = static_cast<int>(flat.size());
@@ -629,8 +590,8 @@ int Atlas::build(int cameraChart, int maxChartDepth) {
     hdr.camera.padFwd = 0.0f;
     hdr.camera.fovTan = fovTan_;
     hdr.camera.aspect = aspect_;
-    hdr.camera.pad0 = 0.0f;
-    hdr.camera.pad1 = 0.0f;
+    hdr.camera.chartRadiusSin = mhSin(charts_[cameraChart].radius);
+    hdr.camera.chartRadiusCos = mhCos(charts_[cameraChart].radius);
     hdr.controls.maxBounces = maxBounces_;
     hdr.controls.modelKind = modelKind_;
     hdr.controls.falloffK = falloffK_;
@@ -649,12 +610,12 @@ int Atlas::build(int cameraChart, int maxChartDepth) {
 
     for (const auto& f : flat) {
         Object obj{};
-        obj.center = f.center;
-        obj.radiusOrOffset = f.radiusOrOffset;
+        obj.a = f.a;
+        obj.b = f.b;
+        obj.c = f.c;
         obj.kind = f.kind;
         obj.colorIdx = f.colorIdx;
         obj.pad0 = 0;
-        obj.pad1 = 0;
         std::memcpy(packet_.data() + off, &obj, sizeof(obj));
         off += sizeof(obj);
     }

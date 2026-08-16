@@ -172,9 +172,9 @@ final class Renderer: NSObject, MTKViewDelegate {
         _ = atlas.addObject(0, 0, geo.vec3( 0.00,-0.10, 0.18), 0.4806, 0.5194, 5) // magenta
 
         // Old H3 mirror sphere c=(0,0,2), r=√3 becomes disk plane z=0.5.
-        // _ = atlas.addObject(0, 1, geo.vec3(0, 0, 1), 0.0, 0.5, 6)
+        _ = atlas.addObject(0, 1, geo.vec3(0, 0, 1), 0.0, 0.5, 6)
 
-        // Replacement mirror: normal (0,1,0), below all existing balls.
+        // mirror: normal (0,1,0), below all existing balls.
         _ = atlas.addObject(0, 1, geo.vec3(0, 1, 0), 0.0, -0.25, 6)
 
         // Colorful objects behind the camera, visible through the mirror.
@@ -197,7 +197,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         )
 
         atlas.setControls(
-            3,
+            5,
             0.05,
             0.25,
             0.95

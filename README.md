@@ -36,7 +36,7 @@ swift run geometry_tests   # full C++ test suite
 
 Build and run `CurvedTracer.xcodeproj` with Xcode on macOS.
 
-Controls after pressing **Tab** to enter mouse-control mode:
+Press **Tab** to enter control mode:
 
 | Input | Action |
 |---|---|
@@ -45,7 +45,7 @@ Controls after pressing **Tab** to enter mouse-control mode:
 | A / D | Move left / right |
 | R / F | Move up / down |
 | Q / E | Roll left / right |
-| Tab | Toggle mouse-control mode |
+| Tab | Toggle on / off control mode |
 
 ## Acknowledgement
 

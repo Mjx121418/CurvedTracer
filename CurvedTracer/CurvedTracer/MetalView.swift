@@ -89,10 +89,14 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     private var mouseMonitor: Any?
     private var keyMonitor: Any?
+    private var keyUpMonitor: Any?
     private var cameraControlEnabled = false
     private var pendingMouseDX: Float = 0
     private var pendingMouseDY: Float = 0
     private let mouseSensitivity: Float = 0.005
+    private let cameraMoveSpeed: Float = 0.01
+    private let cameraRollSpeed: Float = 0.01
+    private var pressedKeys: [UInt16: Bool] = [:]
 
     var ambientSpace: AmbientSpace = .sphere
 
@@ -105,11 +109,22 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
 
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if event.keyCode == 48 {   // Tab
-                if let self {
+            if let self {
+                if event.keyCode == 48 {   // Tab
                     self.setCameraControlEnabled(!self.cameraControlEnabled)
+                    return nil
                 }
-                return nil
+                if self.isCameraControlKey(event.keyCode) {
+                    self.pressedKeys[event.keyCode] = true
+                    return nil
+                }
+            }
+            return event
+        }
+
+        keyUpMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyUp) { [weak self] event in
+            if let self, self.isCameraControlKey(event.keyCode) {
+                self.pressedKeys[event.keyCode] = false
             }
             return event
         }
@@ -130,6 +145,13 @@ final class Renderer: NSObject, MTKViewDelegate {
         } else {
             NSCursor.unhide()
         }
+    }
+
+    private func isCameraControlKey(_ keyCode: UInt16) -> Bool {
+        // W=13, A=0, S=1, D=2, R=15, F=3, Q=12, E=14
+        return keyCode == 13 || keyCode == 0 || keyCode == 1
+            || keyCode == 2 || keyCode == 15 || keyCode == 3
+            || keyCode == 12 || keyCode == 14
     }
 
     func configure(device: MTLDevice, view: MTKView) {
@@ -195,7 +217,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         atlas.start(0)
 
         // The anchorless base chart is always id 0. H3 chart radius: π/2.
-        cameraChart = atlas.seed(1.5707963267948966)
+        cameraChart = atlas.seed(Float.pi*0.97/2)
 
         // Add materials first; colorIdx refers to these in order.
         _ = atlas.addMaterial(geo.vec4(1.0, 0.0, 0.0, 1.0), geo.vec4(0.3, 0.3, 0.3, 1.0))  // material 0: red
@@ -216,18 +238,19 @@ final class Renderer: NSObject, MTKViewDelegate {
         _ = atlas.addObject(0, 0, geo.vec3(-0.05, 0.00, 0.10), 0.4956, 0.5044, 0) // red
         _ = atlas.addObject(0, 0, geo.vec3( 0.12, 0.04, 0.15), 0.4832, 0.5168, 1) // green
         _ = atlas.addObject(0, 0, geo.vec3(-0.15,-0.06, 0.20), 0.4710, 0.5290, 2) // blue
-        _ = atlas.addObject(0, 0, geo.vec3( 0.00, 0.10, 0.22), 0.4732, 0.5268, 3) // yellow
-        _ = atlas.addObject(0, 0, geo.vec3( 0.00,-0.10, 0.18), 0.4806, 0.5194, 5) // magenta
+        // _ = atlas.addObject(0, 0, geo.vec3( 0.00, 0.10, 0.22), 0.4732, 0.5268, 3) // yellow
+        // _ = atlas.addObject(0, 0, geo.vec3( 0.00,-0.10, 0.18), 0.4806, 0.5194, 5) // magenta
 
         // Old H3 mirror sphere c=(0,0,2), r=√3 becomes disk plane z=0.5.
-        _ = atlas.addObject(0, 1, geo.vec3(0, 0, 1), 0.0, 0.5, 6)
+        // _ = atlas.addObject(0, 1, geo.vec3(0, 0, 1), 0.0, 0.5, 6)
 
         // mirror: normal (0,1,0), below all existing balls.
-        _ = atlas.addObject(0, 1, geo.vec3(0, 1, 0), 0.0, -0.25, 6)
+        _ = atlas.addObject(0, 1, geo.vec3(0, 1, 0), 0.0, -0.35, 6)
+        _ = atlas.addObject(0, 1, geo.vec3(0, -1, 0), 0.0, -0.35, 6)
 
         // Colorful objects behind the camera, visible through the mirror.
-        _ = atlas.addObject(0, 0, geo.vec3( 0.10, 0.10,-0.30), 0.4563, 0.5438, 4) // cyan
-        _ = atlas.addObject(0, 0, geo.vec3(-0.12,-0.08,-0.35), 0.4412, 0.5588, 5) // magenta
+        // _ = atlas.addObject(0, 0, geo.vec3( 0.10, 0.10,-0.30), 0.4563, 0.5438, 4) // cyan
+        // _ = atlas.addObject(0, 0, geo.vec3(-0.12,-0.08,-0.35), 0.4412, 0.5588, 5) // magenta
         _ = atlas.addObject(0, 0, geo.vec3( 0.00, 0.00,-0.45), 0.4150, 0.5850, 7) // orange
 
         // Point lights in the camera chart. H3 light positions must be inside
@@ -250,6 +273,9 @@ final class Renderer: NSObject, MTKViewDelegate {
             0.25,
             0.95
         )
+
+        // Initialize the special camera chart at the base position.
+        cameraChart = atlas.cameraChartAt(0, geo.vec3(0, 0, 0), 1.5707963267948966)
 
         // Validate and flatten into the camera chart.
         let result = atlas.build(cameraChart, 64)
@@ -285,19 +311,63 @@ final class Renderer: NSObject, MTKViewDelegate {
             return
         }
 
-        guard pendingMouseDX != 0 || pendingMouseDY != 0 else {
+        if pendingMouseDX != 0 || pendingMouseDY != 0 {
+            // Always rotate around the camera's current local axes.
+            atlas.cameraRotate(atlas.cameraUp(), pendingMouseDX * mouseSensitivity)
+            atlas.cameraRotate(atlas.cameraRight(), pendingMouseDY * mouseSensitivity)
+            pendingMouseDX = 0
+            pendingMouseDY = 0
+        }
+
+        if pressedKeys[12] == true {   // Q: roll left
+            atlas.cameraRoll(cameraRollSpeed)
+        }
+        if pressedKeys[14] == true {   // E: roll right
+            atlas.cameraRoll(-cameraRollSpeed)
+        }
+
+        applyMovementKeys()
+    }
+
+    private func applyMovementKeys() {
+        let right = atlas.cameraRight()
+        let up = atlas.cameraUp()
+        let fwd = atlas.cameraFwd()
+
+        var dx: Float = 0
+        var dy: Float = 0
+        var dz: Float = 0
+
+        if pressedKeys[13] == true {   // W
+            dx += fwd.x; dy += fwd.y; dz += fwd.z
+        }
+        if pressedKeys[1] == true {    // S
+            dx -= fwd.x; dy -= fwd.y; dz -= fwd.z
+        }
+        if pressedKeys[2] == true {    // D
+            dx += right.x; dy += right.y; dz += right.z
+        }
+        if pressedKeys[0] == true {    // A
+            dx -= right.x; dy -= right.y; dz -= right.z
+        }
+        if pressedKeys[15] == true {   // R
+            dx += up.x; dy += up.y; dz += up.z
+        }
+        if pressedKeys[3] == true {    // F
+            dx -= up.x; dy -= up.y; dz -= up.z
+        }
+
+        if dx == 0, dy == 0, dz == 0 {
             return
         }
 
-        // Right/left mouse swipe -> yaw around the camera's local up axis.
-        atlas.cameraRotate(atlas.cameraUp(), pendingMouseDX * mouseSensitivity)
+        let movement = geo.vec3(
+            dx * cameraMoveSpeed,
+            dy * cameraMoveSpeed,
+            dz * cameraMoveSpeed
+        )
 
-        // Forward/backward mouse swipe -> pitch around the camera's local right axis.
-        // Negative sign makes an upward swipe look upward.
-        atlas.cameraRotate(atlas.cameraRight(), pendingMouseDY * mouseSensitivity)
-
-        pendingMouseDX = 0
-        pendingMouseDY = 0
+        cameraChart = atlas.cameraMove(movement)
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {

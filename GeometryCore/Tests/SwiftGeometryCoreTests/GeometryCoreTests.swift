@@ -7,6 +7,23 @@ final class GeometryCoreTests: XCTestCase {
         XCTAssertEqual(String(geo.geometryCoreName()), "Geometry Core")
     }
 
+    func testResolveCameraPlacementSwiftInterop() {
+        var atlas = geo.Atlas()
+        atlas.start(0)
+        _ = atlas.seed(1.0)
+        let placement = atlas.resolveCameraPlacement(0, geo.vec3(0, 0, 0), geo.vec3(0.1, 0, 0))
+        XCTAssertEqual(placement.chartId, 0)
+        XCTAssertEqual(placement.localPosition.x, 0.1)
+
+        let cameraChart = atlas.cameraChartAt(0, geo.vec3(0.1, 0, 0), 1.0)
+        XCTAssertEqual(cameraChart, 1)
+        XCTAssertEqual(atlas.build(Int32(cameraChart), 64), 0)
+
+        let movedChart = atlas.cameraMove(geo.vec3(0.05, 0, 0))
+        XCTAssertEqual(movedChart, atlas.cameraChartId())
+        XCTAssertEqual(atlas.build(Int32(movedChart), 64), 0)
+    }
+
     func testPacketStructSizes() {
         XCTAssertEqual(MemoryLayout<geo.PacketMeta>.size, 16)
         XCTAssertEqual(MemoryLayout<geo.Camera>.size, 64)
@@ -42,6 +59,7 @@ final class GeometryCoreTests: XCTestCase {
         // Camera and controls are data, not shader edits.
         atlas.setCamera(0.8, 1.6, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0), geo.vec3(0, 0, 1))
         atlas.cameraRotate(geo.vec3(0, 1, 0), 0.0)   // smoke-test the Swift-visible camera rotation API
+        atlas.cameraRoll(0.0)                        // smoke-test the Swift-visible roll API
         atlas.setControls(5, 0.1, 0.2, 0.7)
 
         // Build the packet from camera chart 0; 0 means success.

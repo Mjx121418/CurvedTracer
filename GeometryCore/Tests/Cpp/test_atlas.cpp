@@ -168,6 +168,49 @@ void test_atlas() {
     }
 
     // ------------------------------------------------------------------
+    // Camera roll rotates the frame around fwd.
+    // ------------------------------------------------------------------
+    {
+        Atlas atlas;
+        atlas.start(GEO_MODEL_H3);
+        CHECK(atlas.seed(1.0f) == 0);
+        atlas.setCamera(1.0f, 1.0f, vec3(1, 0, 0), vec3(0, 1, 0), vec3(0, 0, 1));
+        atlas.cameraRoll(1.5707963f);   // +90° roll left
+        CHECK_NEAR(atlas.cameraRight().y, 1.0f, 1e-4f);
+        CHECK_NEAR(atlas.cameraUp().x, -1.0f, 1e-4f);
+        CHECK_NEAR(atlas.cameraFwd().z, 1.0f, 1e-4f);
+    }
+
+    // ------------------------------------------------------------------
+    // Camera movement re-parenting and clamp-back.
+    // ------------------------------------------------------------------
+    {
+        float I[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+        Atlas atlas;
+        atlas.start(GEO_MODEL_S3);
+        CHECK(atlas.seed(0.5f) == 0);
+        CHECK(atlas.add(1.0f, 0, I, true) == 1);
+
+        // 0.6 is outside chart 0 (sin(0.5)≈0.479) but inside chart 1 (sin(1.0)≈0.841).
+        CameraPlacement p = atlas.resolveCameraPlacement(0, vec3(0, 0, 0), vec3(0.6f, 0, 0));
+        CHECK(p.chartId == 1);
+        CHECK_NEAR(p.localPosition.x, 0.6f, 1e-6f);
+
+        // No chart contains 2.0; the placement must clamp back to the original chart 0 boundary.
+        CameraPlacement q = atlas.resolveCameraPlacement(0, vec3(0, 0, 0), vec3(2.0f, 0, 0));
+        CHECK(q.chartId == 0);
+        CHECK_NEAR(q.localPosition.x, mhSin(0.5f), 1e-6f);
+
+        // Stateful cameraMove follows the same rule and remains buildable.
+        atlas.setCamera(1.0f, 1.0f, vec3(1, 0, 0), vec3(0, 1, 0), vec3(0, 0, 1));
+        int cam = atlas.cameraChartAt(0, vec3(0, 0, 0), 1.5707963f);
+        CHECK(cam == 2);
+        int moved = atlas.cameraMove(vec3(0.6f, 0, 0));
+        CHECK(moved == cam);
+        CHECK(atlas.build(moved, GEO_MAX_CHART_DEPTH) == 0);
+    }
+
+    // ------------------------------------------------------------------
     // Unknown camera chart / model kind mismatch.
     // ------------------------------------------------------------------
     {

@@ -43,6 +43,11 @@ struct ChartLight {
     float intensity = 1.0f;
 };
 
+struct CameraPlacement {
+    int chartId = -1;
+    vec3 localPosition;
+};
+
 struct ChartEdge {
     int neighborId = -1;
     Mobius toNeighbor;                 // maps a point from this chart to neighbor chart
@@ -83,10 +88,32 @@ public:
     // the right/up/fwd orientation used by the next build().
     void cameraRotate(const vec3& axis, float deltaRadians);
 
+    // Roll the camera frame around its own fwd axis by deltaRadians.
+    // Positive delta rolls left (right vector tilts toward up).
+    void cameraRoll(float deltaRadians);
+
     // Current camera frame (orthonormal, chart-space).
     vec3 cameraRight() const { return cameraRight_; }
     vec3 cameraUp() const { return cameraUp_; }
     vec3 cameraFwd() const { return cameraFwd_; }
+
+    // Compute the camera placement produced by a movement in startChart-local
+    // coordinates. The result is re-parented to the closest chart that contains
+    // the candidate point. If no chart contains it, the placement is clamped
+    // back to startChart (just inside its disk).
+    CameraPlacement resolveCameraPlacement(int startChart, const vec3& startLocal, const vec3& movement) const;
+
+    // Create/replace the special camera chart whose anchor is positionInFromChart
+    // (expressed in fromChart). Returns the camera chart id. The camera is then
+    // rendered from that chart's origin.
+    int cameraChartAt(int fromChart, const vec3& positionInFromChart, float radius);
+
+    // Stateful camera movement. `movement` is expressed in the current camera
+    // chart's local frame. Atlas computes the new camera position, re-parents
+    // the special camera chart to the closest chart containing it (falling back
+    // to the current parent chart), and returns the camera chart id.
+    int cameraMove(const vec3& movement);
+    int cameraChartId() const { return cameraChartId_; }
 
     // Validate and flatten.  Returns 0, or CONTRACT.md §6 error code:
     // 1 island chart, 2 cocycle violation, 3 invalid object, 4 unknown camera chart,
@@ -109,6 +136,10 @@ private:
     std::vector<ChartObject> objects_;
     std::vector<ChartLight> lights_;
     std::vector<Material> materials_;
+    int cameraChartId_ = -1;
+    int cameraChartFrom_ = 0;
+    vec3 cameraPosition_ = vec3(0, 0, 0);
+    Mobius cameraChartTransition_;
     vec3 cameraRight_ = vec3(1, 0, 0);
     vec3 cameraUp_ = vec3(0, 1, 0);
     vec3 cameraFwd_ = vec3(0, 0, 1);
@@ -143,6 +174,7 @@ private:
         Mobius ab;   // maps a -> b, always a < b
     };
     std::vector<UEdge> buildUndirectedEdges() const;
+    bool chartTransition(int from, int to, Mobius& out) const;
     static Mobius edgeTransition(int from, int to, const UEdge& e);
     bool mobiusClose(const Mobius& a, const Mobius& b, float tol) const;
 };

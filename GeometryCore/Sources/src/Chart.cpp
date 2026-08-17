@@ -1,4 +1,7 @@
 #include "GeometryCore/Chart.h"
+#include "GeometryCore/Disk.h"
+#include "GeometryCore/Hyperboloid.h"
+#include "GeometryCore/Sphere3.h"
 
 #include <algorithm>
 #include <cmath>
@@ -10,12 +13,34 @@ namespace {
 
 constexpr float kObjectEps = 1e-3f;
 constexpr float kPlaneOffsetEps = 1e-4f;
+constexpr float kCameraRadius = 1.5707963267948966f;  // π/2
+constexpr float kCameraInsideFactor = 0.98f;          // chart contains a point iff |x| < sin(r)·this
 
 bool finiteVec(const vec3& v) {
     return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
 }
 
 bool finiteFloat(float x) { return std::isfinite(x); }
+
+// Ambient transvection sending P to (0,0,0,1).
+// kappa = +1 for S3 O(4); kappa = -1 for H3 Lorentz in the hyperboloid model.
+mat4 movePointToOrigin(const vec4& P, float kappa) {
+    vec3 u = P.xyz();
+    float w = P.w;
+    float denominator = mhMax(1.0f + w, 1e-6f);
+    float scale = -kappa / denominator;
+
+    vec3 c0 = vec3(1, 0, 0) + u * (scale * u.x);
+    vec3 c1 = vec3(0, 1, 0) + u * (scale * u.y);
+    vec3 c2 = vec3(0, 0, 1) + u * (scale * u.z);
+
+    mat4 B;
+    B.m[0] = c0.x; B.m[1] = c0.y; B.m[2] = c0.z; B.m[3] = kappa * u.x;
+    B.m[4] = c1.x; B.m[5] = c1.y; B.m[6] = c1.z; B.m[7] = kappa * u.y;
+    B.m[8] = c2.x; B.m[9] = c2.y; B.m[10] = c2.z; B.m[11] = kappa * u.z;
+    B.m[12] = -u.x; B.m[13] = -u.y; B.m[14] = -u.z; B.m[15] = w;
+    return B;
+}
 
 } // namespace
 
@@ -39,6 +64,10 @@ void Atlas::resetToDefaults() {
     packet_.clear();
     lastError_ = 0;
     capacityExceeded_ = false;
+    cameraChartId_ = -1;
+    cameraChartFrom_ = 0;
+    cameraPosition_ = vec3(0, 0, 0);
+    cameraChartTransition_ = Mobius();
 }
 
 void Atlas::begin(int modelKind) {
@@ -259,6 +288,10 @@ void Atlas::cameraRotate(const vec3& axis, float deltaRadians) {
     setError(0);
 }
 
+void Atlas::cameraRoll(float deltaRadians) {
+    cameraRotate(cameraFwd_, deltaRadians);
+}
+
 int Atlas::validateObjectBasics(const ChartObject& o, int materialCount) const {
     if (!validChartId(o.chartId)) return 3;
     if (o.kind < GEO_OBJECT_OPAQUE || o.kind > GEO_OBJECT_MIRROR) return 3;
@@ -328,6 +361,46 @@ std::vector<Atlas::UEdge> Atlas::buildUndirectedEdges() const {
     return uedges;
 }
 
+bool Atlas::chartTransition(int from, int to, Mobius& out) const {
+    if (!validChartId(from) || !validChartId(to)) return false;
+    if (from == to) {
+        out = identityMobius();
+        return true;
+    }
+
+    const int n = static_cast<int>(charts_.size());
+    std::vector<UEdge> uedges = buildUndirectedEdges();
+
+    std::vector<int> depth(n, -1);
+    std::vector<Mobius> path(n);
+    std::vector<int> queue;
+    queue.reserve(n);
+
+    depth[from] = 0;
+    path[from] = identityMobius();
+    queue.push_back(from);
+
+    for (size_t qi = 0; qi < queue.size(); ++qi) {
+        int u = queue[qi];
+        for (const auto& ue : uedges) {
+            int v = -1;
+            if (ue.a == u) v = ue.b;
+            else if (ue.b == u) v = ue.a;
+            if (v < 0 || depth[v] != -1) continue;
+
+            Mobius t_uv = edgeTransition(u, v, ue);
+            path[v] = t_uv.compose(path[u]);
+            depth[v] = depth[u] + 1;
+            if (v == to) {
+                out = path[v];
+                return true;
+            }
+            queue.push_back(v);
+        }
+    }
+    return false;
+}
+
 Mobius Atlas::edgeTransition(int from, int to, const UEdge& e) {
     if (from == e.a && to == e.b) return e.ab;
     return e.ab.inverse();
@@ -357,6 +430,216 @@ bool Atlas::mobiusClose(const Mobius& a, const Mobius& b, float tol) const {
         if (length(p - s) > tol) return false;
     }
     return true;
+}
+
+CameraPlacement Atlas::resolveCameraPlacement(int startChart, const vec3& startLocal, const vec3& movement) const {
+    CameraPlacement placement;
+    placement.chartId = startChart;
+    placement.localPosition = startLocal + movement;
+
+    if (!validModelKind() || !validChartId(startChart)) {
+        return placement;
+    }
+
+    vec3 candidate = startLocal + movement;
+    if (!finiteVec(candidate)) {
+        placement.chartId = startChart;
+        placement.localPosition = startLocal;
+        return placement;
+    }
+
+    const int n = static_cast<int>(charts_.size());
+    std::vector<UEdge> uedges = buildUndirectedEdges();
+
+    // BFS from startChart, computing T_{start -> x} for every chart.
+    std::vector<int> depth(n, -1);
+    std::vector<Mobius> path(n);
+    std::vector<int> queue;
+    queue.reserve(n);
+
+    depth[startChart] = 0;
+    path[startChart] = identityMobius();
+    queue.push_back(startChart);
+
+    for (size_t qi = 0; qi < queue.size(); ++qi) {
+        int u = queue[qi];
+        for (const auto& ue : uedges) {
+            int v = -1;
+            if (ue.a == u) v = ue.b;
+            else if (ue.b == u) v = ue.a;
+            if (v < 0 || depth[v] != -1) continue;
+
+            Mobius t_uv = edgeTransition(u, v, ue);
+            path[v] = t_uv.compose(path[u]);
+            depth[v] = depth[u] + 1;
+            queue.push_back(v);
+        }
+    }
+
+    int bestInsideChart = -1;
+    vec3 bestInsideLocal;
+    float bestInsideNorm = 1e30f;
+
+    for (int x = 0; x < n; ++x) {
+        if (depth[x] < 0) continue;
+        // The special camera chart is not a re-parenting target.
+        if (x == cameraChartId_) continue;
+
+        vec3 local = path[x].applyChartPoint(candidate);
+        if (!finiteVec(local)) continue;
+
+        float norm = length(local);
+        float limit = mhSin(charts_[x].radius);
+
+        if (norm < limit * kCameraInsideFactor) {
+            if (bestInsideChart < 0 || norm < bestInsideNorm) {
+                bestInsideChart = x;
+                bestInsideLocal = local;
+                bestInsideNorm = norm;
+            }
+        }
+    }
+
+    if (bestInsideChart >= 0) {
+        placement.chartId = bestInsideChart;
+        placement.localPosition = bestInsideLocal;
+    } else {
+        // No existing chart can realize the candidate point. Clamp it back
+        // onto the original chart's disk boundary (no 0.95/0.98 safety factor,
+        // which caused the camera position to jump inward).
+        placement.chartId = startChart;
+        float limit = mhSin(charts_[startChart].radius);
+        float norm = length(candidate);
+        if (norm > limit && norm > 1e-6f) {
+            placement.localPosition = candidate * (limit / norm);
+        } else {
+            placement.localPosition = candidate;
+        }
+    }
+
+    return placement;
+}
+
+int Atlas::cameraChartAt(int fromChart, const vec3& positionInFromChart, float radius) {
+    clearPacket();
+    if (!validModelKind()) { setError(6); return -1; }
+    if (!validChartId(fromChart)) { setError(4); return -1; }
+    if (!validChartRadius(radius)) { setError(3); return -1; }
+    if (!finiteVec(positionInFromChart)) { setError(3); return -1; }
+
+    Mobius T;
+    T.kind = (modelKind_ == GEO_MODEL_S3) ? ModelKind::S3 : ModelKind::H3;
+
+    if (modelKind_ == GEO_MODEL_S3) {
+        vec4 P = disk::toAmbient(positionInFromChart);
+        T.m = movePointToOrigin(P, 1.0f);
+    } else {
+        vec3 poincare = disk::toPoincare(positionInFromChart);
+        vec4 P = H3::ballToModel(poincare);
+        T.m = movePointToOrigin(P, -1.0f);
+    }
+
+    // Reuse a single special camera chart so the chart list does not grow per
+    // frame. Remove the previous camera-chart links, then re-link at the new
+    // anchor.
+    if (cameraChartId_ >= 0 && validChartId(cameraChartId_) && validChartId(cameraChartFrom_)) {
+        charts_[cameraChartFrom_].edges.erase(
+            std::remove_if(charts_[cameraChartFrom_].edges.begin(),
+                           charts_[cameraChartFrom_].edges.end(),
+                           [&](const ChartEdge& e) { return e.neighborId == cameraChartId_; }),
+            charts_[cameraChartFrom_].edges.end());
+        charts_[cameraChartId_].edges.erase(
+            std::remove_if(charts_[cameraChartId_].edges.begin(),
+                           charts_[cameraChartId_].edges.end(),
+                           [&](const ChartEdge& e) { return e.neighborId == cameraChartFrom_; }),
+            charts_[cameraChartId_].edges.end());
+    }
+
+    if (cameraChartId_ < 0) {
+        Chart c;
+        c.id = static_cast<int>(charts_.size());
+        c.radius = radius;
+        charts_.push_back(c);
+        cameraChartId_ = c.id;
+    } else {
+        charts_[cameraChartId_].radius = radius;
+    }
+
+    cameraChartFrom_ = fromChart;
+    cameraChartTransition_ = T;
+    cameraPosition_ = positionInFromChart;
+    upsertEdge(fromChart, cameraChartId_, T, true);
+    upsertEdge(cameraChartId_, fromChart, T.inverse(), true);
+
+    setError(0);
+    return cameraChartId_;
+}
+
+int Atlas::cameraMove(const vec3& movement) {
+    clearPacket();
+    if (!validModelKind()) { setError(6); return -1; }
+    if (!finiteVec(movement)) { setError(3); return -1; }
+
+    if (cameraChartId_ < 0) {
+        // Initialize the camera chart at the current (base-chart) position.
+        return cameraChartAt(cameraChartFrom_, cameraPosition_, kCameraRadius);
+    }
+
+    // Save the current local camera orientation and parent-chart relation.
+    vec3 oldRight = cameraRight_;
+    vec3 oldUp = cameraUp_;
+    vec3 oldFwd = cameraFwd_;
+    const int oldParent = cameraChartFrom_;
+    const vec3 oldPosition = cameraPosition_;
+    Mobius oldToBase = cameraChartTransition_.inverse();
+
+    // Express the local camera-chart movement in the parent chart coordinates.
+    vec3 baseMoved = oldToBase.applyChartPoint(movement);
+
+    CameraPlacement placement;
+    if (!finiteVec(baseMoved)) {
+        // The movement cannot be realized (for example H3 |movement| == 1
+        // lands on the disk-chart boundary). Clamp back to the original chart
+        // at the previous valid position.
+        placement.chartId = oldParent;
+        placement.localPosition = oldPosition;
+    } else {
+        vec3 baseDelta = baseMoved - oldPosition;
+        placement = resolveCameraPlacement(oldParent, oldPosition, baseDelta);
+    }
+
+    // Transition from the old parent chart to the new parent chart, needed to
+    // parallel-transport the camera frame into the re-anchored camera chart.
+    Mobius parentToNew;
+    if (placement.chartId == oldParent) {
+        parentToNew = identityMobius();
+    } else if (!chartTransition(oldParent, placement.chartId, parentToNew)) {
+        setError(4);   // should not happen: resolveCameraPlacement only returns reachable charts
+        return -1;
+    }
+
+    int id = cameraChartAt(placement.chartId, placement.localPosition, kCameraRadius);
+    if (id < 0) return id;   // preserve cameraChartAt's error
+
+    // Push the previous camera-chart orientation into the new camera chart:
+    // old camera chart -> old parent -> new parent -> new camera chart.
+    Mobius oldToNew = cameraChartTransition_.compose(parentToNew.compose(oldToBase));
+    const float eps = 1e-3f;
+    auto pushDirection = [&](const vec3& dir) {
+        vec3 base = oldToNew.applyChartPoint(vec3(0, 0, 0));
+        vec3 moved = oldToNew.applyChartPoint(dir * eps);
+        vec3 local = moved - base;
+        float len = length(local);
+        if (len > 1e-9f) return local / len;
+        return dir;
+    };
+
+    cameraRight_ = pushDirection(oldRight);
+    cameraUp_ = pushDirection(oldUp);
+    cameraFwd_ = pushDirection(oldFwd);
+
+    setError(0);
+    return id;
 }
 
 int Atlas::build(int cameraChart, int maxChartDepth) {

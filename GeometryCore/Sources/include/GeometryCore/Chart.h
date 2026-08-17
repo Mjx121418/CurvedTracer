@@ -100,7 +100,7 @@ public:
     // Compute the camera placement produced by a movement in startChart-local
     // coordinates. The result is re-parented to the closest chart that contains
     // the candidate point. If no chart contains it, the placement is clamped
-    // back to startChart (just inside its disk).
+    // back to startChart's disk boundary.
     CameraPlacement resolveCameraPlacement(int startChart, const vec3& startLocal, const vec3& movement) const;
 
     // Create/replace the special camera chart whose anchor is positionInFromChart

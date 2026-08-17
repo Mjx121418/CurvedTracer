@@ -15,7 +15,7 @@ The scene is stored intrinsically as a set of disk charts connected by Möbius t
 | `GeometryCore/` | Swift package containing the C++ geometry/atlas core and tests |
 | `CurvedTracer/` | macOS SwiftUI + Metal app |
 | `CONTRACT.md` | Normative C++/Metal/Swift seam specification |
-| `WORKLOG.md` | Development log |
+| `Images/` | Rendered screenshots |
 
 ## GeometryCore
 

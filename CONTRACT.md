@@ -1,6 +1,6 @@
 # CONTRACT.md — C++ ⇄ Metal/Swift Seam
 
-**Status:** v5 — disk-chart atlas on S³ with unified material specular.
+**Status:** v5 — disk-chart atlas with dynamic camera chart, camera movement/rotation, and unified material specular.
 **Owner:** C++ side maintains this file and the shared artifacts it describes. The Metal/Swift side must be able to code against this document alone **without reading C++ sources**. Any change requires both sides to agree (see §9).
 
 ---
@@ -35,7 +35,7 @@ Shared headers live under `Sources/include/GeometryCore/` inside the `GeometryCo
 4. **Fast-math caveat:** `acos/acosh` domain clamping must be explicit (clamped argument) so it survives MSL fast-math. Never rely on the operation itself to reject out-of-domain input.
 5. One version macro `GEO_CONTRACT_VERSION`, echoed into the packet; mismatch is a hard error at upload (§6, §9).
 
-**Header inventory (v4):**
+**Header inventory (v5):**
 
 | Header | Shared with MSL? | Contents |
 |---|---|---|
@@ -100,7 +100,18 @@ A `Chart` stores:
 - `compose` = matrix multiply, `inverse` = matrix inverse.
 - There is **no anchor chart**. The first chart is the anchorless seed.
 - Reachability uses all edges; flattening prefers safe hops.
-- The camera chart radius is the **culling boundary** for the packet: objects and lights that lie entirely outside the camera disk are culled by `Atlas::build`.
+
+### 3.2.1 Special camera chart and camera movement
+
+The camera is rendered from a **distinguished camera chart**. `Atlas::cameraChartAt(fromChart, positionInFromChart, radius)` creates/reuses this chart and links it to a normal chart so that the desired anchor point becomes the camera-chart origin. `Atlas::build(cameraChart, maxChartDepth)` then flattens all reachable charts into that camera chart.
+
+Camera movement is stateful:
+
+- `cameraMove(movement)` interprets `movement` in the current camera chart's local frame, maps it back into the current parent chart, and re-parents the camera chart to the closest chart that contains the resulting point.
+- If no existing chart contains the point, the camera is clamped back to the original parent chart, onto its disk boundary (`|x| = sin(r)`).
+- After re-parenting, the camera frame (`right`/`up`/`fwd`) is parallel-transported into the new camera chart.
+
+The camera chart radius is emitted in the packet as `chartRadiusSin`/`chartRadiusCos`. The shader culls hits with `|hit.position|² >= chartRadiusSin²`; `Atlas::build` itself emits all reachable objects/lights.
 
 ### 3.3 Objects are hyperplane sections of the disk
 
@@ -248,7 +259,7 @@ The shader culls a hit when:
 | 0 | ScenePacket (header + arrays as one upload) |
 | 1 | optional: golden reference texture |
 
-### 5.3 Capacity limits (v4)
+### 5.3 Capacity limits (v5)
 
 `MAX_OBJECTS = 4096`, `MAX_MATERIALS = 256`, `MAX_LIGHTS = 16`, `MAX_CHART_DEPTH = 64`. Exceeding them is rejected by `geo::Atlas::build`.
 
@@ -258,10 +269,15 @@ The shader culls a hit when:
 
 Swift imports the `GeometryCore` Swift package and calls the host C++ classes directly with Swift C++ interop. Metal never sees the atlas or these classes.
 
-**v4 surface (signatures are spec; C++ owner implements):**
+**Current surface (signatures are spec; C++ owner implements):**
 
 ```cpp
 namespace geo {
+
+struct CameraPlacement {
+    int chartId;
+    vec3 localPosition;
+};
 
 class Atlas {
 public:
@@ -269,14 +285,16 @@ public:
     // same method but Swift C++ interop reserves `begin` for C++ iterators.
     void start(int modelKind);
 
-    // Anchorless base chart with radius r (radians).
+    // Anchorless base chart with radius r (radians). Returns 0.
     int seed(float radius);
 
     // Add a new chart of radius r, linked from `fromChart` by the transition
     // matrix m (column-major). Returns the new chart id.
-    int add(float radius, int fromChart, const float m[16], bool safe);
+    int addChart(float radius, int fromChart, const float m[16], bool safe);
+    int add(float radius, int fromChart, const float m[16], bool safe);   // alias
 
-    void link(int a, int b, const float m_ab[16], bool safe);
+    void linkCharts(int a, int b, const float m_ab[16], bool safe);
+    void link(int a, int b, const float m_ab[16], bool safe);             // alias
 
     // kind: 0 = OPAQUE, 1 = MIRROR.
     // Object boundary in chart coordinates: a·x + b·sqrt(1 - |x|²) = c.
@@ -292,12 +310,39 @@ public:
                    const vec3& right, const vec3& up, const vec3& fwd);
     void setControls(int maxBounces, float falloffK, float ambient, float bounceAttenuation);
 
+    // Camera frame accessors (chart-space, orthonormal).
+    vec3 cameraRight() const;
+    vec3 cameraUp() const;
+    vec3 cameraFwd() const;
+
+    // Rotate the camera frame around a chart-space axis. The camera stays at
+    // the chart origin; only the right/up/fwd frame changes.
     void cameraRotate(const vec3& axis, float deltaRadians);
 
+    // Roll around the camera's own fwd axis. Positive rolls left.
+    void cameraRoll(float deltaRadians);
+
+    // Compute the placement resulting from a movement in startChart-local
+    // coordinates. Re-parents to the closest chart containing the result;
+    // otherwise clamps back to startChart's disk boundary.
+    CameraPlacement resolveCameraPlacement(int startChart, const vec3& startLocal,
+                                           const vec3& movement) const;
+
+    // Create/replace the special camera chart anchored at positionInFromChart
+    // (expressed in fromChart). Returns the camera chart id.
+    int cameraChartAt(int fromChart, const vec3& positionInFromChart, float radius);
+
+    // Stateful camera movement in the current camera chart's local frame.
+    // Returns the camera chart id after re-parenting and re-anchoring.
+    int cameraMove(const vec3& movement);
+    int cameraChartId() const;
+
+    // Validate and flatten. Returns 0, or an error code below.
     int build(int cameraChart, int maxChartDepth);
 
     std::vector<uint8_t> packetBytes() const;
     int packetSize() const;
+    const void* packetData() const;   // Swift-visible raw pointer for upload
 };
 
 }
@@ -358,7 +403,7 @@ On a MIRROR hit:
 
 This preserves the flat, bounded loop from v3.
 
-### 7.4 Lighting convention (v4)
+### 7.4 Lighting convention (v5)
 
 Lighting remains point lights in chart coordinates, as in v3, but the lift/unlift maps change:
 
@@ -399,11 +444,20 @@ radiance = material.color.rgb
 
 ## 10. Build & validation checklist (per side)
 
-**C++ side (container):**
-- [ ] `cmake -S . -B build && cmake --build build` — core + tests + reference tracer
-- [ ] `ctest --test-dir build` green
+**C++/Swift package (container or macOS):**
+
+```bash
+cd GeometryCore
+swift test                 # Swift C++ interop + packet layout tests
+swift run geometry_tests   # full C++ test suite
+```
+
+- [ ] `swift test` green
+- [ ] `swift run geometry_tests` green
 - [ ] `static_assert`s: Object=32, Camera=64, RenderControls=32, Counts=16, PacketMeta=16, header=128 (printed by a test)
-- [ ] reference renders match goldens
+- [ ] reference renders match goldens (when `Tools/ReferenceTracer` exists)
+
+Container note: in this Linux container `swift test` requires `/usr/bin/clang` and `/usr/bin/clang++` to be symlinked to a clang that accepts `-index-store-path` (here `clang-21`).
 
 **Metal/Swift side (macOS):**
 - [ ] Swift mirrors structs; `MemoryLayout` matches the sizes above
@@ -423,9 +477,9 @@ radiance = material.color.rgb
 
 ---
 
-## 12. Open questions (resolve before v4 implementation)
+## 12. Notes on former open questions
 
-1. Exact H³ `OPAQUE` validity bounds in the disk model; derive and write the host-side validation formula.
-2. Exact transformation law for `(a,b,c)` under H³ Lorentz transitions; prove the flattening formula.
-3. Off-center camera: v4 still renders at the chart origin; confirm whether a view-transform is needed for the first v4 renderer.
-4. For S³ charts with `r > π/2`, confirm that the disk boundary should cull in the shader exactly as `|x|² >= sin²(r)`.
+1. H³ `OPAQUE` validity is enforced by host-side validation in `Atlas::build` (the boundary must lie inside the home chart disk and have positive radius).
+2. The H³ `(a,b,c)` surface transformation law is implemented by `Mobius::applySurface`.
+3. Off-center camera rendering is implemented through the special camera chart (`cameraChartAt`, `cameraMove`, `resolveCameraPlacement`).
+4. For S³ charts with `r > π/2`, the shader culls exactly by `chartRadiusSin`; chart creation must still avoid the antipodal point.

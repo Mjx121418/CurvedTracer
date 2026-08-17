@@ -6,7 +6,11 @@ The scene is stored intrinsically as a set of disk charts connected by Möbius t
 
 ## Screenshot
 
+Several balls between two totally geodesic mirrors:
 ![Several balls between two totally geodesic mirrors](Images/hyperbolic.png)
+
+Balls centered at the cells of {4,3,5}:
+![{4,3,5}](Images/{4,3,5}.png)
 
 ## Repository layout
 

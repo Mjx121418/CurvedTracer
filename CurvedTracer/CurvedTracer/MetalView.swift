@@ -41,6 +41,7 @@ struct MetalView: NSViewRepresentable {
             blue: 0.8,
             alpha: 1.0
         )
+        view.preferredFramesPerSecond = 60
         
         view.framebufferOnly = false
         DispatchQueue.main.async {
@@ -213,8 +214,9 @@ final class Renderer: NSObject, MTKViewDelegate {
     func setScenePacket() {
         // Build the hardcoded hyperbolic scene and obtain the camera chart id.
         atlas = geo.Atlas()
-        cameraChart = SphericalScene.cell16(&atlas)
+        // cameraChart = SphericalScene.cell16(&atlas)
         // cameraChart = HyperbolicScene.configure(&atlas)
+        cameraChart = SphericalScene.configure(&atlas)
 
         // Copy the initial packet into every frame slot.
         for buffer in sceneBuffers {

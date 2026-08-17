@@ -230,4 +230,67 @@ enum SphericalScene {
         }
         return cameraChart
     }
+
+    /// Single-chart S³ scene analogous to `HyperbolicScene.configure`.
+    ///
+    /// The chart radius is larger than π/2. A totally geodesic mirror sits at
+    /// distance π/2 from the origin (the equator, w = 0), and the balls all lie
+    /// in the w > 0 hemisphere containing the chart origin.
+    @discardableResult
+    static func configure(_ atlas: inout geo.Atlas) -> Int32 {
+        let radius: Float = Float.pi * 0.99
+        let ballCos: Float = 0.98
+
+        atlas.start(1)   // S³
+        _ = atlas.seed(radius)
+
+        // Materials: red, green, blue, yellow, mirror.
+        _ = atlas.addMaterial(geo.vec4(1.0, 0.0, 0.0, 1.0), geo.vec4(0.3, 0.3, 0.3, 1.0))
+        _ = atlas.addMaterial(geo.vec4(0.0, 1.0, 0.0, 1.0), geo.vec4(0.3, 0.3, 0.3, 1.0))
+        _ = atlas.addMaterial(geo.vec4(0.0, 0.0, 1.0, 1.0), geo.vec4(0.3, 0.3, 0.3, 1.0))
+        _ = atlas.addMaterial(geo.vec4(1.0, 1.0, 0.0, 1.0), geo.vec4(0.3, 0.3, 0.3, 1.0))
+        // Mirror material: dark reflection so mirrored images are much dimmer
+        // than the real balls.
+        _ = atlas.addMaterial(geo.vec4(0.3, 0.3, 0.3, 1.0), geo.vec4(0.7, 0.7, 0.7, 0.7))
+
+        // Totally geodesic mirror at distance π/2: the equator w = 0.
+        _ = atlas.addObject(0, 1, geo.vec3(0, 0, 0), 1.0, 0.0, 4)
+
+        // Four sparse balls in the w > 0 hemisphere. They sit at the corners
+        // of a regular tetrahedron-like cross: pairwise angular separations are
+        // 60° or 90°, much larger than the ball diameter (~29°).
+        let s: Float = 0.7071068   // 1/√2
+        _ = atlas.addObject(0, 0, geo.vec3( s, 0, 0), s, ballCos, 0)
+        _ = atlas.addObject(0, 0, geo.vec3(-s, 0, 0), s, ballCos, 1)
+        _ = atlas.addObject(0, 0, geo.vec3( 0, s, 0), s, ballCos, 2)
+        _ = atlas.addObject(0, 0, geo.vec3( 0, 0, s), s, ballCos, 3)
+
+        // Two lights in the w > 0 hemisphere, outside all balls.
+        _ = atlas.addLight(0, geo.vec3(-0.2912, 0.4518, -0.7110), 0.4533,
+                           geo.vec3(1.00, 0.95, 0.80), 1.0)
+        _ = atlas.addLight(0, geo.vec3( 0.3734,-0.7632, 0.2809), 0.4463,
+                           geo.vec3(0.60, 0.70, 1.00), 0.6)
+
+        atlas.setCamera(
+            1.0,
+            16.0 / 9.0,
+            geo.vec3(1, 0, 0),
+            geo.vec3(0, 1, 0),
+            geo.vec3(0, 0, 1)
+        )
+
+        atlas.setControls(
+            6,
+            0.05,
+            0.25,
+            0.95
+        )
+
+        let cameraChart = atlas.cameraChartAt(0, geo.vec3(0, 0, 0), radius)
+        let result = atlas.build(cameraChart, 64)
+        if result != 0 {
+            fatalError("build failed with code \(result)")
+        }
+        return cameraChart
+    }
 }

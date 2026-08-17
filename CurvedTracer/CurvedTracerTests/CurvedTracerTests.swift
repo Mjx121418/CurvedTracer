@@ -2,7 +2,6 @@
 //  CurvedTracerTests.swift
 //  CurvedTracerTests
 //
-//
 
 import Testing
 @testable import CurvedTracer

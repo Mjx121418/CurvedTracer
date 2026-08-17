@@ -2,7 +2,6 @@
 //  ContentView.swift
 //  CurvedTracer
 //
-//
 
 import SwiftUI
 import GeometryCore

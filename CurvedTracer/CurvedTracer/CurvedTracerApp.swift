@@ -2,7 +2,6 @@
 //  CurvedTracerApp.swift
 //  CurvedTracer
 //
-//
 
 import SwiftUI
 

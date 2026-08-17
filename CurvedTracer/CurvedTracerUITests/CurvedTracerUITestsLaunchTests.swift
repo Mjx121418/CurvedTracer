@@ -2,7 +2,6 @@
 //  CurvedTracerUITestsLaunchTests.swift
 //  CurvedTracerUITests
 //
-//
 
 import XCTest
 

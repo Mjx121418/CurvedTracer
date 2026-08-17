@@ -2,7 +2,6 @@
 //  MetalView.swift
 //  CurvedTracer
 //
-//
 
 import SwiftUI
 import MetalKit

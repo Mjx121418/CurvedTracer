@@ -93,6 +93,15 @@ vec3 Mobius::applyChartPoint(const vec3& b) const {
     return disk::fromAmbient(Y);
 }
 
+vec4 Mobius::applyChartPointAugmented(const vec4& chartPoint) const {
+    if (kind == ModelKind::S3) {
+        return mat4Apply(m, chartPoint);
+    }
+    vec3 x2 = applyChartPoint(chartPoint.xyz());
+    float w2 = mhSqrt(mhMax(0.0f, 1.0f - lengthSq(x2)));
+    return vec4(x2, w2);
+}
+
 Mobius Mobius::compose(const Mobius& other) const {
     Mobius r;
     r.kind = kind;

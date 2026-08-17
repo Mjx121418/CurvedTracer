@@ -55,7 +55,7 @@ void test_atlas() {
     CHECK(sizeof(Material) == 32);
     CHECK(sizeof(PointLight) == 32);
     CHECK(sizeof(ScenePacketHeader) == 128);
-    CHECK(GEO_CONTRACT_VERSION == 5);
+    CHECK(GEO_CONTRACT_VERSION == 6);
 
     // ------------------------------------------------------------------
     // Single-chart H3 scene and packet layout.
@@ -179,6 +179,33 @@ void test_atlas() {
         CHECK_NEAR(atlas.cameraRight().y, 1.0f, 1e-4f);
         CHECK_NEAR(atlas.cameraUp().x, -1.0f, 1e-4f);
         CHECK_NEAR(atlas.cameraFwd().z, 1.0f, 1e-4f);
+    }
+
+    // ------------------------------------------------------------------
+    // S³ signed-w camera movement across two antipodal charts.
+    // ------------------------------------------------------------------
+    {
+        const float r = 2.0943951023931953f;   // 2π/3
+        float anti[16] = {-1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,-1};
+        Atlas atlas;
+        atlas.start(GEO_MODEL_S3);
+        CHECK(atlas.seed(r) == 0);
+        CHECK(atlas.add(r, 0, anti, true) == 1);
+        atlas.addMaterial(vec4(1,0,0,1), vec4(0.3f,0.3f,0.3f,1));
+        atlas.addMaterial(vec4(0,1,0,1), vec4(0.3f,0.3f,0.3f,1));
+        atlas.addObject(0, GEO_OBJECT_OPAQUE, vec3(0,0,0), 1.0f, 0.9f, 0);
+        atlas.addObject(1, GEO_OBJECT_OPAQUE, vec3(0,0,0), 1.0f, 0.9f, 1);
+        atlas.addLight(0, vec3(0.3f,0.2f,0.1f), vec3(1,1,1), 1.0f);
+        atlas.addLight(1, vec3(-0.3f,-0.2f,0.1f), vec3(1,1,1), 0.6f);
+        atlas.setCamera(1,1, vec3(1,0,0), vec3(0,1,0), vec3(0,0,1));
+        int cam = atlas.cameraChartAt(0, vec3(0,0,0), r);
+        CHECK(atlas.build(cam, 64) == 0);
+        // Move far enough along +x to leave chart 0 and re-parent to chart 1.
+        for (int i = 0; i < 16; ++i) {
+            cam = atlas.cameraMove(vec3(0.1f, 0, 0));
+            CHECK(cam >= 0);
+        }
+        CHECK(atlas.build(cam, 64) == 0);
     }
 
     // ------------------------------------------------------------------

@@ -1,6 +1,6 @@
 # CONTRACT.md — C++ ⇄ Metal/Swift Seam
 
-**Status:** v5 — disk-chart atlas with dynamic camera chart, camera movement/rotation, and unified material specular.
+**Status:** v6 — signed-w S³ disk charts, dynamic camera chart, camera movement/rotation, and unified material specular.
 **Owner:** C++ side maintains this file and the shared artifacts it describes. The Metal/Swift side must be able to code against this document alone **without reading C++ sources**. Any change requires both sides to agree (see §9).
 
 ---
@@ -35,7 +35,7 @@ Shared headers live under `Sources/include/GeometryCore/` inside the `GeometryCo
 4. **Fast-math caveat:** `acos/acosh` domain clamping must be explicit (clamped argument) so it survives MSL fast-math. Never rely on the operation itself to reject out-of-domain input.
 5. One version macro `GEO_CONTRACT_VERSION`, echoed into the packet; mismatch is a hard error at upload (§6, §9).
 
-**Header inventory (v5):**
+**Header inventory (v6):**
 
 | Header | Shared with MSL? | Contents |
 |---|---|---|
@@ -53,38 +53,16 @@ The Metal side `#include`s only `Math.h`, `Intersect.h`, `Scene.h` (and any othe
 
 ## 3. Intrinsic chart atlas (Seam C, C++-internal)
 
-### 3.1 Charts are open disks on S³
+### 3.1 Charts are open geodesic balls
 
 The ambient model is the unit 3-sphere `S³ = { X ∈ R⁴ : |X| = 1 }`.
 
-A chart is a **geodesic ball of radius `r` around an anchor point**. The anchor maps to `(0,0,0,1)`. Chart coordinates are points `x` in the open Euclidean unit ball `B³`. The embedding is:
+A chart is a **geodesic ball of radius `r` around an anchor point**. The anchor maps to `(0,0,0,1)`.
 
-```text
-X = (x, w),   w = sqrt(1 - |x|²)
-```
-
-and the inverse is:
-
-```text
-x = X.xyz
-```
-
-The chart domain is:
-
-```text
-|x| < sin(r)
-```
-
-or equivalently, for the ambient anchor-facing coordinate:
-
-```text
-X.w > cos(r)
-```
+- **H³**: chart coordinates are points `x ∈ R³` with `|x| < sin(r)` and the embedding is `X = (x, sqrt(1 - |x|²))`. H³ is conformally embedded as the upper hemisphere `X.w > 0` of S³; the ideal boundary is the equator `X.w = 0`. A chart radius must satisfy `0 < r ≤ π/2`.
+- **S³**: chart coordinates are the signed-w orthographic pair `(x, w)` with `|x|² + w² = 1`. The chart domain is `w > cos(r)` (equivalently geodesic distance from the anchor `< r`). A chart radius must satisfy `0 < r < π`; the chart must not contain the antipodal point of the anchor.
 
 Charts have **variable size**. `r` is stored per chart and is not required to be `π/2`.
-
-- **H³**: H³ is conformally embedded as the upper hemisphere `X.w > 0` of S³. The ideal boundary is the equator `X.w = 0`. A chart radius must satisfy `0 < r ≤ π/2`.
-- **S³**: S³ is the whole 3-sphere. A chart radius must satisfy `0 < r < π`. The chart is a disk around the anchor; `r > π/2` is allowed, but the disk must not contain the antipodal point of the anchor.
 
 ### 3.2 Charts, radii, and overlap edges
 
@@ -156,11 +134,11 @@ Unchanged from v3: every closed loop must compose to identity within tolerance. 
 
 ## 4. Coordinate systems and units (normative)
 
-- Chart coordinates are points `x ∈ R³` with `|x| < sin(r)`, where `r` is the chart radius.
-- Ambient points are `X = (x, sqrt(1 - |x|²))`.
-- All object coefficients `(a,b,c)`, light positions, and camera directions are chart quantities.
+- H³ chart coordinates are points `x ∈ R³` with `|x| < sin(r)`, where `r` is the chart radius.
+- S³ chart coordinates are signed-w orthographic pairs `(x, w)` with `|x|² + w² = 1`; a chart contains points with `w > cos(r)`.
+- All object coefficients `(a,b,c)`, light positions, and camera directions are chart quantities. `PointLight.positionW` stores the augmented fourth coordinate for both models.
 - `modelKind`: `0 = H³`, `1 = S³`. One scene has one model.
-- For H³ the largest chart is the upper hemisphere `r = π/2`. For S³ the largest chart is any disk of radius `r < π`.
+- For H³ the largest chart is the upper hemisphere `r = π/2`. For S³ the largest chart is any geodesic ball of radius `r < π`.
 
 ---
 
@@ -190,7 +168,7 @@ Fixed header total: **128 bytes**.
 | Off | Name | Type | Value |
 |---|---|---|---|
 | 0 | `magic` | int32 | `0x4E545243` ("NTRC") |
-| 4 | `contractVersion` | int32 | = `GEO_CONTRACT_VERSION` (currently **5**) |
+| 4 | `contractVersion` | int32 | = `GEO_CONTRACT_VERSION` (currently **6**) |
 | 8 | `objectSize` | int32 | 32 |
 | 12 | `packetHeaderSize` | int32 | 128 |
 
@@ -259,9 +237,11 @@ The shader culls a hit when:
 | 0 | ScenePacket (header + arrays as one upload) |
 | 1 | optional: golden reference texture |
 
-### 5.3 Capacity limits (v5)
+### 5.3 Capacity limits (v6)
 
 `MAX_OBJECTS = 4096`, `MAX_MATERIALS = 256`, `MAX_LIGHTS = 16`, `MAX_CHART_DEPTH = 64`. Exceeding them is rejected by `geo::Atlas::build`.
+
+The augmented chart coordinate is `(x,w)` for both models: signed for S³, `+sqrt(1-|x|²)` for H³. A chart contains points with `w > cos(r)`. `PointLight.positionW` carries `w`.
 
 ---
 
@@ -356,7 +336,7 @@ If no material is authored, `build` emits one default white material. If no ligh
 
 ## 7. Rendering model (how the GPU works — normative for the Metal owner)
 
-### 7.1 Rays are straight lines from the origin
+### 7.1 Rays from the camera origin
 
 The camera is always at the chart origin. A pixel with NDC `(u,v) ∈ [0,1]²` has direction
 
@@ -364,51 +344,51 @@ The camera is always at the chart origin. A pixel with NDC `(u,v) ∈ [0,1]²` h
 d = normalize( fwd + right·(2u−1)·fovTan·aspect + up·(2v−1)·fovTan )
 ```
 
-and the ray is `x(t) = t·d`, `t > ε` (`ε = 1e-4`).
+- **H³**: the ray is `x(t) = t·d`, `t > ε` (`ε = 1e-4`), with `t = |x|`.
+- **S³**: the ray is `(x,w)(t) = (sin t · d, cos t)`, `t > ε`, where `t` is geodesic distance from the camera origin.
 
-In a disk chart, rays through the origin are straight geodesics.
+In both models, rays through the origin are geodesics.
 
 ### 7.2 Surface intersection
 
-For an object boundary:
+Object boundaries are:
 
 ```text
-a·x + b·sqrt(1 - |x|²) = c
+a·x + b·w = c
 ```
 
-and a ray `x(t) = t·d`, `|d| = 1`, the intersection solves:
+where `w = sqrt(1 - |x|²)` for H³ and `(x,w)` is the signed-w S³ chart coordinate.
 
-```text
-a·(t d) + b·sqrt(1 - t²) = c
-```
-
-Squaring gives a quadratic in `t`:
+- **H³**: substituting `x = t d` gives `a·(t d) + b·sqrt(1 - t²) = c`. Squaring gives the quadratic in `t`:
 
 ```text
 t²·((a·d)² + b²) - 2c·(a·d)·t + (c² - b²) = 0
 ```
 
-The shader solves the quadratic, discards roots with `t ≤ ε`, and discards roots outside the chart disk:
+Discard roots with `t ≤ ε`, and discard roots outside the chart disk `t² ≥ sin²(radius)`.
+
+- **S³**: substituting `(x,w) = (sin t · d, cos t)` gives:
 
 ```text
-t² ≥ sin²(radius)
+(a·d) sin t + b cos t = c
 ```
 
-### 7.3 Unfold-the-world (reflection keeps the ray straight)
+The shader solves this trigonometric equation, discards roots with `t ≤ ε`, and discards roots with `t ≥ radius`.
+
+### 7.3 Reflection
 
 On a MIRROR hit:
-1. Reflect the ray direction across the surface in the ambient 4D sense.
-2. Build the chart transition that maps the hit point to the chart origin and makes the reflected ray coincide with the original fixed ray.
-3. Transform the object list into the new current chart and continue with the same straight ray.
+1. Lift the hit point to the ambient model (hyperboloid for H³, sphere for S³).
+2. Build the isometry that maps the hit point to the chart origin.
+3. Reflect the ray direction across the surface normal in the tangent space at the origin.
+4. Continue tracing from the new chart origin along the reflected direction.
 
-This preserves the flat, bounded loop from v3.
-
-### 7.4 Lighting convention (v5)
+### 7.4 Lighting convention (v6)
 
 Lighting remains point lights in chart coordinates, as in v3, but the lift/unlift maps change:
 
-- `liftPoint(x) = (x, sqrt(1 - |x|²))`
-- `unliftPoint(X) = X.xyz`
+- H³: `liftPoint(x) = hyperboloidLift(diskToPoincare(x))`
+- S³: `liftPoint(x,w) = (x,w)`
 - `liftTangent` and `unliftTangent` are the differentials of those maps.
 
 At an OPAQUE hit point `p`, for each point light at current chart position `q`, compute the ambient tangent `V` at `P` pointing toward `Q`, map it back to the chart tangent `L`, and shade:
@@ -435,7 +415,7 @@ radiance = material.color.rgb
 
 ## 9. Versioning & change workflow (normative)
 
-- `GEO_CONTRACT_VERSION` is currently **5**. `PacketMeta.contractVersion` must match; mismatch → upload rejected (and Swift-side assert).
+- `GEO_CONTRACT_VERSION` is currently **6**. `PacketMeta.contractVersion` must match; mismatch → upload rejected (and Swift-side assert).
 - Any change to struct layout, enum values, coordinate/unit conventions, solver behavior, or any number in this document → **discuss first, bump version, land with tests + regrown goldens in the same change**.
 - Adding a field extends the struct **at the end**; never reorder.
 - Metal side reports shader-observed issues (NaN, precision, edge cases) to the C++ owner with a repro; C++ owner fixes shared math, adds a regression test, regrows goldens, bumps version.

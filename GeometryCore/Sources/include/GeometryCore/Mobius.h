@@ -16,6 +16,11 @@ struct Mobius {
     // CONTRACT v4: apply this map to a disk-chart point.
     vec3 applyChartPoint(const vec3& chartPoint) const;
 
+    // Apply this map to an augmented chart point (x,w). For S³ the full
+    // signed-w vector is transformed directly; for H³ the x part is
+    // transformed and w is recomputed as sqrt(1-|x'|²).
+    vec4 applyChartPointAugmented(const vec4& chartPoint) const;
+
     // this ∘ other (kinds must match).
     Mobius compose(const Mobius& other) const;
 

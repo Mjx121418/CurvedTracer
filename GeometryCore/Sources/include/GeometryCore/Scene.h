@@ -3,7 +3,7 @@
 // POD structs only; static_asserts are host-only so MSL sees pure declarations.
 #include "GeometryCore/Math.h"
 
-#define GEO_CONTRACT_VERSION 5
+#define GEO_CONTRACT_VERSION 6
 #define GEO_PACKET_MAGIC 0x4E545243  // "NTRC" as an int32 field
 
 #define GEO_MAX_OBJECTS 4096
@@ -22,7 +22,7 @@ namespace geo {
 // 16 bytes
 struct PacketMeta {
     int magic;              // 0 = GEO_PACKET_MAGIC
-    int contractVersion;    // 4 = GEO_CONTRACT_VERSION
+    int contractVersion;    // 6 = GEO_CONTRACT_VERSION
     int objectSize;         // 8 = sizeof(Object) == 32
     int packetHeaderSize;   // 12 = sizeof(ScenePacketHeader) == 128
 };
@@ -79,8 +79,8 @@ struct Material {
 
 // 32 bytes
 struct PointLight {
-    vec3 position;          // 0   chart-space light position
-    float pad0;             // 12
+    vec3 position;          // 0   chart-space light position (x)
+    float positionW;        // 12  signed w for S³ (|x|²+w²=1); unused for H³
     vec3 color;             // 16  linear light color
     float intensity;        // 28  multiplier
 };

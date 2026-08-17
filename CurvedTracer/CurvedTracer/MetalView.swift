@@ -213,7 +213,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     func setScenePacket() {
         // Build the hardcoded hyperbolic scene and obtain the camera chart id.
         atlas = geo.Atlas()
-        cameraChart = HyperbolicScene.honeycombCell(&atlas)
+        cameraChart = SphericalScene.cell16(&atlas)
+        // cameraChart = HyperbolicScene.configure(&atlas)
 
         // Copy the initial packet into every frame slot.
         for buffer in sceneBuffers {

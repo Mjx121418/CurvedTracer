@@ -38,7 +38,8 @@ struct ChartObject {
 
 struct ChartLight {
     int chartId = -1;
-    vec3 position;                     // chart-space point light position
+    vec3 position;                     // chart-space point light position (x)
+    float positionW = 1.0f;            // signed w for S³ (|x|²+w²=1); unused for H³
     vec3 color;                        // linear light color
     float intensity = 1.0f;
 };
@@ -46,6 +47,7 @@ struct ChartLight {
 struct CameraPlacement {
     int chartId = -1;
     vec3 localPosition;
+    float localPositionW = 1.0f;       // signed w for S³; unused for H³
 };
 
 struct ChartEdge {
@@ -80,6 +82,8 @@ public:
     int addObject(int chartId, int kind, const vec3& a, float b, float c, int colorIdx);
     int addMaterial(const vec4& color, const vec4& specular);
     int addLight(int chartId, const vec3& position, const vec3& color, float intensity);
+    int addLight(int chartId, const vec3& position, float positionW,
+                 const vec3& color, float intensity);
     void setCamera(float fovTan, float aspect, const vec3& right, const vec3& up, const vec3& fwd);
     void setControls(int maxBounces, float falloffK, float ambient, float bounceAttenuation);
 
@@ -107,6 +111,8 @@ public:
     // (expressed in fromChart). Returns the camera chart id. The camera is then
     // rendered from that chart's origin.
     int cameraChartAt(int fromChart, const vec3& positionInFromChart, float radius);
+    int cameraChartAt(int fromChart, const vec3& positionInFromChart, float positionW,
+                      float radius);
 
     // Stateful camera movement. `movement` is expressed in the current camera
     // chart's local frame. Atlas computes the new camera position, re-parents
@@ -139,6 +145,7 @@ private:
     int cameraChartId_ = -1;
     int cameraChartFrom_ = 0;
     vec3 cameraPosition_ = vec3(0, 0, 0);
+    float cameraPositionW_ = 1.0f;
     Mobius cameraChartTransition_;
     vec3 cameraRight_ = vec3(1, 0, 0);
     vec3 cameraUp_ = vec3(0, 1, 0);
@@ -175,6 +182,7 @@ private:
     };
     std::vector<UEdge> buildUndirectedEdges() const;
     bool chartTransition(int from, int to, Mobius& out) const;
+    CameraPlacement resolveCameraPlacementAugmented(int startChart, const vec4& candidateAugmented) const;
     static Mobius edgeTransition(int from, int to, const UEdge& e);
     bool mobiusClose(const Mobius& a, const Mobius& b, float tol) const;
 };

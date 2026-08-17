@@ -2,7 +2,7 @@
 using namespace metal;
 
 constant int PACKET_MAGIC         = 0x4E545243;
-constant int CONTRACT_VERSION     = 5;
+constant int CONTRACT_VERSION     = 6;
 constant int PACKET_HEADER_SIZE   = 128;
 constant int OBJECT_SIZE          = 32;
 
@@ -19,6 +19,7 @@ constant float SELF_HIT_EPS       = 1e-4f;
 constant float SHADOW_HIT_EPS     = 5e-4f;
 constant float INF                = 1e30f;
 constant float PI                 = 3.14159265358979323846f;
+constant float TWO_PI             = 6.28318530717958647693f;
 
 struct PacketMeta {
     int magic;
@@ -73,7 +74,7 @@ struct SceneObject {
 
 struct PointLight {
     packed_float3 position;
-    float pad0;
+    float positionW; // Signed fourth coordinate for S3; ignored for H3.
     packed_float3 color;
     float intensity;
 };
@@ -95,6 +96,7 @@ struct QuadraticSurface {
     float c;
 };
 
+// In H3 this represents <n,X>_L = h.
 struct AmbientSurface {
     float4 n;
     float h;
@@ -111,8 +113,8 @@ struct Hit {
     int objectIndex;
     float t;
     float order;
-    float3 position;
-    float3 normal;
+    float4 ambientPoint;
+    float4 ambientNormal;
 };
 
 struct HitFrame {
@@ -145,6 +147,10 @@ float modelKappa(int modelKind) {
     return modelKind == MODEL_S3 ? 1.0f : -1.0f;
 }
 
+float ambientDot(float4 a, float4 b, float kappa) {
+    return dot(a.xyz, b.xyz) + kappa * a.w * b.w;
+}
+
 float4x4 identity4() {
     return float4x4(float4(1, 0, 0, 0),
                     float4(0, 1, 0, 0),
@@ -152,63 +158,36 @@ float4x4 identity4() {
                     float4(0, 0, 0, 1));
 }
 
-float3x3 identity3() {
-    return float3x3(float3(1, 0, 0),
-                    float3(0, 1, 0),
-                    float3(0, 0, 1));
+float wrapTwoPi(float t) {
+    t = fmod(t, TWO_PI);
+    return t < 0.0f ? t + TWO_PI : t;
 }
 
-// Disk hemisphere x -> Poincare ball p.
-float3 diskToPoincare(float3 x) {
-    float w = sqrt(max(0.0f, 1.0f - dot(x, x)));
-    return x / max(1.0f + w, EPS);
-}
-
-float3 diskToPoincareTangent(float3 x, float3 v) {
-    float w = sqrt(max(0.0f, 1.0f - dot(x, x)));
-    float denominator = max(1.0f + w, EPS);
-    return v / denominator
-         + x * (dot(x, v) / max(w * denominator * denominator, EPS));
-}
-
-float4 liftPointS3(float3 x) {
-    float w = sqrt(max(0.0f, 1.0f - dot(x, x)));
+float4 liftPointS3(float3 x, float w) {
     return float4(x, w);
 }
 
-float4 liftTangentS3(float3 x, float3 v) {
-    float w = sqrt(max(0.0f, 1.0f - dot(x, x)));
-    return float4(v, -dot(x, v) / max(w, EPS));
+// Compact H3 coordinate x=tanh(d)L -> hyperboloid point.
+float4 liftPointH3(float3 x) {
+    float compactW = sqrt(max(0.0f, 1.0f - dot(x, x)));
+    float inverseW = 1.0f / max(compactW, EPS);
+    return float4(x * inverseW, inverseW);
 }
 
-float4 liftPointPoincare(float3 p) {
-    float r2 = dot(p, p);
-    float D = max(1.0f - r2, EPS);
-    return float4(2.0f * p / D, (1.0f + r2) / D);
+float4 liftPointMetric(float3 x, float w, float kappa) {
+    return kappa > 0.0f ? liftPointS3(x, w) : liftPointH3(x);
 }
 
-float4 liftTangentPoincare(float3 p, float3 v) {
-    float r2 = dot(p, p);
-    float pv = dot(p, v);
-    float D = max(1.0f - r2, EPS);
-    return float4((2.0f / D) * (v + (2.0f * pv / D) * p),
-                  4.0f * pv / (D * D));
-}
+// Unit tangent of the current radial geodesic at the hit.
+float4 rayTangentAtHit(Hit hit,
+                       float3 rayDirection,
+                       float kappa) {
+    float radialComponent = dot(hit.ambientPoint.xyz, rayDirection);
 
-// Intrinsic ambient point/tangent. kappa=+1 uses S3 in R4;
-// kappa=-1 uses the H3 hyperboloid in R3,1.
-float4 liftPointMetric(float3 x, float kappa) {
+    // S3: (cos(s)d,-sin(s)); H3: (cosh(s)d,sinh(s)).
     return kappa > 0.0f
-        ? liftPointS3(x)
-        : liftPointPoincare(diskToPoincare(x));
-}
-
-float4 liftTangentMetric(float3 x, float3 v, float kappa) {
-    if (kappa > 0.0f)
-        return liftTangentS3(x, v);
-
-    float3 p = diskToPoincare(x);
-    return liftTangentPoincare(p, diskToPoincareTangent(x, v));
+        ? float4(hit.ambientPoint.w * rayDirection, -radialComponent)
+        : float4(hit.ambientPoint.w * rayDirection,  radialComponent);
 }
 
 AmbientSurface quadraticToAmbient(QuadraticSurface q, float kappa) {
@@ -226,7 +205,9 @@ QuadraticSurface ambientToQuadratic(AmbientSurface s, float kappa) {
     return q;
 }
 
-QuadraticSurface diskSurfaceToPoincare(float3 a, float b, float c) {
+QuadraticSurface diskSurfaceToPoincare(float3 a,
+                                       float b,
+                                       float c) {
     QuadraticSurface q;
     q.a = b + c;
     q.b = -2.0f * a;
@@ -242,25 +223,36 @@ SurfaceCoeffs poincareToDiskSurface(QuadraticSurface q) {
     return s;
 }
 
-SurfaceCoeffs transformedSurfaceH3(SceneObject obj, float4x4 transform) {
+AmbientSurface transformedAmbientSurfaceH3(SceneObject obj,
+                                             float4x4 transform) {
     QuadraticSurface q = diskSurfaceToPoincare(
         float3(obj.a.x, obj.a.y, obj.a.z), obj.b, obj.c);
-    AmbientSurface s = quadraticToAmbient(q, -1.0f);
-    s.n = transform * s.n;
-    return poincareToDiskSurface(ambientToQuadratic(s, -1.0f));
+    AmbientSurface surface = quadraticToAmbient(q, -1.0f);
+    surface.n = transform * surface.n;
+    return surface;
 }
 
-SurfaceCoeffs transformedSurfaceS3(SceneObject obj, float4x4 transform) {
-    float4 A = transform * float4(obj.a.x, obj.a.y, obj.a.z, obj.b);
-    SurfaceCoeffs s;
-    s.a = A.xyz;
-    s.b = A.w;
-    s.c = obj.c;
-    return s;
+SurfaceCoeffs ambientSurfaceToDiskH3(AmbientSurface surface) {
+    return poincareToDiskSurface(
+        ambientToQuadratic(surface, -1.0f));
+}
+
+float4 transformedSurfaceNormalS3(SceneObject obj,
+                                  float4x4 transform) {
+    return transform * float4(obj.a.x, obj.a.y, obj.a.z, obj.b);
+}
+
+SurfaceCoeffs ambientSurfaceToDiskS3(float4 A, float c) {
+    SurfaceCoeffs surface;
+    surface.a = A.xyz;
+    surface.b = A.w;
+    surface.c = c;
+    return surface;
 }
 
 Roots solveQuadratic(float a, float b, float c) {
     Roots roots = {0, 0.0f, 0.0f};
+
     if (fabs(a) < EPS) {
         if (fabs(b) >= EPS) {
             roots.count = 1;
@@ -273,14 +265,14 @@ Roots solveQuadratic(float a, float b, float c) {
     if (discriminant < -EPS)
         return roots;
 
-    float s = sqrt(max(discriminant, 0.0f));
-    if (s < EPS) {
+    float rootDiscriminant = sqrt(max(discriminant, 0.0f));
+    if (rootDiscriminant < EPS) {
         roots.count = 1;
         roots.r0 = -b / (2.0f * a);
         return roots;
     }
 
-    float q = -0.5f * (b + copysign(s, b));
+    float q = -0.5f * (b + copysign(rootDiscriminant, b));
     if (fabs(q) < EPS) {
         roots.count = 1;
         roots.r0 = -b / (2.0f * a);
@@ -299,30 +291,93 @@ float forwardOrder(float t, float radiusLimit, float minimumT) {
     return t;
 }
 
+Hit emptyHit() {
+    Hit hit;
+    hit.valid = false;
+    hit.objectIndex = -1;
+    hit.t = 0.0f;
+    hit.order = INF;
+    hit.ambientPoint = float4(0, 0, 0, 1);
+    hit.ambientNormal = float4(0.0f);
+    return hit;
+}
+
 Hit findNearestHit(float3 rayDirection,
                    float4x4 transform,
-                   float radiusLimit,
+                   float h3RadiusLimit,
                    float minimumT,
                    int modelKind,
+                   float s3ChartRadius,
                    device const SceneObject* objects,
                    int objectCount) {
-    Hit nearest;
-    nearest.valid = false;
-    nearest.objectIndex = -1;
-    nearest.t = 0.0f;
-    nearest.order = INF;
-    nearest.position = float3(0.0f);
-    nearest.normal = float3(0.0f);
+    Hit nearest = emptyHit();
 
     for (int i = 0; i < objectCount; ++i) {
         SceneObject obj = objects[i];
-        SurfaceCoeffs surface = modelKind == MODEL_H3
-            ? transformedSurfaceH3(obj, transform)
-            : transformedSurfaceS3(obj, transform);
+
+        AmbientSurface ambientH3;
+        ambientH3.n = float4(0.0f);
+        ambientH3.h = 0.0f;
+        float4 ambientNormalS3 = float4(0.0f);
+        SurfaceCoeffs surface;
+
+        if (modelKind == MODEL_H3) {
+            ambientH3 = transformedAmbientSurfaceH3(obj, transform);
+            surface = ambientSurfaceToDiskH3(ambientH3);
+        } else {
+            ambientNormalS3 = transformedSurfaceNormalS3(obj, transform);
+            surface = ambientSurfaceToDiskS3(ambientNormalS3, obj.c);
+        }
 
         float ad = dot(surface.a, rayDirection);
-        Roots roots = {0, 0.0f, 0.0f};
 
+        if (modelKind == MODEL_S3) {
+            // (a.d)sin(t)+b cos(t)=c.
+            float amplitude = sqrt(ad * ad + surface.b * surface.b);
+            if (amplitude < EPS || fabs(surface.c) > amplitude + EPS)
+                continue;
+
+            float k = clamp(surface.c / amplitude, -1.0f, 1.0f);
+            float asinK = asin(k);
+            float phase = atan2(surface.b, ad);
+            float roots[2] = {
+                wrapTwoPi(asinK - phase),
+                wrapTwoPi(PI - asinK - phase)
+            };
+
+            for (int rootIndex = 0; rootIndex < 2; ++rootIndex) {
+                float t = roots[rootIndex];
+                float order = forwardOrder(t,
+                                           s3ChartRadius,
+                                           minimumT);
+                if (order >= nearest.order)
+                    continue;
+
+                float sinT = sin(t);
+                float cosT = cos(t);
+                float lhs = ad * sinT + surface.b * cosT;
+                if (fabs(lhs - surface.c) > 1e-3f)
+                    continue;
+
+                float4 P = float4(sinT * rayDirection, cosT);
+                float4 N = ambientNormalS3
+                         - P * dot(ambientNormalS3, P);
+                float normal2 = dot(N, N);
+                if (normal2 < EPS * EPS)
+                    continue;
+
+                nearest.valid = true;
+                nearest.objectIndex = i;
+                nearest.t = t;
+                nearest.order = order;
+                nearest.ambientPoint = P;
+                nearest.ambientNormal = N * rsqrt(normal2);
+            }
+            continue;
+        }
+
+        // H3 compact ray x=t d, t=tanh(intrinsic distance).
+        Roots roots = {0, 0.0f, 0.0f};
         if (fabs(surface.b) < EPS) {
             if (fabs(ad) < EPS)
                 continue;
@@ -331,13 +386,16 @@ Hit findNearestHit(float3 rayDirection,
         } else {
             float A = ad * ad + surface.b * surface.b;
             float B = -2.0f * surface.c * ad;
-            float C = surface.c * surface.c - surface.b * surface.b;
+            float C = surface.c * surface.c
+                    - surface.b * surface.b;
             roots = solveQuadratic(A, B, C);
         }
 
         for (int rootIndex = 0; rootIndex < roots.count; ++rootIndex) {
             float t = rootIndex == 0 ? roots.r0 : roots.r1;
-            float order = forwardOrder(t, radiusLimit, minimumT);
+            float order = forwardOrder(t,
+                                       h3RadiusLimit,
+                                       minimumT);
             if (order >= nearest.order)
                 continue;
 
@@ -345,25 +403,18 @@ Hit findNearestHit(float3 rayDirection,
             if (t2 >= 1.0f - EPS)
                 continue;
 
-            float w = sqrt(max(0.0f, 1.0f - t2));
-            float lhs = ad * t + surface.b * w;
+            float compactW = sqrt(max(0.0f, 1.0f - t2));
+            float lhs = ad * t + surface.b * compactW;
             if (fabs(lhs - surface.c) > 1e-3f)
                 continue;
 
             float3 position = t * rayDirection;
-            // Coordinate differential dF.  The x chart is the orthographic
-            // hemisphere coordinate, whose round metric is
-            //
-            //   g = I + xx^T / w^2,       g^{-1} = I - xx^T.
-            //
-            // The H3 metric in this coordinate is conformal to this round
-            // metric, so the same raised vector gives the normal direction
-            // for both geometries (only its length changes).
-            float3 gradientCovector = surface.a
-                - (surface.b / max(w, EPS)) * position;
-            float3 intrinsicNormal = gradientCovector
-                - position * dot(position, gradientCovector);
-            float normal2 = dot(intrinsicNormal, intrinsicNormal);
+            float inverseW = 1.0f / max(compactW, EPS);
+            float4 X = float4(position * inverseW, inverseW);
+
+            // For <n,X>_L=h and <X,X>_L=-1, N=n+hX.
+            float4 N = ambientH3.n + ambientH3.h * X;
+            float normal2 = ambientDot(N, N, -1.0f);
             if (normal2 < EPS * EPS)
                 continue;
 
@@ -371,32 +422,64 @@ Hit findNearestHit(float3 rayDirection,
             nearest.objectIndex = i;
             nearest.t = t;
             nearest.order = order;
-            nearest.position = position;
-            // Only the direction is used. Metric normalization is performed
-            // after transporting this tangent to the chart origin.
-            nearest.normal = intrinsicNormal * rsqrt(normal2);
+            nearest.ambientPoint = X;
+            nearest.ambientNormal = N * rsqrt(normal2);
         }
     }
+
     return nearest;
 }
 
-// Isometry sending P to (0,0,0,1), for either ambient metric
-// G_kappa=diag(1,1,1,kappa).
-float4x4 movePointToOrigin(float4 P, float kappa) {
+// Stable SO(4) rotation sending P=(u,w) to e4.
+float4x4 movePointToOriginS3(float4 P) {
     float3 u = P.xyz;
     float w = P.w;
-    float scale = -kappa / max(1.0f + w, EPS);
-    float3 c0 = float3(1,0,0) + scale * u * u.x;
-    float3 c1 = float3(0,1,0) + scale * u * u.y;
-    float3 c2 = float3(0,0,1) + scale * u * u.z;
-    return float4x4(float4(c0, kappa*u.x),
-                    float4(c1, kappa*u.y),
-                    float4(c2, kappa*u.z),
+    float r2 = dot(u, u);
+
+    if (r2 < EPS * EPS) {
+        if (w >= 0.0f)
+            return identity4();
+
+        // At the antipode, choose one orientation-preserving pi rotation.
+        return float4x4(float4(-1, 0, 0, 0),
+                        float4( 0, 1, 0, 0),
+                        float4( 0, 0, 1, 0),
+                        float4( 0, 0, 0,-1));
+    }
+
+    float3 axis = u * rsqrt(r2);
+    float3 c0 = float3(1,0,0) + (w - 1.0f) * axis * axis.x;
+    float3 c1 = float3(0,1,0) + (w - 1.0f) * axis * axis.y;
+    float3 c2 = float3(0,0,1) + (w - 1.0f) * axis * axis.z;
+
+    return float4x4(float4(c0, u.x),
+                    float4(c1, u.y),
+                    float4(c2, u.z),
                     float4(-u, w));
 }
 
-ReflectionStep makeReflectionStep(float3 hitPosition,
-                                  float3 surfaceNormal,
+// Lorentz boost sending a future-pointing unit hyperboloid point to e4.
+float4x4 movePointToOriginH3(float4 P) {
+    float3 u = P.xyz;
+    float w = P.w;
+    float scale = 1.0f / max(1.0f + w, EPS);
+    float3 c0 = float3(1,0,0) + scale * u * u.x;
+    float3 c1 = float3(0,1,0) + scale * u * u.y;
+    float3 c2 = float3(0,0,1) + scale * u * u.z;
+
+    return float4x4(float4(c0, -u.x),
+                    float4(c1, -u.y),
+                    float4(c2, -u.z),
+                    float4(-u, w));
+}
+
+float4x4 movePointToOrigin(float4 P, float kappa) {
+    return kappa > 0.0f
+        ? movePointToOriginS3(P)
+        : movePointToOriginH3(P);
+}
+
+ReflectionStep makeReflectionStep(Hit hit,
                                   float3 incomingRayDirection,
                                   float kappa) {
     ReflectionStep result;
@@ -404,33 +487,26 @@ ReflectionStep makeReflectionStep(float3 hitPosition,
     result.chartChange = identity4();
     result.rayDirection = float3(0.0f);
 
-    float4 P = liftPointMetric(hitPosition, kappa);
-    float4x4 B = movePointToOrigin(P, kappa);
-
-    float3 D = (B * liftTangentMetric(hitPosition,
-                                      incomingRayDirection,
-                                      kappa)).xyz;
-    float3 N = (B * liftTangentMetric(hitPosition,
-                                      surfaceNormal,
-                                      kappa)).xyz;
+    float4x4 B = movePointToOrigin(hit.ambientPoint, kappa);
+    float3 D = (B * rayTangentAtHit(hit,
+                                    incomingRayDirection,
+                                    kappa)).xyz;
+    float3 N = (B * hit.ambientNormal).xyz;
     float d2 = dot(D, D);
     float n2 = dot(N, N);
-    if (d2 < EPS*EPS || n2 < EPS*EPS)
+    if (d2 < EPS * EPS || n2 < EPS * EPS)
         return result;
 
     D *= rsqrt(d2);
     N *= rsqrt(n2);
 
-    // At the ambient origin the tangent metric is ordinary Euclidean for
-    // both S3 and H3, so this is the intrinsic specular reflection.
+    // At e4 the tangent metric is Euclidean for both models.
     result.valid = true;
     result.chartChange = B;
     result.rayDirection = normalize(reflect(D, N));
     return result;
 }
 
-// At a hit, create one intrinsic orthonormal frame at the origin. All BRDF
-// dot products are then ordinary Euclidean dot products in this tangent space.
 HitFrame makeHitFrame(Hit hit,
                       float3 incomingRayDirection,
                       float4x4 transform,
@@ -441,19 +517,18 @@ HitFrame makeHitFrame(Hit hit,
     frame.normal = float3(0.0f);
     frame.view = float3(0.0f);
 
-    float4 P = liftPointMetric(hit.position, kappa);
-    float4x4 B = movePointToOrigin(P, kappa);
-    float3 N = (B * liftTangentMetric(hit.position, hit.normal, kappa)).xyz;
-    float3 V = (B * liftTangentMetric(hit.position,
-                                      -incomingRayDirection,
-                                      kappa)).xyz;
-    float n2 = dot(N, N);
-    float v2 = dot(V, V);
-    if (n2 < EPS*EPS || v2 < EPS*EPS)
+    float4x4 B = movePointToOrigin(hit.ambientPoint, kappa);
+    float3 N = (B * hit.ambientNormal).xyz;
+    float3 V = -(B * rayTangentAtHit(hit,
+                                     incomingRayDirection,
+                                     kappa)).xyz;
+    float normal2 = dot(N, N);
+    float view2 = dot(V, V);
+    if (normal2 < EPS * EPS || view2 < EPS * EPS)
         return frame;
 
-    N *= rsqrt(n2);
-    V *= rsqrt(v2);
+    N *= rsqrt(normal2);
+    V *= rsqrt(view2);
     if (dot(N, V) < 0.0f)
         N = -N;
 
@@ -464,11 +539,10 @@ HitFrame makeHitFrame(Hit hit,
     return frame;
 }
 
-// The light is transformed into the recentered hit chart. At its origin:
-// S3: Q=(sin(d)L,cos(d)); H3: Q=(sinh(d)L,cosh(d)).
 LightSample samplePointLight(PointLight light,
                              float4x4 hitSceneTransform,
-                             float radiusLimit,
+                             float h3RadiusLimit,
+                             float s3ChartRadius,
                              float kappa) {
     LightSample sample;
     sample.valid = false;
@@ -480,33 +554,35 @@ LightSample samplePointLight(PointLight light,
     float3 position = float3(light.position.x,
                              light.position.y,
                              light.position.z);
-    float4 Q = hitSceneTransform * liftPointMetric(position, kappa);
+    float4 Q = hitSceneTransform
+             * liftPointMetric(position, light.positionW, kappa);
     float areaRadius2 = dot(Q.xyz, Q.xyz);
-    if (areaRadius2 < EPS*EPS)
+    if (areaRadius2 < EPS * EPS)
         return sample;
 
     float areaRadius = sqrt(areaRadius2);
-    float t;
+    float rayParameter;
     float distance;
+
     if (kappa > 0.0f) {
-        // This renderer's disk chart is the positive-w hemisphere.
-        if (Q.w <= EPS)
+        rayParameter = atan2(areaRadius, Q.w);
+        distance = rayParameter;
+        if (rayParameter <= SHADOW_HIT_EPS ||
+            rayParameter >= s3ChartRadius - EPS)
             return sample;
-        t = areaRadius;
-        distance = atan2(areaRadius, Q.w);
     } else {
         if (Q.w <= 1.0f - 1e-4f)
             return sample;
-        t = areaRadius / max(Q.w, EPS); // tanh(d)
+        rayParameter = areaRadius / max(Q.w, EPS);
         distance = asinh(areaRadius);
+        if (rayParameter <= SHADOW_HIT_EPS ||
+            rayParameter >= h3RadiusLimit - EPS)
+            return sample;
     }
-
-    if (t <= SHADOW_HIT_EPS || t >= radiusLimit - EPS)
-        return sample;
 
     sample.valid = true;
     sample.direction = Q.xyz / areaRadius;
-    sample.lightT = t;
+    sample.lightT = rayParameter;
     sample.intrinsicDistance = distance;
     sample.areaRadiusSquared = areaRadius2;
     return sample;
@@ -514,25 +590,29 @@ LightSample samplePointLight(PointLight light,
 
 bool isShadowed(LightSample light,
                 float4x4 hitSceneTransform,
-                float radiusLimit,
+                float h3RadiusLimit,
+                float s3ChartRadius,
                 int modelKind,
                 device const SceneObject* objects,
                 int objectCount) {
     Hit blocker = findNearestHit(light.direction,
                                  hitSceneTransform,
-                                 radiusLimit,
+                                 h3RadiusLimit,
                                  SHADOW_HIT_EPS,
                                  modelKind,
+                                 s3ChartRadius,
                                  objects,
                                  objectCount);
-    return blocker.valid && blocker.t < light.lightT - SHADOW_HIT_EPS;
+    return blocker.valid
+        && blocker.t < light.lightT - SHADOW_HIT_EPS;
 }
 
 DirectLighting computeDirectLighting(Hit hit,
                                      float3 incomingRayDirection,
                                      float kappa,
                                      float4x4 transform,
-                                     float radiusLimit,
+                                     float h3RadiusLimit,
+                                     float s3ChartRadius,
                                      float falloffK,
                                      int modelKind,
                                      device const SceneObject* objects,
@@ -551,12 +631,14 @@ DirectLighting computeDirectLighting(Hit hit,
         return result;
 
     const float shininess = 32.0f;
-    const float phongNormalization = (shininess + 2.0f) / (2.0f * PI);
+    const float phongNormalization =
+        (shininess + 2.0f) / (2.0f * PI);
 
     for (int i = 0; i < lightCount; ++i) {
         LightSample light = samplePointLight(lights[i],
                                              frame.sceneTransform,
-                                             radiusLimit,
+                                             h3RadiusLimit,
+                                             s3ChartRadius,
                                              kappa);
         if (!light.valid)
             continue;
@@ -567,32 +649,37 @@ DirectLighting computeDirectLighting(Hit hit,
 
         if (isShadowed(light,
                        frame.sceneTransform,
-                       radiusLimit,
+                       h3RadiusLimit,
+                       s3ChartRadius,
                        modelKind,
                        objects,
                        objectCount))
             continue;
 
-        // Curvature-correct radial area factor: sin^2(d) in S3 and
-        // sinh^2(d) in H3. The leading 1 softens the point singularity.
         float attenuation = 1.0f /
-            (1.0f + max(falloffK, 0.0f) * light.areaRadiusSquared);
+            (1.0f + max(falloffK, 0.0f)
+                    * light.areaRadiusSquared);
         float3 lightColor = float3(lights[i].color.x,
                                    lights[i].color.y,
                                    lights[i].color.z);
-        float3 irradiance = lightColor * lights[i].intensity * attenuation;
+        float3 irradiance = lightColor
+                          * lights[i].intensity
+                          * attenuation;
 
         result.diffuse += irradiance * NoL;
 
         float3 H = frame.view + light.direction;
-        float h2 = dot(H, H);
-        if (h2 > EPS*EPS) {
-            H *= rsqrt(h2);
+        float half2 = dot(H, H);
+        if (half2 > EPS * EPS) {
+            H *= rsqrt(half2);
             float NoH = max(dot(frame.normal, H), 0.0f);
-            float specularLobe = phongNormalization * pow(NoH, shininess) * NoL;
+            float specularLobe = phongNormalization
+                               * pow(NoH, shininess)
+                               * NoL;
             result.specular += irradiance * specularLobe;
         }
     }
+
     return result;
 }
 
@@ -632,40 +719,66 @@ kernel void raytrace(device const uchar* packet [[buffer(0)]],
     }
 
     device const SceneObject* objects =
-        reinterpret_cast<device const SceneObject*>(packet + PACKET_HEADER_SIZE);
-    uint materialOffset = PACKET_HEADER_SIZE + uint(objectCount) * OBJECT_SIZE;
+        reinterpret_cast<device const SceneObject*>(
+            packet + PACKET_HEADER_SIZE);
+    uint materialOffset = PACKET_HEADER_SIZE
+                        + uint(objectCount) * OBJECT_SIZE;
     device const Material* materials =
-        reinterpret_cast<device const Material*>(packet + materialOffset);
+        reinterpret_cast<device const Material*>(
+            packet + materialOffset);
     uint lightOffset = materialOffset + uint(materialCount) * 32;
     device const PointLight* lights =
-        reinterpret_cast<device const PointLight*>(packet + lightOffset);
+        reinterpret_cast<device const PointLight*>(
+            packet + lightOffset);
 
     float2 uv = (float2(pixel) + 0.5f) / float2(width, height);
     float2 screen = 2.0f * uv - 1.0f;
     screen.y = -screen.y;
+
     float3 rayDirection = normalize(
         header->camera.fwd.xyz
-        + screen.x * header->camera.aspect * header->camera.fovTan
+        + screen.x
+            * header->camera.aspect
+            * header->camera.fovTan
             * header->camera.right.xyz
-        + screen.y * header->camera.fovTan * header->camera.up.xyz);
+        + screen.y
+            * header->camera.fovTan
+            * header->camera.up.xyz);
 
     float kappa = modelKappa(modelKind);
+    float s3ChartRadius = atan2(header->camera.chartRadiusSin,
+                                header->camera.chartRadiusCos);
+    if (s3ChartRadius < 0.0f)
+        s3ChartRadius += TWO_PI;
+
+    // A single exponential chart is injective only for radius < pi.
+    if (modelKind == MODEL_S3 &&
+        (s3ChartRadius <= EPS || s3ChartRadius >= PI - EPS)) {
+        output.write(float4(0,1,1,1), pixel);
+        return;
+    }
+
+    float h3RadiusLimit = header->camera.chartRadiusSin;
     float4x4 transform = identity4();
     float3 throughput = float3(1.0f);
     float3 radiance = float3(0.0f);
-    int maxBounces = clamp(header->controls.maxBounces, 0, MAX_BOUNCES);
+    int maxBounces = clamp(header->controls.maxBounces,
+                           0,
+                           MAX_BOUNCES);
 
     for (int bounce = 0; bounce <= maxBounces; ++bounce) {
         Hit hit = findNearestHit(rayDirection,
                                  transform,
-                                 header->camera.chartRadiusSin,
+                                 h3RadiusLimit,
                                  SELF_HIT_EPS,
                                  modelKind,
+                                 s3ChartRadius,
                                  objects,
                                  objectCount);
 
         if (!hit.valid) {
-            radiance += throughput * float3(header->controls.ambient);
+            radiance += throughput
+                      * float3(header->controls.ambient);
             break;
         }
 
@@ -674,6 +787,7 @@ kernel void raytrace(device const uchar* packet [[buffer(0)]],
             radiance = float3(1,0,1);
             break;
         }
+
         Material material = materials[obj.colorIdx];
 
         if (obj.kind == OBJECT_OPAQUE_SPHERE) {
@@ -682,7 +796,8 @@ kernel void raytrace(device const uchar* packet [[buffer(0)]],
                 rayDirection,
                 kappa,
                 transform,
-                header->camera.chartRadiusSin,
+                h3RadiusLimit,
+                s3ChartRadius,
                 header->controls.falloffK,
                 modelKind,
                 objects,
@@ -693,14 +808,16 @@ kernel void raytrace(device const uchar* packet [[buffer(0)]],
             radiance += throughput * (
                 material.color.rgb
                     * (header->controls.ambient + direct.diffuse)
-                + material.specular.rgb * material.specular.a
+                + material.specular.rgb
+                    * material.specular.a
                     * direct.specular);
             break;
         }
 
         if (obj.kind == OBJECT_MIRROR_SPHERE) {
             if (bounce == maxBounces) {
-                radiance += throughput * float3(header->controls.ambient);
+                radiance += throughput
+                          * float3(header->controls.ambient);
                 break;
             }
 
@@ -709,8 +826,7 @@ kernel void raytrace(device const uchar* packet [[buffer(0)]],
                         * header->controls.bounceAttenuation;
 
             ReflectionStep reflection = makeReflectionStep(
-                hit.position,
-                hit.normal,
+                hit,
                 rayDirection,
                 kappa);
 
@@ -730,5 +846,7 @@ kernel void raytrace(device const uchar* packet [[buffer(0)]],
 
     output.write(float4(clamp(radiance,
                               float3(0.0f),
-                              float3(1.0f)), 1.0f), pixel);
+                              float3(1.0f)),
+                        1.0f),
+                 pixel);
 }

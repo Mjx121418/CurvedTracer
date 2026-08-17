@@ -67,6 +67,7 @@ void Atlas::resetToDefaults() {
     cameraChartId_ = -1;
     cameraChartFrom_ = 0;
     cameraPosition_ = vec3(0, 0, 0);
+    cameraPositionW_ = 1.0f;
     cameraChartTransition_ = Mobius();
 }
 
@@ -211,6 +212,15 @@ int Atlas::addMaterial(const vec4& color, const vec4& specular) {
 }
 
 int Atlas::addLight(int chartId, const vec3& position, const vec3& color, float intensity) {
+    // Derive the augmented w coordinate of the disk chart. For S³ it is signed
+    // (callers that need w < 0 use the 5-argument overload); for H³ it is
+    // always +sqrt(1-|x|²).
+    float positionW = mhSqrt(mhMax(0.0f, 1.0f - lengthSq(position)));
+    return addLight(chartId, position, positionW, color, intensity);
+}
+
+int Atlas::addLight(int chartId, const vec3& position, float positionW,
+                    const vec3& color, float intensity) {
     clearPacket();
     if (!validModelKind()) { setError(6); return -1; }
     if (static_cast<int>(lights_.size()) >= GEO_MAX_LIGHTS) { capacityExceeded_ = true; setError(5); return -1; }
@@ -220,6 +230,7 @@ int Atlas::addLight(int chartId, const vec3& position, const vec3& color, float 
     ChartLight light;
     light.chartId = chartId;
     light.position = position;
+    light.positionW = positionW;
     light.color = color;
     light.intensity = intensity;
     int lightId = static_cast<int>(lights_.size());
@@ -326,10 +337,16 @@ int Atlas::validateObjectModel(const ChartObject& o) const {
 
 int Atlas::validateLight(const ChartLight& light) const {
     if (!validChartId(light.chartId)) return 3;
-    if (!finiteVec(light.position) || !finiteVec(light.color) || !finiteFloat(light.intensity)) return 3;
+    if (!finiteVec(light.position) || !finiteFloat(light.positionW) ||
+        !finiteVec(light.color) || !finiteFloat(light.intensity)) return 3;
     if (light.intensity < 0.0f) return 3;
     float radius = charts_[light.chartId].radius;
-    if (length(light.position) >= mhSin(radius) - 1e-4f) return 3;
+
+    // Unified augmented disk-chart coordinate: (x,w) with |x|² + w² = 1.
+    // The chart contains the point iff w > cos(r), for both H³ and S³.
+    float ambientNorm2 = lengthSq(light.position) + light.positionW * light.positionW;
+    if (mhAbs(ambientNorm2 - 1.0f) > 1e-3f) return 3;
+    if (light.positionW <= mhCos(radius) + 1e-4f) return 3;
     return 0;
 }
 
@@ -433,18 +450,24 @@ bool Atlas::mobiusClose(const Mobius& a, const Mobius& b, float tol) const {
 }
 
 CameraPlacement Atlas::resolveCameraPlacement(int startChart, const vec3& startLocal, const vec3& movement) const {
+    // Thin compatibility wrapper over the unified augmented-coordinate resolver.
+    vec3 candidate = startLocal + movement;
+    float positionW = mhSqrt(mhMax(0.0f, 1.0f - lengthSq(candidate)));
+    return resolveCameraPlacementAugmented(startChart, vec4(candidate, positionW));
+}
+
+CameraPlacement Atlas::resolveCameraPlacementAugmented(int startChart, const vec4& candidateAugmented) const {
     CameraPlacement placement;
     placement.chartId = startChart;
-    placement.localPosition = startLocal + movement;
+    placement.localPosition = candidateAugmented.xyz();
+    placement.localPositionW = candidateAugmented.w;
 
     if (!validModelKind() || !validChartId(startChart)) {
         return placement;
     }
-
-    vec3 candidate = startLocal + movement;
-    if (!finiteVec(candidate)) {
-        placement.chartId = startChart;
-        placement.localPosition = startLocal;
+    if (!finiteVec(candidateAugmented.xyz()) || !finiteFloat(candidateAugmented.w)) {
+        placement.localPosition = vec3(0, 0, 0);
+        placement.localPositionW = 1.0f;
         return placement;
     }
 
@@ -456,7 +479,6 @@ CameraPlacement Atlas::resolveCameraPlacement(int startChart, const vec3& startL
     std::vector<Mobius> path(n);
     std::vector<int> queue;
     queue.reserve(n);
-
     depth[startChart] = 0;
     path[startChart] = identityMobius();
     queue.push_back(startChart);
@@ -477,43 +499,48 @@ CameraPlacement Atlas::resolveCameraPlacement(int startChart, const vec3& startL
     }
 
     int bestInsideChart = -1;
-    vec3 bestInsideLocal;
-    float bestInsideNorm = 1e30f;
+    vec3 bestLocal;
+    float bestW = -2.0f;
 
     for (int x = 0; x < n; ++x) {
         if (depth[x] < 0) continue;
-        // The special camera chart is not a re-parenting target.
-        if (x == cameraChartId_) continue;
+        if (x == cameraChartId_) continue;   // the special camera chart is not a re-parenting target
 
-        vec3 local = path[x].applyChartPoint(candidate);
-        if (!finiteVec(local)) continue;
+        vec4 local = path[x].applyChartPointAugmented(candidateAugmented);
+        if (!finiteVec(local.xyz()) || !finiteFloat(local.w)) continue;
 
-        float norm = length(local);
-        float limit = mhSin(charts_[x].radius);
-
-        if (norm < limit * kCameraInsideFactor) {
-            if (bestInsideChart < 0 || norm < bestInsideNorm) {
+        // Unified disk-chart containment: w > cos(radius) for both H³ and S³.
+        float radius = charts_[x].radius;
+        if (local.w > mhCos(radius) + 1e-4f) {
+            if (bestInsideChart < 0 || local.w > bestW) {
                 bestInsideChart = x;
-                bestInsideLocal = local;
-                bestInsideNorm = norm;
+                bestLocal = local.xyz();
+                bestW = local.w;
             }
         }
     }
 
     if (bestInsideChart >= 0) {
         placement.chartId = bestInsideChart;
-        placement.localPosition = bestInsideLocal;
+        placement.localPosition = bestLocal;
+        placement.localPositionW = bestW;
     } else {
-        // No existing chart can realize the candidate point. Clamp it back
-        // onto the original chart's disk boundary (no 0.95/0.98 safety factor,
-        // which caused the camera position to jump inward).
+        // Clamp back to the original chart's geodesic boundary, along the same
+        // radial direction from the original chart's origin.
         placement.chartId = startChart;
-        float limit = mhSin(charts_[startChart].radius);
-        float norm = length(candidate);
-        if (norm > limit && norm > 1e-6f) {
-            placement.localPosition = candidate * (limit / norm);
+        float radius = charts_[startChart].radius;
+        float sinR = mhSin(radius);
+        float cosR = mhCos(radius);
+        vec3 dir = candidateAugmented.xyz();
+        float norm = length(dir);
+        if (norm > 1e-6f) {
+            dir = dir / norm;
+            placement.localPosition = dir * sinR;
+            placement.localPositionW = cosR;
         } else {
-            placement.localPosition = candidate;
+            // Degenerate: keep the original origin.
+            placement.localPosition = vec3(0, 0, 0);
+            placement.localPositionW = 1.0f;
         }
     }
 
@@ -521,17 +548,25 @@ CameraPlacement Atlas::resolveCameraPlacement(int startChart, const vec3& startL
 }
 
 int Atlas::cameraChartAt(int fromChart, const vec3& positionInFromChart, float radius) {
+    float positionW = mhSqrt(mhMax(0.0f, 1.0f - lengthSq(positionInFromChart)));
+    return cameraChartAt(fromChart, positionInFromChart, positionW, radius);
+}
+
+int Atlas::cameraChartAt(int fromChart, const vec3& positionInFromChart, float positionW,
+                         float radius) {
     clearPacket();
     if (!validModelKind()) { setError(6); return -1; }
     if (!validChartId(fromChart)) { setError(4); return -1; }
     if (!validChartRadius(radius)) { setError(3); return -1; }
-    if (!finiteVec(positionInFromChart)) { setError(3); return -1; }
+    if (!finiteVec(positionInFromChart) || !finiteFloat(positionW)) { setError(3); return -1; }
 
     Mobius T;
     T.kind = (modelKind_ == GEO_MODEL_S3) ? ModelKind::S3 : ModelKind::H3;
 
     if (modelKind_ == GEO_MODEL_S3) {
-        vec4 P = disk::toAmbient(positionInFromChart);
+        // Augmented orthographic chart coordinate: the anchor position is the
+        // ambient unit vector (x, w) in the source chart.
+        vec4 P(positionInFromChart, positionW);
         T.m = movePointToOrigin(P, 1.0f);
     } else {
         vec3 poincare = disk::toPoincare(positionInFromChart);
@@ -568,6 +603,7 @@ int Atlas::cameraChartAt(int fromChart, const vec3& positionInFromChart, float r
     cameraChartFrom_ = fromChart;
     cameraChartTransition_ = T;
     cameraPosition_ = positionInFromChart;
+    cameraPositionW_ = positionW;
     upsertEdge(fromChart, cameraChartId_, T, true);
     upsertEdge(cameraChartId_, fromChart, T.inverse(), true);
 
@@ -582,7 +618,10 @@ int Atlas::cameraMove(const vec3& movement) {
 
     if (cameraChartId_ < 0) {
         // Initialize the camera chart at the current (base-chart) position.
-        return cameraChartAt(cameraChartFrom_, cameraPosition_, kCameraRadius);
+        float radius = validChartId(cameraChartFrom_)
+            ? charts_[cameraChartFrom_].radius
+            : 1.5707963267948966f;
+        return cameraChartAt(cameraChartFrom_, cameraPosition_, cameraPositionW_, radius);
     }
 
     // Save the current local camera orientation and parent-chart relation.
@@ -591,22 +630,26 @@ int Atlas::cameraMove(const vec3& movement) {
     vec3 oldFwd = cameraFwd_;
     const int oldParent = cameraChartFrom_;
     const vec3 oldPosition = cameraPosition_;
+    const float oldPositionW = cameraPositionW_;
     Mobius oldToBase = cameraChartTransition_.inverse();
 
-    // Express the local camera-chart movement in the parent chart coordinates.
-    vec3 baseMoved = oldToBase.applyChartPoint(movement);
-
-    CameraPlacement placement;
-    if (!finiteVec(baseMoved)) {
-        // The movement cannot be realized (for example H3 |movement| == 1
-        // lands on the disk-chart boundary). Clamp back to the original chart
-        // at the previous valid position.
-        placement.chartId = oldParent;
-        placement.localPosition = oldPosition;
+    // Build the augmented camera-chart point reached by `movement`.
+    vec4 movedCam;
+    if (modelKind_ == GEO_MODEL_S3) {
+        float moveLen = length(movement);
+        if (moveLen < 1e-9f) {
+            movedCam = vec4(0, 0, 0, 1);
+        } else {
+            vec3 dir = movement / moveLen;
+            movedCam = vec4(mhSin(moveLen) * dir, mhCos(moveLen));
+        }
     } else {
-        vec3 baseDelta = baseMoved - oldPosition;
-        placement = resolveCameraPlacement(oldParent, oldPosition, baseDelta);
+        movedCam = vec4(movement, mhSqrt(mhMax(0.0f, 1.0f - lengthSq(movement))));
     }
+
+    // Express the result in the old parent chart and re-parent.
+    vec4 movedParent = oldToBase.applyChartPointAugmented(movedCam);
+    CameraPlacement placement = resolveCameraPlacementAugmented(oldParent, movedParent);
 
     // Transition from the old parent chart to the new parent chart, needed to
     // parallel-transport the camera frame into the re-anchored camera chart.
@@ -614,11 +657,13 @@ int Atlas::cameraMove(const vec3& movement) {
     if (placement.chartId == oldParent) {
         parentToNew = identityMobius();
     } else if (!chartTransition(oldParent, placement.chartId, parentToNew)) {
-        setError(4);   // should not happen: resolveCameraPlacement only returns reachable charts
+        setError(4);   // should not happen: resolveCameraPlacementAugmented only returns reachable charts
         return -1;
     }
 
-    int id = cameraChartAt(placement.chartId, placement.localPosition, kCameraRadius);
+    float newRadius = charts_[placement.chartId].radius;
+    int id = cameraChartAt(placement.chartId, placement.localPosition,
+                           placement.localPositionW, newRadius);
     if (id < 0) return id;   // preserve cameraChartAt's error
 
     // Push the previous camera-chart orientation into the new camera chart:
@@ -626,11 +671,15 @@ int Atlas::cameraMove(const vec3& movement) {
     Mobius oldToNew = cameraChartTransition_.compose(parentToNew.compose(oldToBase));
     const float eps = 1e-3f;
     auto pushDirection = [&](const vec3& dir) {
-        vec3 base = oldToNew.applyChartPoint(vec3(0, 0, 0));
-        vec3 moved = oldToNew.applyChartPoint(dir * eps);
-        vec3 local = moved - base;
-        float len = length(local);
-        if (len > 1e-9f) return local / len;
+        float len = length(dir);
+        if (len < 1e-9f) return dir;
+        vec3 u = dir / len;
+        float w = mhSqrt(mhMax(0.0f, 1.0f - eps * eps));
+        vec4 base = oldToNew.applyChartPointAugmented(vec4(0, 0, 0, 1));
+        vec4 moved = oldToNew.applyChartPointAugmented(vec4(u * eps, w));
+        vec3 local = moved.xyz() - base.xyz();
+        float l = length(local);
+        if (l > 1e-9f) return local / l;
         return dir;
     };
 
@@ -809,6 +858,7 @@ int Atlas::build(int cameraChart, int maxChartDepth) {
     // ---- transform lights into the camera chart ----
     struct FlatLight {
         vec3 position;
+        float positionW;
         vec3 color;
         float intensity;
     };
@@ -823,11 +873,15 @@ int Atlas::build(int cameraChart, int maxChartDepth) {
             if (lightId < 0 || lightId >= lightCount) { setError(3); return 3; }
             const ChartLight& light = lights_[lightId];
             vec3 lp = light.position;
+            float lpW = light.positionW;
             if (!copyDirect) {
-                lp = toCam.applyChartPoint(light.position);
-                if (!finiteVec(lp)) { setError(3); return 3; }
+                vec4 Q = toCam.applyChartPointAugmented(
+                    vec4(light.position, light.positionW));
+                lp = Q.xyz();
+                lpW = Q.w;
+                if (!finiteVec(lp) || !finiteFloat(lpW)) { setError(3); return 3; }
             }
-            flatLights.push_back({lp, light.color, light.intensity});
+            flatLights.push_back({lp, lpW, light.color, light.intensity});
         }
     }
 
@@ -835,6 +889,7 @@ int Atlas::build(int cameraChart, int maxChartDepth) {
         if (a.position.x != b.position.x) return a.position.x < b.position.x;
         if (a.position.y != b.position.y) return a.position.y < b.position.y;
         if (a.position.z != b.position.z) return a.position.z < b.position.z;
+        if (a.positionW != b.positionW) return a.positionW < b.positionW;
         if (a.color.x != b.color.x) return a.color.x < b.color.x;
         if (a.color.y != b.color.y) return a.color.y < b.color.y;
         if (a.color.z != b.color.z) return a.color.z < b.color.z;
@@ -922,7 +977,7 @@ int Atlas::build(int cameraChart, int maxChartDepth) {
     for (const auto& light : flatLights) {
         PointLight outLight{};
         outLight.position = light.position;
-        outLight.pad0 = 0.0f;
+        outLight.positionW = light.positionW;
         outLight.color = light.color;
         outLight.intensity = light.intensity;
         std::memcpy(packet_.data() + off, &outLight, sizeof(outLight));

@@ -250,7 +250,7 @@ final class Renderer: NSObject, MTKViewDelegate {
 
         // Colorful objects behind the camera, visible through the mirror.
         // _ = atlas.addObject(0, 0, geo.vec3( 0.10, 0.10,-0.30), 0.4563, 0.5438, 4) // cyan
-        // _ = atlas.addObject(0, 0, geo.vec3(-0.12,-0.08,-0.35), 0.4412, 0.5588, 5) // magenta
+        _ = atlas.addObject(0, 0, geo.vec3(-0.12,-0.08,-0.35), 0.4412, 0.5588, 5) // magenta
         _ = atlas.addObject(0, 0, geo.vec3( 0.00, 0.00,-0.45), 0.4150, 0.5850, 7) // orange
 
         // Point lights in the camera chart. H3 light positions must be inside

@@ -96,6 +96,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     private let mouseSensitivity: Float = 0.005
     private let cameraMoveSpeed: Float = 0.01
     private let cameraRollSpeed: Float = 0.01
+    private let cameraAutoRotateSpeed: Float = 0.01
     private var pressedKeys: [UInt16: Bool] = [:]
 
     var ambientSpace: AmbientSpace = .sphere
@@ -148,10 +149,13 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
 
     private func isCameraControlKey(_ keyCode: UInt16) -> Bool {
-        // W=13, A=0, S=1, D=2, R=15, F=3, Q=12, E=14
+        // W=13, A=0, S=1, D=2, R=15, F=3, Q=12, E=14,
+        // arrows: left=123, right=124, down=125, up=126
         return keyCode == 13 || keyCode == 0 || keyCode == 1
             || keyCode == 2 || keyCode == 15 || keyCode == 3
             || keyCode == 12 || keyCode == 14
+            || keyCode == 123 || keyCode == 124
+            || keyCode == 125 || keyCode == 126
     }
 
     func configure(device: MTLDevice, view: MTKView) {
@@ -262,6 +266,20 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
 
         applyMovementKeys()
+
+        // Arrow keys: hold to rotate, like Q/E.
+        var yaw: Float = 0
+        var pitch: Float = 0
+        if pressedKeys[123] == true { yaw -= cameraAutoRotateSpeed }   // left arrow
+        if pressedKeys[124] == true { yaw += cameraAutoRotateSpeed }   // right arrow
+        if pressedKeys[126] == true { pitch -= cameraAutoRotateSpeed } // up arrow
+        if pressedKeys[125] == true { pitch += cameraAutoRotateSpeed } // down arrow
+        if yaw != 0 {
+            atlas.cameraRotate(atlas.cameraUp(), yaw)
+        }
+        if pitch != 0 {
+            atlas.cameraRotate(atlas.cameraRight(), pitch)
+        }
     }
 
     private func applyMovementKeys() {

@@ -117,21 +117,21 @@ enum SphericalScene {
         let invSqrt2: Float = 0.7071068
         _ = atlas.addLight(0, geo.vec3(-invSqrt2, -invSqrt2, 0), 0,
                            geo.vec3(1.00, 0.95, 0.80), 1.0)
-        _ = atlas.addLight(0, geo.vec3(-invSqrt2,  invSqrt2, 0), 0,
-                           geo.vec3(0.60, 0.70, 1.00), 0.6)
+        //_ = atlas.addLight(0, geo.vec3(-invSqrt2,  invSqrt2, 0), 0,
+        //                   geo.vec3(0.60, 0.70, 1.00), 0.6)
         _ = atlas.addLight(0, geo.vec3(0, 0, -invSqrt2), invSqrt2,
                            geo.vec3(1.00, 0.95, 0.80), 1.0)
-        _ = atlas.addLight(0, geo.vec3(0, 0,  invSqrt2), invSqrt2,
-                           geo.vec3(0.60, 0.70, 1.00), 0.6)
+        //_ = atlas.addLight(0, geo.vec3(0, 0,  invSqrt2), invSqrt2,
+        //                   geo.vec3(0.60, 0.70, 1.00), 0.6)
 
         _ = atlas.addLight(1, geo.vec3(-invSqrt2, -invSqrt2, 0), 0,
                            geo.vec3(1.00, 0.95, 0.80), 1.0)
-        _ = atlas.addLight(1, geo.vec3(-invSqrt2,  invSqrt2, 0), 0,
-                           geo.vec3(0.60, 0.70, 1.00), 0.6)
+        //_ = atlas.addLight(1, geo.vec3(-invSqrt2,  invSqrt2, 0), 0,
+        //                   geo.vec3(0.60, 0.70, 1.00), 0.6)
         _ = atlas.addLight(1, geo.vec3(0, 0, -invSqrt2), invSqrt2,
                            geo.vec3(1.00, 0.95, 0.80), 1.0)
-        _ = atlas.addLight(1, geo.vec3(0, 0,  invSqrt2), invSqrt2,
-                           geo.vec3(0.60, 0.70, 1.00), 0.6)
+        //_ = atlas.addLight(1, geo.vec3(0, 0,  invSqrt2), invSqrt2,
+        //                   geo.vec3(0.60, 0.70, 1.00), 0.6)
 
         atlas.setCamera(
             1.0,

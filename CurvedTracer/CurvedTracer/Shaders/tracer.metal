@@ -11,6 +11,10 @@ constant int MODEL_S3             = 1;
 constant int OBJECT_OPAQUE_SPHERE = 0;
 constant int OBJECT_MIRROR_SPHERE = 1;
 
+constant int FOG_DISABLED          = 0;
+constant int FOG_COMPACT           = 1;
+constant int FOG_EXPONENTIAL       = 2;
+
 constant int MAX_BOUNCES          = 64;
 constant int MAX_LIGHTS           = 16;
 
@@ -44,9 +48,14 @@ struct RenderControls {
     float falloffK;
     float ambient;
     float bounceAttenuation;
-    float pad0;
-    float pad1;
-    float pad2;
+
+    // CONTRACT v6 keeps these at the former pad0/pad1/pad2 offsets.
+    // fogMode: 0 = disabled, 1 = compact smoothstep, 2 = exponential.
+    // compact mode uses fogStartFraction in [0,1).
+    // exponential mode uses fogDensity in inverse intrinsic-distance units.
+    float fogMode;
+    float fogStartFraction;
+    float fogDensity;
 };
 
 struct Counts {
@@ -161,6 +170,67 @@ float4x4 identity4() {
 float wrapTwoPi(float t) {
     t = fmod(t, TWO_PI);
     return t < 0.0f ? t + TWO_PI : t;
+}
+
+int decodeFogMode(float encodedMode) {
+    int mode = int(floor(encodedMode + 0.5f));
+    // return clamp(mode, FOG_DISABLED, FOG_EXPONENTIAL);
+    return FOG_EXPONENTIAL;
+}
+
+// View-path transmittance from the camera to an intrinsic path distance.
+// Both enabled modes have compact support at chartRadius. Exponential mode is
+// normalized so that T(0)=1 and T(chartRadius)=0 instead of leaving a hard
+// discontinuity at the camera-chart boundary.
+float fogVisibility(float distance,
+                    float chartRadius,
+                    int fogMode,
+                    float fogStartFraction,
+                    float fogDensity) {
+    if (distance >= chartRadius)
+        return 0.0f;
+
+    if (distance <= 0.0f || fogMode == FOG_DISABLED)
+        return 1.0f;
+
+    if (fogMode == FOG_COMPACT) {
+        float startFraction = clamp(fogStartFraction,
+                                    0.0f,
+                                    1.0f - EPS);
+        float fadeStart = startFraction * chartRadius;
+        return 1.0f - smoothstep(fadeStart,
+                                 chartRadius,
+                                 distance);
+    }
+
+    // Truncated, normalized exponential:
+    //
+    //   T(d) = (exp(-sigma d) - exp(-sigma R))
+    //          / (1 - exp(-sigma R)).
+    //
+    // Its sigma -> 0 limit is the linear fade 1-d/R.
+    float density = max(fogDensity, 0.0f);
+    float opticalDepth = density * chartRadius;
+    if (opticalDepth < 1e-3f)
+        return clamp(1.0f - distance / chartRadius,
+                     0.0f,
+                     1.0f);
+
+    float atBoundary = exp(-opticalDepth);
+    float atDistance = exp(-density * distance);
+    return clamp((atDistance - atBoundary)
+                 / max(1.0f - atBoundary, EPS),
+                 0.0f,
+                 1.0f);
+}
+
+float intrinsicHitDistance(Hit hit, int modelKind) {
+    if (modelKind == MODEL_S3)
+        return hit.t;
+
+    // The H3 compact radial parameter is t=tanh(d).
+    float compactT = clamp(hit.t, 0.0f, 1.0f - EPS);
+    return atanh(compactT);
 }
 
 float4 liftPointS3(float3 x, float w) {
@@ -759,26 +829,97 @@ kernel void raytrace(device const uchar* packet [[buffer(0)]],
     }
 
     float h3RadiusLimit = header->camera.chartRadiusSin;
+
+    // CONTRACT v6 stores sin(R),cos(R) for S3 and tanh(R) in
+    // chartRadiusSin for H3. Convert both to one intrinsic path budget.
+    float chartRadius;
+    if (modelKind == MODEL_S3) {
+        chartRadius = s3ChartRadius;
+    } else {
+        if (h3RadiusLimit <= EPS || h3RadiusLimit >= 1.0f) {
+            output.write(float4(0,1,1,1), pixel);
+            return;
+        }
+        chartRadius = atanh(h3RadiusLimit);
+    }
+
+    int fogMode = decodeFogMode(header->controls.fogMode);
+    float fogStartFraction = header->controls.fogStartFraction;
+    float fogDensity = header->controls.fogDensity;
+    float3 fogColor = float3(header->controls.ambient);
+
     float4x4 transform = identity4();
     float3 throughput = float3(1.0f);
     float3 radiance = float3(0.0f);
+    float pathDistance = 0.0f;
     int maxBounces = clamp(header->controls.maxBounces,
                            0,
                            MAX_BOUNCES);
 
     for (int bounce = 0; bounce <= maxBounces; ++bounce) {
+        float remainingDistance = chartRadius - pathDistance;
+        if (remainingDistance <= EPS) {
+            radiance += throughput * fogColor;
+            break;
+        }
+
+        // Reflected charts are recentered at every hit, but the radius is one
+        // camera-relative optical-path budget. Give this segment only what is
+        // left instead of restarting the full chart radius after each bounce.
+        float segmentH3RadiusLimit = h3RadiusLimit;
+        float segmentS3ChartRadius = s3ChartRadius;
+        if (modelKind == MODEL_H3)
+            segmentH3RadiusLimit = tanh(remainingDistance);
+        else
+            segmentS3ChartRadius = remainingDistance;
+
         Hit hit = findNearestHit(rayDirection,
                                  transform,
-                                 h3RadiusLimit,
+                                 segmentH3RadiusLimit,
                                  SELF_HIT_EPS,
                                  modelKind,
-                                 s3ChartRadius,
+                                 segmentS3ChartRadius,
                                  objects,
                                  objectCount);
 
         if (!hit.valid) {
-            radiance += throughput
-                      * float3(header->controls.ambient);
+            // With no hit before the horizon, the rest of the path terminates
+            // in the chart-boundary fog/background.
+            radiance += throughput * fogColor;
+            break;
+        }
+
+        float previousVisibility = fogVisibility(
+            pathDistance,
+            chartRadius,
+            fogMode,
+            fogStartFraction,
+            fogDensity);
+
+        float segmentDistance = intrinsicHitDistance(hit, modelKind);
+        pathDistance += segmentDistance;
+
+        float currentVisibility = fogVisibility(
+            pathDistance,
+            chartRadius,
+            fogMode,
+            fogStartFraction,
+            fogDensity);
+
+        float segmentVisibility = previousVisibility > EPS
+            ? currentVisibility / previousVisibility
+            : 0.0f;
+        segmentVisibility = clamp(segmentVisibility, 0.0f, 1.0f);
+
+        // Integrate the homogeneous background contribution before applying
+        // the material at this hit. This keeps the ordering correct across
+        // lossy mirrors as well as ideal ones.
+        radiance += throughput
+                  * fogColor
+                  * (1.0f - segmentVisibility);
+        throughput *= segmentVisibility;
+
+        if (currentVisibility <= EPS) {
             break;
         }
 

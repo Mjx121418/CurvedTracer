@@ -169,6 +169,55 @@ void test_atlas() {
     }
 
     // ------------------------------------------------------------------
+    // Camera-chart disk culling drops objects that do not intersect the
+    // camera chart.
+    // ------------------------------------------------------------------
+    {
+        Atlas atlas;
+        atlas.start(GEO_MODEL_S3);
+        CHECK(atlas.seed(1.5707963267948966f) == 0);
+        atlas.addMaterial(vec4(1, 1, 1, 1), vec4(0, 0, 0, 1));
+
+        // Camera chart has radius 0.5 and is centered at chart 0's origin.
+        // Ball radius is acos(0.98) ~ 0.2003. A ball is kept iff its surface
+        // reaches inside the camera chart (min distance to the surface < 0.5).
+        atlas.addObject(0, GEO_OBJECT_OPAQUE, vec3(0, 0, 0), 1.0f, 0.98f, 0);
+        // Center 0.6 rad from the origin: surface distance range [0.4, 0.8].
+        atlas.addObject(0, GEO_OBJECT_OPAQUE, vec3(0.56464247f, 0, 0), 0.82533561f, 0.98f, 0);
+        // Center 1.0 rad from the origin: surface distance range [0.8, 1.2].
+        atlas.addObject(0, GEO_OBJECT_OPAQUE, vec3(0.84147098f, 0, 0), 0.54030231f, 0.98f, 0);
+
+        int cam = atlas.cameraChartAt(0, vec3(0, 0, 0), 0.5f);
+        CHECK(cam >= 0);
+        CHECK(atlas.build(cam, GEO_MAX_CHART_DEPTH) == 0);
+
+        ScenePacketHeader h = readHeader(atlas);
+        CHECK(h.counts.objectCount == 2);
+    }
+
+    // ------------------------------------------------------------------
+    // H³ camera-chart disk culling.
+    // ------------------------------------------------------------------
+    {
+        Atlas atlas;
+        atlas.start(GEO_MODEL_H3);
+        CHECK(atlas.seed(1.5707963267948966f) == 0);
+        atlas.addMaterial(vec4(1, 1, 1, 1), vec4(0, 0, 0, 1));
+
+        // Camera chart radius 0.5 has boundary |x| = sin(0.5) ~ 0.479.
+        // c=0.98 gives boundary |x| ~ 0.199 (inside), c=0.8 gives 0.6 (outside).
+        atlas.addObject(0, GEO_OBJECT_OPAQUE, vec3(0, 0, 0), 1.0f, 0.98f, 0);
+        atlas.addObject(0, GEO_OBJECT_OPAQUE, vec3(0, 0, 0), 1.0f, 0.8f, 0);
+
+        int cam = atlas.cameraChartAt(0, vec3(0, 0, 0), 0.5f);
+        CHECK(cam >= 0);
+        CHECK(atlas.build(cam, GEO_MAX_CHART_DEPTH) == 0);
+
+        ScenePacketHeader h = readHeader(atlas);
+        CHECK(h.counts.objectCount == 1);
+    }
+
+    // ------------------------------------------------------------------
     // Camera roll rotates the frame around fwd.
     // ------------------------------------------------------------------
     {

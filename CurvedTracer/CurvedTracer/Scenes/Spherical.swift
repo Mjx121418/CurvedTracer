@@ -148,10 +148,226 @@ enum SphericalScene {
             0.95,
             2.0,
             0.0,
-            0.0
+            0.6
         )
 
-        let cameraChart = atlas.cameraChartAt(0, geo.vec3(0, 0, 0), radius)
+        // Put the camera at the center of a 24-cell cell (dual vertex),
+        // not at a 24-cell vertex.
+        let cameraChart = atlas.cameraChartAt(0, geo.vec3(invSqrt2, 0, 0),
+                                               invSqrt2, radius)
+        let result = atlas.build(cameraChart, 64)
+        if result != 0 {
+            fatalError("build failed with code \(result)")
+        }
+        return cameraChart
+    }
+
+    // MARK: - 600-cell scene
+
+    private static func dot(_ a: Vertex4, _ b: Vertex4) -> Float {
+        a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w
+    }
+
+    private static func quaternionMultiply(_ a: Vertex4, _ b: Vertex4) -> Vertex4 {
+        Vertex4(
+            x: a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+            y: a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+            z: a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+            w: a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z
+        )
+    }
+
+    private static func quaternionConjugate(_ q: Vertex4) -> Vertex4 {
+        Vertex4(x: -q.x, y: -q.y, z: -q.z, w: q.w)
+    }
+
+    private static func leftQuaternionFrame(_ q: Vertex4) -> [Float] {
+        var m = [Float](repeating: 0, count: 16)
+        m[0] = q.w
+        m[1] = q.z
+        m[2] = -q.y
+        m[3] = -q.x
+        m[4] = -q.z
+        m[5] = q.w
+        m[6] = q.x
+        m[7] = -q.y
+        m[8] = q.y
+        m[9] = -q.x
+        m[10] = q.w
+        m[11] = -q.z
+        m[12] = q.x
+        m[13] = q.y
+        m[14] = q.z
+        m[15] = q.w
+        return m
+    }
+
+    /// Transition matrix mapping chart coordinates at a 24-cell vertex `a` to
+    /// chart coordinates at a 24-cell vertex `b`.
+    ///
+    /// The chart centered at a unit quaternion `c` uses the orthonormal frame
+    /// `q -> c q` (left quaternion multiplication). Its local origin is the
+    /// quaternion identity and maps to `c`.
+    private static func transition(from a: Vertex4, to b: Vertex4) -> [Float] {
+        leftQuaternionFrame(quaternionMultiply(quaternionConjugate(b), a))
+    }
+
+    private static func make24CellVertices() -> [Vertex4] {
+        var vertices: [Vertex4] = []
+
+        // Signed basis vectors (±1, 0, 0, 0).
+        for axis in 0..<4 {
+            for sign in [Float(-1.0), Float(1.0)] {
+                switch axis {
+                case 0:
+                    vertices.append(Vertex4(x: sign, y: 0, z: 0, w: 0))
+                case 1:
+                    vertices.append(Vertex4(x: 0, y: sign, z: 0, w: 0))
+                case 2:
+                    vertices.append(Vertex4(x: 0, y: 0, z: sign, w: 0))
+                default:
+                    vertices.append(Vertex4(x: 0, y: 0, z: 0, w: sign))
+                }
+            }
+        }
+
+        // Half-vectors (±1/2, ±1/2, ±1/2, ±1/2).
+        for sx in [Float(-0.5), Float(0.5)] {
+            for sy in [Float(-0.5), Float(0.5)] {
+                for sz in [Float(-0.5), Float(0.5)] {
+                    for sw in [Float(-0.5), Float(0.5)] {
+                        vertices.append(Vertex4(x: sx, y: sy, z: sz, w: sw))
+                    }
+                }
+            }
+        }
+
+        // Put the quaternion identity (0,0,0,1) first; it becomes chart 0.
+        vertices.sort { $0.w > $1.w }
+        return vertices
+    }
+
+    private static func make24CellAdjacency(_ vertices: [Vertex4]) -> [[Int]] {
+        var adjacency = [[Int]](repeating: [], count: vertices.count)
+        for i in 0..<vertices.count {
+            for j in (i + 1)..<vertices.count {
+                let d = dot(vertices[i], vertices[j])
+                if d > 0.49 && d < 0.51 {
+                    adjacency[i].append(j)
+                    adjacency[j].append(i)
+                }
+            }
+        }
+        return adjacency
+    }
+
+    /// Four neighbors of the identity vertex, one from each of the four
+    /// non-binary-tetrahedral right cosets of the 600-cell vertices. This is
+    /// the coset choice that makes the 24 charts' five balls exactly the 120
+    /// vertices of the 600-cell with no duplicates.
+    private static func cell600NeighborReps() -> [Vertex4] {
+        [
+            Vertex4(x: -0.3090169944, y: 0.0, z: -0.5, w: 0.8090169944),
+            Vertex4(x: -0.5, y: 0.3090169944, z: 0.0, w: 0.8090169944),
+            Vertex4(x: -0.5, y: -0.3090169944, z: 0.0, w: 0.8090169944),
+            Vertex4(x: -0.3090169944, y: 0.0, z: 0.5, w: 0.8090169944)
+        ]
+    }
+
+    /// Builds the 24-chart S³ scene whose balls sit at the 120 vertices of a
+    /// 600-cell.
+    ///
+    /// The 24 charts are centered at the vertices of the inscribed 24-cell and
+    /// are linked exactly according to the 24-cell graph. Every chart contains
+    /// the same five local balls: one at the origin and four at 600-cell
+    /// vertices adjacent to the origin, one chosen from each right coset of the
+    /// binary-tetrahedral subgroup. Globally the 24 × 5 balls are the 120
+    /// vertices of the 600-cell.
+    @discardableResult
+    static func cell600(_ atlas: inout geo.Atlas) -> Int32 {
+        let radius: Float = Float.pi / 2
+        let ballCos: Float = 0.995
+        let cameraRadius: Float = Float.pi * 0.6
+
+        atlas.start(1)   // S³
+        let baseChart = atlas.seed(radius)
+
+        // Five materials, one per local ball position/color.
+        _ = atlas.addMaterial(geo.vec4(1.0, 0.0, 0.0, 1.0), geo.vec4(0.3, 0.3, 0.3, 1.0))
+        _ = atlas.addMaterial(geo.vec4(0.0, 1.0, 0.0, 1.0), geo.vec4(0.3, 0.3, 0.3, 1.0))
+        _ = atlas.addMaterial(geo.vec4(0.0, 0.0, 1.0, 1.0), geo.vec4(0.3, 0.3, 0.3, 1.0))
+        _ = atlas.addMaterial(geo.vec4(1.0, 1.0, 0.0, 1.0), geo.vec4(0.3, 0.3, 0.3, 1.0))
+        _ = atlas.addMaterial(geo.vec4(0.0, 1.0, 1.0, 1.0), geo.vec4(0.3, 0.3, 0.3, 1.0))
+
+        let centers = make24CellVertices()
+        let adjacency = make24CellAdjacency(centers)
+
+        // Create the charts along a spanning tree of the 24-cell graph, then
+        // link the remaining edges so the atlas graph is exactly the 24-cell.
+        var chartIDs = [Int32](repeating: -1, count: centers.count)
+        chartIDs[0] = baseChart
+        var queue = [0]
+        var head = 0
+        while head < queue.count {
+            let current = queue[head]
+            head += 1
+            for neighbor in adjacency[current] where chartIDs[neighbor] < 0 {
+                let m = transition(from: centers[current], to: centers[neighbor])
+                let id = atlas.add(radius, chartIDs[current], m, true)
+                chartIDs[neighbor] = id
+                queue.append(neighbor)
+            }
+        }
+
+        for i in 0..<centers.count {
+            for neighbor in adjacency[i] where neighbor > i {
+                let m = transition(from: centers[i], to: centers[neighbor])
+                atlas.link(chartIDs[i], chartIDs[neighbor], m, true)
+            }
+        }
+
+        // Author the same five local balls in every chart.
+        let origin = Vertex4(x: 0, y: 0, z: 0, w: 1)
+        let neighbors = cell600NeighborReps()
+        for chartID in chartIDs {
+            addBall(&atlas, chart: chartID, origin, cosRadius: ballCos, color: 0)
+            for (colorIndex, neighbor) in neighbors.enumerated() {
+                addBall(&atlas, chart: chartID, neighbor,
+                        cosRadius: ballCos, color: Int32(colorIndex + 1))
+            }
+        }
+
+        // Point lights at two tetrahedral 600-cell cell centers in chart 0.
+        _ = atlas.addLight(0, geo.vec3(0.2185080122, 0.2185080122, -0.2185080122),
+                           geo.vec3(1.00, 0.95, 0.80), 1.0)
+        _ = atlas.addLight(0, geo.vec3(-0.2185080122, -0.2185080122, 0.2185080122),
+                           geo.vec3(0.60, 0.70, 1.00), 0.6)
+
+        atlas.setCamera(
+            1.0,
+            16.0 / 9.0,
+            geo.vec3(1, 0, 0),
+            geo.vec3(0, 1, 0),
+            geo.vec3(0, 0, 1)
+        )
+
+        atlas.setControls(
+            6,
+            0.05,
+            0.25,
+            0.95,
+            2.0,
+            0.0,
+            0.6
+        )
+
+        // Put the camera at the center of a tetrahedral 600-cell cell instead
+        // of at a ball position.
+        let cameraChart = atlas.cameraChartAt(
+            0,
+            geo.vec3(0.2185080122, 0.2185080122, -0.2185080122),
+            cameraRadius
+        )
         let result = atlas.build(cameraChart, 64)
         if result != 0 {
             fatalError("build failed with code \(result)")
@@ -226,10 +442,13 @@ enum SphericalScene {
             0.95,
             2.0,
             0.0,
-            0.0
+            0.6
         )
 
-        let cameraChart = atlas.cameraChartAt(0, geo.vec3(0, 0, 0), radius)
+        // Put the camera at the center of a 16-cell tetrahedral cell,
+        // not at a 16-cell vertex.
+        let cameraChart = atlas.cameraChartAt(0, geo.vec3(0.5, 0.5, 0.5),
+                                               0.5, radius)
         let result = atlas.build(cameraChart, 64)
         if result != 0 {
             fatalError("build failed with code \(result)")

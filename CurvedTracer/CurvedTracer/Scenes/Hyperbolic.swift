@@ -131,22 +131,28 @@ enum HyperbolicScene {
         atlas.setCamera(
             1.0,
             16.0 / 9.0,
-            geo.vec3(1, 0, 0),
-            geo.vec3(0, 1, 0),
-            geo.vec3(0, 0, 1)
+            geo.vec3(-0.7071068, 0.7071068, 0.0),
+            geo.vec3(-0.4082483, -0.4082483, 0.8164966),
+            geo.vec3(0.5773503, 0.5773503, 0.5773503)
         )
 
         atlas.setControls(
-            6,
+            10,
             0.05,
             0.25,
             0.95,
-            2.0,
+            0.0,
             0.0,
             0.0
         )
 
-        let cameraChart = atlas.cameraChartAt(0, geo.vec3(0, 0, 0), Float.pi * 0.99 / 2)
+        // Camera on the geodesic segment from the origin toward the
+        // (1,1,1) vertex of the {4,3,5} cell, outside the central ball, looking
+        // along the segment at that vertex.
+        let cameraPos: Float = 0.2668035
+        let cameraW: Float = 0.8868189
+        let cameraChart = atlas.cameraChartAt(0, geo.vec3(cameraPos, cameraPos, cameraPos),
+                                               cameraW, Float.pi * 0.99 / 2)
         let result = atlas.build(cameraChart, 64)
         if result != 0 {
             fatalError("build failed with code \(result)")

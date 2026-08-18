@@ -42,6 +42,41 @@ mat4 movePointToOrigin(const vec4& P, float kappa) {
     return B;
 }
 
+// Does the hyperplane section a·x + b·w = c intersect the camera chart disk?
+//
+// In disk-chart coordinates the camera chart is the spherical cap
+//     X = (x, w),  |X| = 1,  w >= cos(radius)
+// for both models (H³ has the additional w > 0, but radius <= π/2 makes
+// cos(radius) >= 0 anyway). The object surface is n·X = c with n = (a,b).
+// The maximum/minimum of n·X over this cap is either the unconstrained
+// sphere extremum ±|n| (when that point lies in the cap) or the boundary
+// value b·cos(radius) ± |a|·sin(radius). If c lies outside that interval the
+// surface has no point inside the camera chart and can be culled.
+bool surfaceIntersectsChartDisk(const vec3& a, float b, float c,
+                                float cosR, float sinR) {
+    float n2 = lengthSq(a) + b * b;
+    if (n2 < 1e-12f) return true;   // degenerate normal: keep conservatively
+    float nLen = mhSqrt(n2);
+    float aLen = length(a);
+
+    float maxVal;
+    if (b / nLen >= cosR) {
+        maxVal = nLen;              // unconstrained max n/nLen is inside the cap
+    } else {
+        maxVal = b * cosR + aLen * sinR;   // max on the cap boundary
+    }
+
+    float minVal;
+    if (-b / nLen >= cosR) {
+        minVal = -nLen;             // unconstrained min -n/nLen is inside the cap
+    } else {
+        minVal = b * cosR - aLen * sinR;   // min on the cap boundary
+    }
+
+    const float eps = 1e-4f;
+    return c >= minVal - eps && c <= maxVal + eps;
+}
+
 } // namespace
 
 Atlas::Atlas() { resetToDefaults(); }
@@ -841,6 +876,14 @@ int Atlas::build(int cameraChart, int maxChartDepth) {
     std::vector<FlatObject> flat;
     flat.reserve(objectCount);
 
+    const float cameraRadius = charts_[cameraChart].radius;
+    // H³ disk charts live on the upper hemisphere (w > 0); clamp tiny
+    // floating-point cos(π/2) values back to the actual cap boundary.
+    const float cameraCosR = (modelKind_ == GEO_MODEL_H3)
+        ? mhMax(0.0f, mhCos(cameraRadius))
+        : mhCos(cameraRadius);
+    const float cameraSinR = mhSin(cameraRadius);
+
     auto isIdentity = [](const Mobius& m) {
         mat4 I = mat4Identity();
         for (int i = 0; i < 16; ++i) {
@@ -864,6 +907,14 @@ int Atlas::build(int cameraChart, int maxChartDepth) {
             if (!copyDirect) {
                 toCam.applySurface(o.a, o.b, o.c, fa, fb, fc);
                 if (!finiteVec(fa) || !finiteFloat(fb) || !finiteFloat(fc)) { setError(3); return 3; }
+            }
+
+            // Camera-chart disk culling: keep only objects whose surface has at
+            // least one point inside the camera chart. The GPU already discards
+            // hits at t >= chartRadius; this avoids emitting objects that can
+            // never contribute to the frame.
+            if (!surfaceIntersectsChartDisk(fa, fb, fc, cameraCosR, cameraSinR)) {
+                continue;
             }
 
             flat.push_back({o.kind, fa, fb, fc, o.colorIdx});

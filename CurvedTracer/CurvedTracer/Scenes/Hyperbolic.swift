@@ -15,7 +15,7 @@ enum HyperbolicScene {
         atlas.start(0)
 
         // The anchorless base chart is always id 0. H3 chart radius: π/2.
-        _ = atlas.seed(Float.pi * 0.98 / 2)
+        _ = atlas.seed(Float.pi * 0.999 / 2)
 
         // Add materials first; colorIdx refers to these in order.
         _ = atlas.addMaterial(geo.vec4(1.0, 0.0, 0.0, 1.0), geo.vec4(0.3, 0.3, 0.3, 1.0))  // material 0: red
@@ -66,14 +66,17 @@ enum HyperbolicScene {
         )
 
         atlas.setControls(
-            5,
+            6,
             0.05,
             0.25,
-            0.95
+            0.95,
+            2.0,
+            0.0,
+            0.0
         )
 
         // Initialize the special camera chart at the base position.
-        let cameraChart = atlas.cameraChartAt(0, geo.vec3(0, 0, 0), Float.pi*0.98/2)
+        let cameraChart = atlas.cameraChartAt(0, geo.vec3(0, 0, 0), Float.pi * 0.99 / 2)
 
         // Validate and flatten into the camera chart.
         let result = atlas.build(cameraChart, 64)
@@ -137,10 +140,13 @@ enum HyperbolicScene {
             6,
             0.05,
             0.25,
-            0.95
+            0.95,
+            2.0,
+            0.0,
+            0.0
         )
 
-        let cameraChart = atlas.cameraChartAt(0, geo.vec3(0, 0, 0), Float.pi / 2)
+        let cameraChart = atlas.cameraChartAt(0, geo.vec3(0, 0, 0), Float.pi * 0.99 / 2)
         let result = atlas.build(cameraChart, 64)
         if result != 0 {
             fatalError("build failed with code \(result)")

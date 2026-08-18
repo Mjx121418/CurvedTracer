@@ -1,6 +1,6 @@
 # CONTRACT.md — C++ ⇄ Metal/Swift Seam
 
-**Status:** v6 — signed-w S³ disk charts, dynamic camera chart, camera movement/rotation, and unified material specular.
+**Status:** v7 — signed-w S³ disk charts, dynamic camera chart, camera movement/rotation, unified material specular, and intrinsic chart-radius/half-angle horizon fields.
 **Owner:** C++ side maintains this file and the shared artifacts it describes. The Metal/Swift side must be able to code against this document alone **without reading C++ sources**. Any change requires both sides to agree (see §9).
 
 ---
@@ -35,7 +35,7 @@ Shared headers live under `Sources/include/GeometryCore/` inside the `GeometryCo
 4. **Fast-math caveat:** `acos/acosh` domain clamping must be explicit (clamped argument) so it survives MSL fast-math. Never rely on the operation itself to reject out-of-domain input.
 5. One version macro `GEO_CONTRACT_VERSION`, echoed into the packet; mismatch is a hard error at upload (§6, §9).
 
-**Header inventory (v6):**
+**Header inventory (v7):**
 
 | Header | Shared with MSL? | Contents |
 |---|---|---|
@@ -89,7 +89,7 @@ Camera movement is stateful:
 - If no existing chart contains the point, the camera is clamped back to the original parent chart, onto its disk boundary (`|x| = sin(r)`).
 - After re-parenting, the camera frame (`right`/`up`/`fwd`) is parallel-transported into the new camera chart.
 
-The camera chart radius is emitted in the packet as `chartRadiusSin`/`chartRadiusCos`. The shader culls hits with `|hit.position|² >= chartRadiusSin²`; `Atlas::build` itself emits all reachable objects/lights.
+The camera chart radius is emitted in the packet as `chartRadius` and `chartRadiusHalfAngle`; `Atlas::build` itself emits all reachable objects/lights.
 
 ### 3.3 Objects are hyperplane sections of the disk
 
@@ -168,7 +168,7 @@ Fixed header total: **128 bytes**.
 | Off | Name | Type | Value |
 |---|---|---|---|
 | 0 | `magic` | int32 | `0x4E545243` ("NTRC") |
-| 4 | `contractVersion` | int32 | = `GEO_CONTRACT_VERSION` (currently **6**) |
+| 4 | `contractVersion` | int32 | = `GEO_CONTRACT_VERSION` (currently **7**) |
 | 8 | `objectSize` | int32 | 32 |
 | 12 | `packetHeaderSize` | int32 | 128 |
 
@@ -181,16 +181,12 @@ Fixed header total: **128 bytes**.
 | 32 | `fwd` | vec3 + pad | unit tangent, into the scene |
 | 48 | `fovTan` | float | tan(vertical FOV / 2) |
 | 52 | `aspect` | float | width / height |
-| 56 | `chartRadiusSin` | float | `sin(r)` for the camera chart |
-| 60 | `chartRadiusCos` | float | `cos(r)` for the camera chart |
+| 56 | `chartRadius` | float | intrinsic geodesic radius `R` of the camera chart; H³: `R = atanh(sin(r))`, S³: `R = r` |
+| 60 | `chartRadiusHalfAngle` | float | `tan(R/2)` for S³, `tanh(R/2)` for H³ |
 
-The shader culls a hit when:
+These two fields are the camera-chart horizon data used for ray intersection and fading. The shader culls a hit when its intrinsic distance reaches `chartRadius`.
 
-```text
-|hit.position|² >= chartRadiusSin²
-```
-
-**RenderControls (32 B)** — unchanged from v3.
+**RenderControls (32 B)**
 
 | Off | Name | Type | Meaning |
 |---|---|---|---|
@@ -199,7 +195,9 @@ The shader culls a hit when:
 | 8 | `falloffK` | float | camera-chart distance falloff |
 | 12 | `ambient` | float | background floor |
 | 16 | `bounceAttenuation` | float | reflection throughput multiplier |
-| 20..28 | pad | float×3 | zero |
+| 20 | `fogMode` | float | 0 = disabled, 1 = compact smoothstep, 2 = exponential |
+| 24 | `fogStartFraction` | float | compact-fog start as a fraction of `chartRadius` |
+| 28 | `fogDensity` | float | exponential-fog density in inverse intrinsic distance |
 
 **Counts (16 B)** — unchanged from v3.
 
@@ -237,7 +235,7 @@ The shader culls a hit when:
 | 0 | ScenePacket (header + arrays as one upload) |
 | 1 | optional: golden reference texture |
 
-### 5.3 Capacity limits (v6)
+### 5.3 Capacity limits (v7)
 
 `MAX_OBJECTS = 4096`, `MAX_MATERIALS = 256`, `MAX_LIGHTS = 16`, `MAX_CHART_DEPTH = 64`. Exceeding them is rejected by `geo::Atlas::build`.
 
@@ -289,6 +287,8 @@ public:
     void setCamera(float fovTan, float aspect,
                    const vec3& right, const vec3& up, const vec3& fwd);
     void setControls(int maxBounces, float falloffK, float ambient, float bounceAttenuation);
+    void setControls(int maxBounces, float falloffK, float ambient, float bounceAttenuation,
+                     float fogMode, float fogStartFraction, float fogDensity);
 
     // Camera frame accessors (chart-space, orthonormal).
     vec3 cameraRight() const;
@@ -383,7 +383,7 @@ On a MIRROR hit:
 3. Reflect the ray direction across the surface normal in the tangent space at the origin.
 4. Continue tracing from the new chart origin along the reflected direction.
 
-### 7.4 Lighting convention (v6)
+### 7.4 Lighting convention (v7)
 
 Lighting remains point lights in chart coordinates, as in v3, but the lift/unlift maps change:
 
@@ -415,7 +415,7 @@ radiance = material.color.rgb
 
 ## 9. Versioning & change workflow (normative)
 
-- `GEO_CONTRACT_VERSION` is currently **6**. `PacketMeta.contractVersion` must match; mismatch → upload rejected (and Swift-side assert).
+- `GEO_CONTRACT_VERSION` is currently **7**. `PacketMeta.contractVersion` must match; mismatch → upload rejected (and Swift-side assert).
 - Any change to struct layout, enum values, coordinate/unit conventions, solver behavior, or any number in this document → **discuss first, bump version, land with tests + regrown goldens in the same change**.
 - Adding a field extends the struct **at the end**; never reorder.
 - Metal side reports shader-observed issues (NaN, precision, edge cases) to the C++ owner with a repro; C++ owner fixes shared math, adds a regression test, regrows goldens, bumps version.
@@ -462,4 +462,4 @@ Container note: in this Linux container `swift test` requires `/usr/bin/clang` a
 1. H³ `OPAQUE` validity is enforced by host-side validation in `Atlas::build` (the boundary must lie inside the home chart disk and have positive radius).
 2. The H³ `(a,b,c)` surface transformation law is implemented by `Mobius::applySurface`.
 3. Off-center camera rendering is implemented through the special camera chart (`cameraChartAt`, `cameraMove`, `resolveCameraPlacement`).
-4. For S³ charts with `r > π/2`, the shader culls exactly by `chartRadiusSin`; chart creation must still avoid the antipodal point.
+4. For S³ charts with `r > π/2`, the shader culls exactly by `chartRadius`; chart creation must still avoid the antipodal point.

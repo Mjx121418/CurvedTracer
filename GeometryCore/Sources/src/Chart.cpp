@@ -61,6 +61,9 @@ void Atlas::resetToDefaults() {
     falloffK_ = 0.0f;
     ambient_ = 0.0f;
     bounceAttenuation_ = 1.0f;
+    fogMode_ = 0.0f;
+    fogStartFraction_ = 0.0f;
+    fogDensity_ = 0.0f;
     packet_.clear();
     lastError_ = 0;
     capacityExceeded_ = false;
@@ -258,8 +261,15 @@ void Atlas::setCamera(float fovTan, float aspect, const vec3& right, const vec3&
 }
 
 void Atlas::setControls(int maxBounces, float falloffK, float ambient, float bounceAttenuation) {
+    setControls(maxBounces, falloffK, ambient, bounceAttenuation, 0.0f, 0.0f, 0.0f);
+}
+
+void Atlas::setControls(int maxBounces, float falloffK, float ambient, float bounceAttenuation,
+                        float fogMode, float fogStartFraction, float fogDensity) {
     clearPacket();
-    if (maxBounces < 0 || !finiteFloat(falloffK) || !finiteFloat(ambient) || !finiteFloat(bounceAttenuation)) {
+    if (maxBounces < 0 || !finiteFloat(falloffK) || !finiteFloat(ambient) ||
+        !finiteFloat(bounceAttenuation) || !finiteFloat(fogMode) ||
+        !finiteFloat(fogStartFraction) || !finiteFloat(fogDensity)) {
         setError(3);
         return;
     }
@@ -267,6 +277,9 @@ void Atlas::setControls(int maxBounces, float falloffK, float ambient, float bou
     falloffK_ = falloffK;
     ambient_ = ambient;
     bounceAttenuation_ = bounceAttenuation;
+    fogMode_ = fogMode;
+    fogStartFraction_ = fogStartFraction;
+    fogDensity_ = fogDensity;
     setError(0);
 }
 
@@ -618,10 +631,10 @@ int Atlas::cameraMove(const vec3& movement) {
 
     if (cameraChartId_ < 0) {
         // Initialize the camera chart at the current (base-chart) position.
-        float radius = validChartId(cameraChartFrom_)
-            ? charts_[cameraChartFrom_].radius
-            : 1.5707963267948966f;
-        return cameraChartAt(cameraChartFrom_, cameraPosition_, cameraPositionW_, radius);
+        // The camera-chart radius is fixed at π/2 until a scene explicitly
+        // creates the camera chart with a different radius.
+        return cameraChartAt(cameraChartFrom_, cameraPosition_, cameraPositionW_,
+                             1.5707963267948966f);
     }
 
     // Save the current local camera orientation and parent-chart relation.
@@ -661,7 +674,9 @@ int Atlas::cameraMove(const vec3& movement) {
         return -1;
     }
 
-    float newRadius = charts_[placement.chartId].radius;
+    // The camera chart radius is fixed. Re-parenting changes only the anchor
+    // chart and position, not the camera chart's own culling radius.
+    float newRadius = charts_[cameraChartId_].radius;
     int id = cameraChartAt(placement.chartId, placement.localPosition,
                            placement.localPositionW, newRadius);
     if (id < 0) return id;   // preserve cameraChartAt's error
@@ -932,16 +947,27 @@ int Atlas::build(int cameraChart, int maxChartDepth) {
     hdr.camera.padFwd = 0.0f;
     hdr.camera.fovTan = fovTan_;
     hdr.camera.aspect = aspect_;
-    hdr.camera.chartRadiusSin = mhSin(charts_[cameraChart].radius);
-    hdr.camera.chartRadiusCos = mhCos(charts_[cameraChart].radius);
+    float cameraChartRadius = charts_[cameraChart].radius;
+    if (modelKind_ == GEO_MODEL_H3) {
+        // H³ charts store the angular radius r whose compact disk boundary is
+        // |x| = sin(r). The intrinsic geodesic radius is R = atanh(sin(r)).
+        float compactBoundary = mhSin(cameraChartRadius);
+        float intrinsicRadius = mhAtanh(compactBoundary);
+        hdr.camera.chartRadius = intrinsicRadius;
+        hdr.camera.chartRadiusHalfAngle = mhTanh(0.5f * intrinsicRadius);
+    } else {
+        hdr.camera.chartRadius = cameraChartRadius;
+        hdr.camera.chartRadiusHalfAngle =
+            mhSin(0.5f * cameraChartRadius) / mhCos(0.5f * cameraChartRadius);
+    }
     hdr.controls.maxBounces = maxBounces_;
     hdr.controls.modelKind = modelKind_;
     hdr.controls.falloffK = falloffK_;
     hdr.controls.ambient = ambient_;
     hdr.controls.bounceAttenuation = bounceAttenuation_;
-    hdr.controls.pad0 = 0.0f;
-    hdr.controls.pad1 = 0.0f;
-    hdr.controls.pad2 = 0.0f;
+    hdr.controls.fogMode = fogMode_;
+    hdr.controls.fogStartFraction = fogStartFraction_;
+    hdr.controls.fogDensity = fogDensity_;
     hdr.counts.objectCount = flatCount;
     hdr.counts.materialCount = materialCount;
     hdr.counts.lightCount = flatLightCount;

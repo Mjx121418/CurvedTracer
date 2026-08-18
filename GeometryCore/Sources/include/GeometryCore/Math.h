@@ -24,6 +24,7 @@ inline float mhAcos(float x)                 { return acos(x); }
 inline float mhAcosh(float x)                { return acosh(x); }
 inline float mhAtan2(float y, float x)       { return atan2(y, x); }
 inline float mhLog(float x)                  { return log(x); }
+inline float mhAtanh(float x)                { return 0.5f * log((1.0f + x) / (1.0f - x)); }
 inline float mhExp(float x)                  { return exp(x); }
 inline float mhAbs(float x)                  { return abs(x); }
 inline float mhMin(float a, float b)         { return min(a, b); }
@@ -39,6 +40,7 @@ inline float mhAcos(float x)                 { return std::acos(x); }
 inline float mhAcosh(float x)                { return std::acosh(x); }
 inline float mhAtan2(float y, float x)       { return std::atan2(y, x); }
 inline float mhLog(float x)                  { return std::log(x); }
+inline float mhAtanh(float x)                { return 0.5f * std::log((1.0f + x) / (1.0f - x)); }
 inline float mhExp(float x)                  { return std::exp(x); }
 inline float mhAbs(float x)                  { return std::fabs(x); }
 inline float mhMin(float a, float b)         { return std::fmin(a, b); }

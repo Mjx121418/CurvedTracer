@@ -86,6 +86,8 @@ public:
                  const vec3& color, float intensity);
     void setCamera(float fovTan, float aspect, const vec3& right, const vec3& up, const vec3& fwd);
     void setControls(int maxBounces, float falloffK, float ambient, float bounceAttenuation);
+    void setControls(int maxBounces, float falloffK, float ambient, float bounceAttenuation,
+                     float fogMode, float fogStartFraction, float fogDensity);
 
     // Rotate the camera frame around an arbitrary chart-space axis by
     // deltaRadians. The camera remains at the chart origin; this only changes
@@ -156,6 +158,9 @@ private:
     float falloffK_ = 0.0f;
     float ambient_ = 0.0f;
     float bounceAttenuation_ = 1.0f;
+    float fogMode_ = 0.0f;
+    float fogStartFraction_ = 0.0f;
+    float fogDensity_ = 0.0f;
     std::vector<uint8_t> packet_;
     int lastError_ = 0;
     bool capacityExceeded_ = false;

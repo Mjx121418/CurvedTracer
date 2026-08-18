@@ -3,7 +3,7 @@
 // POD structs only; static_asserts are host-only so MSL sees pure declarations.
 #include "GeometryCore/Math.h"
 
-#define GEO_CONTRACT_VERSION 6
+#define GEO_CONTRACT_VERSION 7
 #define GEO_PACKET_MAGIC 0x4E545243  // "NTRC" as an int32 field
 
 #define GEO_MAX_OBJECTS 4096
@@ -22,7 +22,7 @@ namespace geo {
 // 16 bytes
 struct PacketMeta {
     int magic;              // 0 = GEO_PACKET_MAGIC
-    int contractVersion;    // 6 = GEO_CONTRACT_VERSION
+    int contractVersion;    // 7 = GEO_CONTRACT_VERSION
     int objectSize;         // 8 = sizeof(Object) == 32
     int packetHeaderSize;   // 12 = sizeof(ScenePacketHeader) == 128
 };
@@ -37,8 +37,8 @@ struct Camera {
     float padFwd;    // 44
     float fovTan;    // 48
     float aspect;    // 52
-    float chartRadiusSin; // 56
-    float chartRadiusCos; // 60
+    float chartRadius;       // 56  intrinsic geodesic radius R
+    float chartRadiusHalfAngle; // 60  tan(R/2) in S³, tanh(R/2) in H³
 };
 
 // 32 bytes
@@ -48,9 +48,9 @@ struct RenderControls {
     float falloffK;         // 8
     float ambient;          // 12
     float bounceAttenuation;// 16
-    float pad0;             // 20
-    float pad1;             // 24
-    float pad2;             // 28
+    float fogMode;          // 20  0 = disabled, 1 = compact smoothstep, 2 = exponential
+    float fogStartFraction; // 24  compact-fog start as a fraction of chartRadius
+    float fogDensity;       // 28  exponential-fog density in inverse intrinsic distance
 };
 
 // 16 bytes

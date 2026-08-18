@@ -55,7 +55,7 @@ void test_atlas() {
     CHECK(sizeof(Material) == 32);
     CHECK(sizeof(PointLight) == 32);
     CHECK(sizeof(ScenePacketHeader) == 128);
-    CHECK(GEO_CONTRACT_VERSION == 6);
+    CHECK(GEO_CONTRACT_VERSION == 7);
 
     // ------------------------------------------------------------------
     // Single-chart H3 scene and packet layout.
@@ -63,7 +63,7 @@ void test_atlas() {
     {
         Atlas atlas;
         atlas.start(GEO_MODEL_H3);
-        CHECK(atlas.seed(1.5707963f) == 0);   // π/2
+        CHECK(atlas.seed(1.0f) == 0);   // finite H³ chart radius
         atlas.addMaterial(vec4(1.0f, 0.5f, 0.25f, 1.0f), vec4(0.1f, 0.1f, 0.1f, 1.0f));
         atlas.addObject(0, GEO_OBJECT_OPAQUE, vec3(0, 0, 0), 1.0f, 0.8f, 0);   // w=0.8 sphere around origin
         atlas.addLight(0, vec3(0.0f, 0.0f, -0.4f), vec3(1.0f, 1.0f, 0.9f), 0.8f);
@@ -81,8 +81,9 @@ void test_atlas() {
         CHECK(h.meta.packetHeaderSize == 128);
         CHECK(h.camera.fovTan == 0.8f);
         CHECK(h.camera.aspect == 1.6f);
-        CHECK_NEAR(h.camera.chartRadiusSin, mhSin(1.5707963f), 1e-4);
-        CHECK_NEAR(h.camera.chartRadiusCos, mhCos(1.5707963f), 1e-4);
+        CHECK_NEAR(h.camera.chartRadius, mhAtanh(mhSin(1.0f)), 1e-4);
+        CHECK_NEAR(h.camera.chartRadiusHalfAngle,
+                   mhTanh(0.5f * mhAtanh(mhSin(1.0f))), 1e-4);
         CHECK(h.controls.maxBounces == 5);
         CHECK(h.controls.modelKind == GEO_MODEL_H3);
         CHECK(h.counts.objectCount == 1);

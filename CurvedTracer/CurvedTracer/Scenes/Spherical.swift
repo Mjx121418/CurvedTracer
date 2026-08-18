@@ -145,7 +145,10 @@ enum SphericalScene {
             6,
             0.05,
             0.25,
-            0.95
+            0.95,
+            2.0,
+            0.0,
+            0.0
         )
 
         let cameraChart = atlas.cameraChartAt(0, geo.vec3(0, 0, 0), radius)
@@ -220,7 +223,10 @@ enum SphericalScene {
             6,
             0.05,
             0.25,
-            0.95
+            0.95,
+            2.0,
+            0.0,
+            0.0
         )
 
         let cameraChart = atlas.cameraChartAt(0, geo.vec3(0, 0, 0), radius)
@@ -283,7 +289,10 @@ enum SphericalScene {
             6,
             0.05,
             0.25,
-            0.95
+            0.95,
+            2.0,
+            0.0,
+            0.0
         )
 
         let cameraChart = atlas.cameraChartAt(0, geo.vec3(0, 0, 0), radius)

@@ -1,108 +1,112 @@
 #pragma once
-// Shared with MSL.  Scene packet layout, CONTRACT.md §5.
-// POD structs only; static_asserts are host-only so MSL sees pure declarations.
+// Version-10 scene packet shared verbatim by C++ and Metal.
 #include "GeometryCore/Math.h"
 
-#define GEO_CONTRACT_VERSION 7
-#define GEO_PACKET_MAGIC 0x4E545243  // "NTRC" as an int32 field
+#define GEO_CONTRACT_VERSION 10
+#define GEO_PACKET_MAGIC 0x41545243
 
 #define GEO_MAX_OBJECTS 4096
 #define GEO_MAX_MATERIALS 256
 #define GEO_MAX_LIGHTS 16
+#define GEO_MAX_CHARTS 256
+#define GEO_MAX_PORTALS 1024
 #define GEO_MAX_CHART_DEPTH 64
 
 #define GEO_MODEL_H3 0
 #define GEO_MODEL_S3 1
+#define GEO_MODEL_R3 2
 
 #define GEO_OBJECT_OPAQUE 0
 #define GEO_OBJECT_MIRROR 1
 
 namespace geo {
 
-// 16 bytes
 struct PacketMeta {
-    int magic;              // 0 = GEO_PACKET_MAGIC
-    int contractVersion;    // 7 = GEO_CONTRACT_VERSION
-    int objectSize;         // 8 = sizeof(Object) == 32
-    int packetHeaderSize;   // 12 = sizeof(ScenePacketHeader) == 128
+    int magic;
+    int contractVersion;
+    int objectSize;
+    int packetHeaderSize;
 };
 
-// 64 bytes
 struct Camera {
-    vec3 right;      // 0
-    float padRight;  // 12
-    vec3 up;         // 16
-    float padUp;     // 28
-    vec3 fwd;        // 32
-    float padFwd;    // 44
-    float fovTan;    // 48
-    float aspect;    // 52
-    float chartRadius;       // 56  intrinsic geodesic radius R
-    float chartRadiusHalfAngle; // 60  tan(R/2) in S³, tanh(R/2) in H³
+    vec4 position;
+    vec4 right;
+    vec4 up;
+    vec4 fwd;
+    float fovTan;
+    float aspect;
+    float maxTraceDistance;
+    float maxTraceParameter;
+    int chartId;
+    int pad0;
+    int pad1;
+    int pad2;
 };
 
-// 32 bytes
 struct RenderControls {
-    int maxBounces;         // 0
-    int modelKind;          // 4
-    float falloffK;         // 8
-    float ambient;          // 12
-    float bounceAttenuation;// 16
-    float fogMode;          // 20  0 = disabled, 1 = compact smoothstep, 2 = exponential
-    float fogStartFraction; // 24  compact-fog start as a fraction of chartRadius
-    float fogDensity;       // 28  exponential-fog density in inverse intrinsic distance
+    int maxBounces;
+    int modelKind;
+    float falloffK;
+    float ambient;
+    float bounceAttenuation;
+    float fogMode;
+    float fogStartFraction;
+    float fogDensity;
+    int maxChartHops;
+    int maxLightHops;
+    int maxLightStates;
+    int pad0;
 };
 
-// 16 bytes
 struct Counts {
-    int objectCount;        // 0
-    int materialCount;      // 4
-    int lightCount;         // 8
-    int pad0;               // 12
+    int chartCount;
+    int portalCount;
+    int objectCount;
+    int materialCount;
+    int lightCount;
+    int pad0;
+    int pad1;
+    int pad2;
 };
 
-// 32 bytes
-struct Object {
-    vec3 a;                 // 0   hyperplane normal part
-    float b;                // 12  hyperplane w coefficient
-    float c;                // 16  hyperplane right-hand side
-    int kind;               // 20  GEO_OBJECT_OPAQUE / GEO_OBJECT_MIRROR
-    int colorIdx;           // 24
-    int pad0;               // 28
-};
-
-// 32 bytes
-struct Material {
-    vec4 color;             // diffuse rgba
-    vec4 specular;          // specular rgb + intensity/alpha
-};
-
-// 32 bytes
-struct PointLight {
-    vec3 position;          // 0   chart-space light position (x)
-    float positionW;        // 12  signed w for S³ (|x|²+w²=1); unused for H³
-    vec3 color;             // 16  linear light color
-    float intensity;        // 28  multiplier
-};
-
-// 128 bytes
 struct ScenePacketHeader {
-    PacketMeta meta;        // 0
-    Camera camera;          // 16
-    RenderControls controls;// 80
-    Counts counts;          // 112
+    PacketMeta meta;
+    Camera camera;
+    RenderControls controls;
+    Counts counts;
+};
+
+// Ball: geometry=center, parameter=cos(r), -cosh(r), or r.
+// Mirror: geometry=ambient outward normal, parameter=plane offset.
+struct Object {
+    vec4 geometry;
+    float parameter;
+    int kind;
+    int colorIdx;
+    int pad0;
+};
+
+struct Material {
+    vec4 color;
+    vec4 specular;
+};
+
+struct PointLight {
+    vec4 position;
+    vec3 color;
+    float intensity;
 };
 
 #if !defined(__METAL_VERSION__)
-static_assert(sizeof(int) == 4, "Scene packet requires 32-bit int");
+static_assert(sizeof(int) == 4, "scene packet requires 32-bit int");
 static_assert(sizeof(PacketMeta) == 16, "PacketMeta must be 16 bytes");
-static_assert(sizeof(Camera) == 64, "Camera must be 64 bytes");
-static_assert(sizeof(RenderControls) == 32, "RenderControls must be 32 bytes");
-static_assert(sizeof(Counts) == 16, "Counts must be 16 bytes");
+static_assert(sizeof(Camera) == 96, "Camera must be 96 bytes");
+static_assert(sizeof(RenderControls) == 48, "RenderControls must be 48 bytes");
+static_assert(sizeof(Counts) == 32, "Counts must be 32 bytes");
+static_assert(sizeof(ScenePacketHeader) == 192, "ScenePacketHeader must be 192 bytes");
 static_assert(sizeof(Object) == 32, "Object must be 32 bytes");
 static_assert(sizeof(Material) == 32, "Material must be 32 bytes");
 static_assert(sizeof(PointLight) == 32, "PointLight must be 32 bytes");
-static_assert(sizeof(ScenePacketHeader) == 128, "ScenePacketHeader must be 128 bytes");
 #endif
 
 } // namespace geo

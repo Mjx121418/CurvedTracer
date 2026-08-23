@@ -26,6 +26,7 @@ inline float mhAtan2(float y, float x)       { return atan2(y, x); }
 inline float mhLog(float x)                  { return log(x); }
 inline float mhAtanh(float x)                { return 0.5f * log((1.0f + x) / (1.0f - x)); }
 inline float mhExp(float x)                  { return exp(x); }
+inline float mhTan(float x)                  { return tan(x); }
 inline float mhAbs(float x)                  { return abs(x); }
 inline float mhMin(float a, float b)         { return min(a, b); }
 inline float mhMax(float a, float b)         { return max(a, b); }
@@ -42,6 +43,7 @@ inline float mhAtan2(float y, float x)       { return std::atan2(y, x); }
 inline float mhLog(float x)                  { return std::log(x); }
 inline float mhAtanh(float x)                { return 0.5f * std::log((1.0f + x) / (1.0f - x)); }
 inline float mhExp(float x)                  { return std::exp(x); }
+inline float mhTan(float x)                  { return std::tan(x); }
 inline float mhAbs(float x)                  { return std::fabs(x); }
 inline float mhMin(float a, float b)         { return std::fmin(a, b); }
 inline float mhMax(float a, float b)         { return std::fmax(a, b); }
@@ -101,7 +103,7 @@ inline vec4 normalize(const vec4& a) {
 }
 
 // ---- 4x4 matrix, column-major (m[col*4 + row]) ----
-// MSL-safe subset only: identity, multiply, apply. (Inverse is host-only, in Mobius.cpp.)
+// MSL-safe subset only: identity, multiply, apply. Inverse is host-only.
 struct mat4 {
     float m[16];
     mat4() { for (int i = 0; i < 16; ++i) m[i] = 0.0f; }

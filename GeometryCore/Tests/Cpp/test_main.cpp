@@ -7,7 +7,7 @@ std::vector<std::string> g_failmsgs;
 int main() {
     test_math();
     test_stereo();
-    test_mobius();
+    test_isometry();
     test_intersect();
     test_atlas();
 
@@ -16,6 +16,7 @@ int main() {
         return 0;
     }
     std::printf("FAILED: %d / %d checks failed\n", g_failures, g_checks);
-    for (const auto& m : g_failmsgs) std::printf("  %s\n", m.c_str());
+    for (const auto& m : g_failmsgs)
+        std::printf("  %s\n", m.c_str());
     return 1;
 }

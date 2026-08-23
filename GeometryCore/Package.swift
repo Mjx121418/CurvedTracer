@@ -11,7 +11,7 @@ let package = Package(
         .target(
             name: "GeometryCore",
             path: "Sources",
-            sources: ["src/Mobius.cpp", "src/Chart.cpp"],
+            sources: ["src/Isometry.cpp", "src/Chart.cpp"],
             publicHeadersPath: "include",
             cxxSettings: [
                 .unsafeFlags(["-std=c++17"])
@@ -25,7 +25,7 @@ let package = Package(
                 "test_main.cpp",
                 "test_math.cpp",
                 "test_stereo.cpp",
-                "test_mobius.cpp",
+                "test_isometry.cpp",
                 "test_intersect.cpp",
                 "test_atlas.cpp",
             ],

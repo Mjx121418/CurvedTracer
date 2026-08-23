@@ -5,5 +5,6 @@ container run --rm -it \
     -p 127.0.0.1:3080:3081 \
     -v "$PWD":/workspace \
     -v dsh-data:/root/.dsh \
+    -v codex-data:/root/.codex \
     -w /workspace \
     curved-dev

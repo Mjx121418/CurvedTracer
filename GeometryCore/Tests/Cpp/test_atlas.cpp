@@ -2,6 +2,7 @@
 #include "GeometryCore/Chart.h"
 #include "GeometryCore/Mobius.h"
 #include "GeometryCore/Scene.h"
+#include "GeometryCore/AtlasScene.h"
 
 #include <cstring>
 #include <vector>
@@ -20,6 +21,60 @@ mat4 rotationX1X4(float theta) {
     m.m[8] = 0;  m.m[9] = 0;   m.m[10] = 1;  m.m[11] = 0;
     m.m[12] = -s; m.m[13] = 0; m.m[14] = 0;  m.m[15] = c;
     return m;
+}
+
+mat4 boostX(float distance) {
+    mat4 m = mat4Identity();
+    float c = mhCosh(distance), s = mhSinh(distance);
+    m.m[0] = c; m.m[3] = s;
+    m.m[12] = s; m.m[15] = c;
+    return m;
+}
+
+float component(const vec3& v, int index) {
+    return index == 0 ? v.x : (index == 1 ? v.y : v.z);
+}
+
+mat4 moveH3PointToOrigin(const vec4& p) {
+    mat4 m = mat4Identity();
+    vec3 u = p.xyz();
+    float scale = 1.0f / (1.0f + p.w);
+    for (int col = 0; col < 3; ++col) {
+        for (int row = 0; row < 3; ++row) {
+            m.m[col * 4 + row] += scale
+                                * component(u, row)
+                                * component(u, col);
+        }
+        m.m[col * 4 + 3] = -component(u, col);
+        m.m[12 + col] = -component(u, col);
+    }
+    m.m[15] = p.w;
+    return m;
+}
+
+mat4 moveS3PointToOrigin(const vec4& p) {
+    float r2 = lengthSq(p.xyz());
+    if (r2 < 1e-10f) return mat4Identity();
+    vec3 axis = p.xyz() / mhSqrt(r2);
+    mat4 m = mat4Identity();
+    for (int col = 0; col < 3; ++col) {
+        for (int row = 0; row < 3; ++row) {
+            m.m[col * 4 + row] += (p.w - 1.0f)
+                                * component(axis, row)
+                                * component(axis, col);
+        }
+        m.m[col * 4 + 3] = component(p.xyz(), col);
+        m.m[12 + col] = -component(p.xyz(), col);
+    }
+    m.m[15] = p.w;
+    return m;
+}
+
+void checkVec4Near(const vec4& a, const vec4& b, float tolerance) {
+    CHECK_NEAR(a.x, b.x, tolerance);
+    CHECK_NEAR(a.y, b.y, tolerance);
+    CHECK_NEAR(a.z, b.z, tolerance);
+    CHECK_NEAR(a.w, b.w, tolerance);
 }
 
 ScenePacketHeader readHeader(const Atlas& atlas) {
@@ -56,6 +111,13 @@ void test_atlas() {
     CHECK(sizeof(PointLight) == 32);
     CHECK(sizeof(ScenePacketHeader) == 128);
     CHECK(GEO_CONTRACT_VERSION == 7);
+    CHECK(GEO_ATLAS_CONTRACT_VERSION == 9);
+    CHECK(sizeof(AtlasCamera) == 96);
+    CHECK(sizeof(AtlasRenderControls) == 48);
+    CHECK(sizeof(AtlasCounts) == 32);
+    CHECK(sizeof(AtlasPacketHeader) == 192);
+    CHECK(sizeof(GPUChart) == 32);
+    CHECK(sizeof(GPUPortal) == 96);
 
     // ------------------------------------------------------------------
     // Single-chart H3 scene and packet layout.
@@ -302,5 +364,148 @@ void test_atlas() {
         Atlas atlas;
         atlas.start(2);
         CHECK(atlas.build(0, GEO_MAX_CHART_DEPTH) == 6);
+    }
+
+    // ------------------------------------------------------------------
+    // v9 authored-atlas packet. Portal edges are not overlap/cocycle edges.
+    // ------------------------------------------------------------------
+    {
+        const float t = 0.4f, c = mhCosh(t), s = mhSinh(t);
+        float boost[16] = {c,0,0,s, 0,1,0,0, 0,0,1,0, s,0,0,c};
+        Atlas atlas;
+        atlas.start(GEO_MODEL_H3);
+        CHECK(atlas.seed(1.2f) == 0);
+        CHECK(atlas.addPortalPair(0, vec3(-1,0,0), 0, 0.2f, 1,
+                                  0, vec3(1,0,0), 0, 0.2f, 1, boost) == 0);
+        CHECK(atlas.portalCount() == 2);
+        CHECK(atlas.addPortalPair(0, vec3(-1,0,0), 0, 0.2f, 1,
+                                  0, vec3(1,0,0), 0, 0.2f, 1, boost) == -1);
+        CHECK(atlas.lastError() == 7);
+        CHECK(atlas.portalCount() == 2);
+        CHECK(atlas.addMaterial(vec4(1,0,0,1), vec4(0,0,0,1)) == 0);
+        CHECK(atlas.addObject(0, GEO_OBJECT_OPAQUE, vec3(0,0,0), 1, 0.9f, 0) == 0);
+        CHECK(atlas.addLight(0, vec3(0,0,0), vec3(1,1,1), 1) == 0);
+        atlas.setCamera(1, 1, vec3(1,0,0), vec3(0,1,0), vec3(0,0,1));
+        int camera = atlas.cameraChartAt(0, vec3(0,0,0), 1.0f);
+        CHECK(atlas.buildAtlas(camera, 32, 2, 64) == 0);
+        AtlasPacketHeader header{};
+        std::memcpy(&header, atlas.packet().data(), sizeof(header));
+        CHECK(header.meta.magic == GEO_ATLAS_PACKET_MAGIC);
+        CHECK(header.meta.contractVersion == 9);
+        CHECK(header.meta.packetHeaderSize == 192);
+        CHECK(header.counts.chartCount == 1);
+        CHECK(header.counts.portalCount == 2);
+        CHECK(header.counts.objectCount == 1);
+        CHECK(header.counts.lightCount == 1);
+        CHECK(header.camera.chartId == 0);
+        CHECK(header.controls.maxChartHops == 32);
+
+        // A movement that crosses a portal by much less than the shader's
+        // object self-hit epsilon must still reduce the camera immediately.
+        camera = atlas.cameraChartAt(0, vec3(-0.199995f, 0, 0), 1.0f);
+        CHECK(camera >= 0);
+        CHECK(atlas.cameraMove(vec3(-0.00002f, 0, 0)) == camera);
+        CHECK(atlas.buildAtlas(camera, 32, 2, 64) == 0);
+        std::memcpy(&header, atlas.packet().data(), sizeof(header));
+        CHECK(header.camera.position.x > 0.0f);
+
+        camera = atlas.cameraChartAt(0, vec3(0, 0, 0), 1.0f);
+        CHECK(camera >= 0);
+
+        // Crossing the negative face applies the pairing and keeps the
+        // camera in the authored chart instead of clamping at its boundary.
+        CHECK(atlas.cameraMove(vec3(-0.3f, 0, 0)) == camera);
+        CHECK(atlas.buildAtlas(camera, 32, 2, 64) == 0);
+        std::memcpy(&header, atlas.packet().data(), sizeof(header));
+        CHECK(header.camera.position.x > 0.0f);
+        CHECK_NEAR(length(atlas.cameraRight()), 1.0f, 1e-3f);
+
+        CHECK(atlas.buildAtlas(camera, 0, 2, 64) == 8);
+        CHECK(atlas.packetSize() == 0);
+    }
+    {
+        float reflection[16] = {-1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+        Atlas atlas;
+        atlas.start(GEO_MODEL_H3);
+        CHECK(atlas.seed(1.0f) == 0);
+        CHECK(atlas.addPortalPair(0, vec3(-1,0,0), 0, 0.2f, 1,
+                                  0, vec3(1,0,0), 0, 0.2f, 1, reflection) == -1);
+        CHECK(atlas.lastError() == 7);
+        CHECK(atlas.portalCount() == 0);
+
+        float identity[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+        CHECK(atlas.addPortalPair(0, vec3(-1,0,0), 0, 0.2f, 1,
+                                  0, vec3(1,0,0), 0, 0.2f, 1, identity) == -1);
+        CHECK(atlas.lastError() == 7);
+    }
+    {
+        mat4 rotation = rotationX1X4(0.5f);
+        Atlas atlas;
+        atlas.start(GEO_MODEL_S3);
+        CHECK(atlas.seed(1.4f) == 0);
+        CHECK(atlas.addPortalPair(0, vec3(-1,0,0), 0, 0.2f, 1,
+                                  0, vec3(1,0,0), 0, 0.2f, 1, rotation.m) == 0);
+        atlas.setCamera(1, 1, vec3(1,0,0), vec3(0,1,0), vec3(0,0,1));
+        int camera = atlas.cameraChartAt(0, vec3(0,0,0), 1.2f);
+        CHECK(atlas.buildAtlas(camera, 16, 1, 16) == 0);
+
+        float reflection[16] = {-1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+        Atlas invalid;
+        invalid.start(GEO_MODEL_S3);
+        CHECK(invalid.seed(1.0f) == 0);
+        CHECK(invalid.addPortalPair(0, vec3(-1,0,0), 0, 0.2f, 1,
+                                    0, vec3(1,0,0), 0, 0.2f, 1, reflection) == -1);
+        CHECK(invalid.lastError() == 7);
+    }
+
+    // ------------------------------------------------------------------
+    // Origin-recentered portal composition used by the v9 shader.
+    // If M maps current -> neighbor, the new ray frame is B*T*M^-1.
+    // ------------------------------------------------------------------
+    {
+        const float cameraD = -1.0f;
+        const float faceD = -0.7f;
+        vec4 camera(mhSinh(cameraD), 0, 0, mhCosh(cameraD));
+        vec4 hit(mhSinh(faceD), 0, 0, mhCosh(faceD));
+        vec4 tangent(mhCosh(faceD), 0, 0, mhSinh(faceD));
+        mat4 chartToRay = moveH3PointToOrigin(camera);
+        vec4 rayHit = mat4Apply(chartToRay, hit);
+        CHECK_NEAR(mhAcosh(rayHit.w), 0.3f, 1e-5f);
+
+        mat4 portal = boostX(1.4f);
+        mat4 inversePortal = boostX(-1.4f);
+        vec4 neighborHit = mat4Apply(portal, hit);
+        vec4 neighborTangent = mat4Apply(portal, tangent);
+        mat4 recenter = moveH3PointToOrigin(rayHit);
+        mat4 nextChartToRay = mat4Mul(recenter,
+            mat4Mul(chartToRay, inversePortal));
+        checkVec4Near(mat4Apply(nextChartToRay, neighborHit),
+                      vec4(0,0,0,1), 2e-5f);
+        checkVec4Near(mat4Apply(nextChartToRay, neighborTangent),
+                      mat4Apply(recenter, mat4Apply(chartToRay, tangent)),
+                      2e-5f);
+    }
+    {
+        const float cameraD = -0.6f;
+        const float faceD = -0.2f;
+        vec4 camera(mhSin(cameraD), 0, 0, mhCos(cameraD));
+        vec4 hit(mhSin(faceD), 0, 0, mhCos(faceD));
+        vec4 tangent(mhCos(faceD), 0, 0, -mhSin(faceD));
+        mat4 chartToRay = moveS3PointToOrigin(camera);
+        vec4 rayHit = mat4Apply(chartToRay, hit);
+        CHECK_NEAR(mhAcos(rayHit.w), 0.4f, 1e-5f);
+
+        mat4 portal = rotationX1X4(-0.4f);
+        mat4 inversePortal = rotationX1X4(0.4f);
+        vec4 neighborHit = mat4Apply(portal, hit);
+        vec4 neighborTangent = mat4Apply(portal, tangent);
+        mat4 recenter = moveS3PointToOrigin(rayHit);
+        mat4 nextChartToRay = mat4Mul(recenter,
+            mat4Mul(chartToRay, inversePortal));
+        checkVec4Near(mat4Apply(nextChartToRay, neighborHit),
+                      vec4(0,0,0,1), 2e-5f);
+        checkVec4Near(mat4Apply(nextChartToRay, neighborTangent),
+                      mat4Apply(recenter, mat4Apply(chartToRay, tangent)),
+                      2e-5f);
     }
 }

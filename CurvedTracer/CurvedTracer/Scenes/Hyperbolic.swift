@@ -7,6 +7,105 @@ import Foundation
 import GeometryCore
 
 enum HyperbolicScene {
+    private static func addPoincareBall(
+        _ atlas: inout geo.Atlas,
+        center: SIMD3<Float>,
+        radius: Float,
+        material: Int32
+    ) {
+        let centerSquared = center.x * center.x
+                          + center.y * center.y
+                          + center.z * center.z
+        let radiusSquared = radius * radius
+        let b = (1 - centerSquared + radiusSquared) / 2
+        let c = (1 + centerSquared - radiusSquared) / 2
+        _ = atlas.addObject(
+            0,
+            0,
+            geo.vec3(center.x, center.y, center.z),
+            b,
+            c,
+            material
+        )
+    }
+
+    private static func multiply4(_ a: [Float], _ b: [Float]) -> [Float] {
+        var r = [Float](repeating: 0, count: 16)
+        for c in 0..<4 { for row in 0..<4 { for k in 0..<4 {
+            r[c * 4 + row] += a[k * 4 + row] * b[c * 4 + k]
+        }}}
+        return r
+    }
+
+    private static func facePairing(_ u: SIMD3<Float>, distance: Float, twist: Float) -> [Float] {
+        let c = cosh(distance), s = sinh(distance)
+        var boost: [Float] = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]
+        for col in 0..<3 { for row in 0..<3 { boost[col*4+row] += (c-1)*u[row]*u[col] }}
+        for i in 0..<3 { boost[12+i]=s*u[i]; boost[i*4+3]=s*u[i] }
+        boost[15]=c
+        let ct=cos(twist), st=sin(twist), one=1-ct
+        var rotation=[Float](repeating:0,count:16); rotation[15]=1
+        for col in 0..<3 { for row in 0..<3 {
+            let delta: Float = row == col ? 1 : 0
+            let cross: Float
+            switch (row,col) {
+            case (0,1): cross = -u.z; case (0,2): cross = u.y
+            case (1,0): cross = u.z; case (1,2): cross = -u.x
+            case (2,0): cross = -u.y; case (2,1): cross = u.x
+            default: cross = 0
+            }
+            rotation[col*4+row]=ct*delta+one*u[row]*u[col]+st*cross
+        }}
+        return multiply4(rotation,boost)
+    }
+
+    @discardableResult
+    static func seifertWeberAtlas(_ atlas: inout geo.Atlas) -> Int32 {
+        atlas.start(0)
+        _ = atlas.seed(1.30)
+        let phi: Float=(1+sqrt(5))/2, scale: Float=1/sqrt(1+phi*phi)
+        let directions=[SIMD3<Float>(0,1,phi),SIMD3<Float>(0,-1,phi),
+                        SIMD3<Float>(1,phi,0),SIMD3<Float>(-1,phi,0),
+                        SIMD3<Float>(phi,0,1),SIMD3<Float>(phi,0,-1)].map{$0*scale}
+        let q: Float=1/sqrt(5)
+        let inradius=asinh(sqrt((q+cos(2*Float.pi/5))/(1-q)))
+        // Trace through a face just beyond the mathematical dodecahedron.
+        // The pairing translates by twice the true inradius, so crossing at
+        // inradius + portalCollarWidth lands at inradius - portalCollarWidth
+        // in the paired representative. This keeps both camera and ray
+        // origins away from the reverse portal after a hop.
+        let portalCollarWidth: Float = 0.01
+        let portalOffset = tanh(inradius + portalCollarWidth)
+        for u in directions {
+            let m=facePairing(u,distance:2*inradius,twist:3*Float.pi/5)
+            let minus=geo.vec3(-u.x,-u.y,-u.z), plus=geo.vec3(u.x,u.y,u.z)
+            guard atlas.addPortalPair(0,minus,0,portalOffset,1,
+                                      0,plus,0,portalOffset,1,m) >= 0 else {
+                fatalError("invalid Seifert-Weber portal: \(atlas.lastError())")
+            }
+        }
+        _=atlas.addMaterial(geo.vec4(0.95,0.12,0.08,1),geo.vec4(0.35,0.35,0.35,1))
+        _=atlas.addMaterial(geo.vec4(0.08,0.55,1,1),geo.vec4(0.35,0.35,0.35,1))
+        addPoincareBall(
+            &atlas,
+            center: SIMD3<Float>(0.17, -0.10, 0.05),
+            radius: 0.09,
+            material: 0
+        )
+        addPoincareBall(
+            &atlas,
+            center: SIMD3<Float>(-0.20, 0.075, 0.13),
+            radius: 0.10,
+            material: 1
+        )
+        _=atlas.addLight(0,geo.vec3(0.10,-0.12,0.18),geo.vec3(1,0.92,0.72),0.75)
+        atlas.setCamera(1,16.0/9.0,geo.vec3(1,0,0),geo.vec3(0,1,0),geo.vec3(0,0,1))
+        atlas.setControls(5,0.04,0.16,0.9,2,0,0.0)
+        let camera=atlas.cameraChartAt(0,geo.vec3(0,0,0),1.5)
+        let result=atlas.buildAtlas(camera,64,1,32)
+        if result != 0 { fatalError("atlas build failed: \(result)") }
+        return camera
+    }
     /// Builds the hardcoded hyperbolic test scene in `atlas`.
     /// Returns the camera chart id.
     @discardableResult

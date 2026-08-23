@@ -22,6 +22,26 @@ bool finiteVec(const vec3& v) {
 
 bool finiteFloat(float x) { return std::isfinite(x); }
 
+float determinant4(const mat4& m) {
+    double a[4][4];
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c) a[r][c] = m.m[c * 4 + r];
+    double det = 1.0;
+    for (int c = 0; c < 4; ++c) {
+        int p = c;
+        for (int r = c + 1; r < 4; ++r)
+            if (std::fabs(a[r][c]) > std::fabs(a[p][c])) p = r;
+        if (std::fabs(a[p][c]) < 1e-10) return 0.0f;
+        if (p != c) { for (int k = c; k < 4; ++k) std::swap(a[p][k], a[c][k]); det = -det; }
+        det *= a[c][c];
+        for (int r = c + 1; r < 4; ++r) {
+            double f = a[r][c] / a[c][c];
+            for (int k = c + 1; k < 4; ++k) a[r][k] -= f * a[c][k];
+        }
+    }
+    return static_cast<float>(det);
+}
+
 // Ambient transvection sending P to (0,0,0,1).
 // kappa = +1 for S3 O(4); kappa = -1 for H3 Lorentz in the hyperboloid model.
 mat4 movePointToOrigin(const vec4& P, float kappa) {
@@ -86,6 +106,7 @@ void Atlas::resetToDefaults() {
     charts_.clear();
     objects_.clear();
     lights_.clear();
+    portals_.clear();
     materials_.clear();
     cameraRight_ = vec3(1, 0, 0);
     cameraUp_ = vec3(0, 1, 0);
@@ -209,6 +230,63 @@ void Atlas::linkCharts(int a, int b, const float m_ab[16], bool safe) {
     upsertEdge(a, b, m, safe);
     upsertEdge(b, a, m.inverse(), safe);
     setError(0);
+}
+
+bool Atlas::validPortalIsometry(const Mobius& m) const {
+    float det = determinant4(m.m);
+    if (!finiteFloat(det) || mhAbs(det - 1.0f) > 5e-3f) return false;
+    const float tol = 2e-3f;
+    for (int c = 0; c < 4; ++c) for (int d = 0; d < 4; ++d) {
+        float v = 0.0f;
+        for (int r = 0; r < 4; ++r) {
+            float sign = (modelKind_ == GEO_MODEL_H3 && r == 3) ? -1.0f : 1.0f;
+            v += sign * m.m.m[c * 4 + r] * m.m.m[d * 4 + r];
+        }
+        float want = c == d ? ((modelKind_ == GEO_MODEL_H3 && c == 3) ? -1.0f : 1.0f) : 0.0f;
+        if (mhAbs(v - want) > tol) return false;
+    }
+    return modelKind_ != GEO_MODEL_H3 || mat4Apply(m.m, vec4(0,0,0,1)).w > 0.0f;
+}
+
+int Atlas::addPortalPair(int chartA, const vec3& aA, float bA, float cA, int interiorSignA,
+                         int chartB, const vec3& aB, float bB, float cB, int interiorSignB,
+                         const float m_ab[16]) {
+    clearPacket();
+    if (!validChartId(chartA) || !validChartId(chartB) || !m_ab ||
+        !finiteVec(aA) || !finiteVec(aB) || !finiteFloat(bA) || !finiteFloat(cA) ||
+        !finiteFloat(bB) || !finiteFloat(cB) ||
+        (interiorSignA != -1 && interiorSignA != 1) ||
+        (interiorSignB != -1 && interiorSignB != 1)) {
+        setError(7); return -1;
+    }
+    if (static_cast<int>(portals_.size()) + 2 > GEO_MAX_PORTALS) {
+        setError(8); return -1;
+    }
+    Mobius ab = mobiusFromMatrix(m_ab);
+    if (!validPortalIsometry(ab)) { setError(7); return -1; }
+    if (chartA == chartB && mobiusClose(ab, identityMobius(), 1e-5f)) {
+        setError(7); return -1;
+    }
+    if (lengthSq(aA) + bA*bA < 1e-10f || lengthSq(aB) + bB*bB < 1e-10f) {
+        setError(7); return -1;
+    }
+    for (const auto& existing : portals_) {
+        if (existing.chartId == chartA && existing.neighborId == chartB &&
+            length(existing.a - aA) < 1e-5f && mhAbs(existing.b - bA) < 1e-5f &&
+            mhAbs(existing.c - cA) < 1e-5f && existing.interiorSign == interiorSignA &&
+            mobiusClose(existing.toNeighbor, ab, 1e-5f)) {
+            setError(7); return -1;
+        }
+    }
+    int first = static_cast<int>(portals_.size());
+    ChartPortal p, q;
+    p.chartId=chartA; p.neighborId=chartB; p.a=aA; p.b=bA; p.c=cA;
+    p.interiorSign=interiorSignA; p.reversePortal=first+1; p.toNeighbor=ab;
+    q.chartId=chartB; q.neighborId=chartA; q.a=aB; q.b=bB; q.c=cB;
+    q.interiorSign=interiorSignB; q.reversePortal=first; q.toNeighbor=ab.inverse();
+    portals_.push_back(p); portals_.push_back(q);
+    setError(0);
+    return first;
 }
 
 int Atlas::addObject(int chartId, int kind, const vec3& a, float b, float c, int colorIdx) {
@@ -697,12 +775,37 @@ int Atlas::cameraMove(const vec3& movement) {
 
     // Express the result in the old parent chart and re-parent.
     vec4 movedParent = oldToBase.applyChartPointAugmented(movedCam);
-    CameraPlacement placement = resolveCameraPlacementAugmented(oldParent, movedParent);
+    CameraPlacement placement;
+    Mobius portalTransition = identityMobius();
+    bool crossedPortal = false;
+    if (!portals_.empty()) {
+        int current = oldParent;
+        vec4 point = movedParent;
+        for (int hop = 0; hop < 16; ++hop) {
+            int selected = -1; float worst = 1e-6f;
+            for (size_t i = 0; i < portals_.size(); ++i) {
+                const auto& p = portals_[i]; if (p.chartId != current) continue;
+                float violation = p.interiorSign * (dot(p.a, point.xyz()) + p.b*point.w - p.c);
+                if (violation > worst) { worst = violation; selected = static_cast<int>(i); }
+            }
+            if (selected < 0) break;
+            const auto& p = portals_[selected];
+            point = p.toNeighbor.applyChartPointAugmented(point);
+            portalTransition = p.toNeighbor.compose(portalTransition);
+            current = p.neighborId; crossedPortal = true;
+            if (hop == 15) { setError(8); return -1; }
+        }
+        placement.chartId=current; placement.localPosition=point.xyz(); placement.localPositionW=point.w;
+    } else {
+        placement = resolveCameraPlacementAugmented(oldParent, movedParent);
+    }
 
     // Transition from the old parent chart to the new parent chart, needed to
     // parallel-transport the camera frame into the re-anchored camera chart.
     Mobius parentToNew;
-    if (placement.chartId == oldParent) {
+    if (crossedPortal) {
+        parentToNew = portalTransition;
+    } else if (placement.chartId == oldParent) {
         parentToNew = identityMobius();
     } else if (!chartTransition(oldParent, placement.chartId, parentToNew)) {
         setError(4);   // should not happen: resolveCameraPlacementAugmented only returns reachable charts
@@ -1063,6 +1166,183 @@ int Atlas::build(int cameraChart, int maxChartDepth) {
 
     setError(0);
     return 0;
+}
+
+int Atlas::buildAtlas(int cameraChart, int maxChartHops, int maxLightHops, int maxLightStates) {
+    packet_.clear();
+    if (!validModelKind()) { setError(6); return 6; }
+    if (!validChartId(cameraChart)) { setError(4); return 4; }
+    if (capacityExceeded_) { setError(5); return 5; }
+    if (maxChartHops <= 0 || maxChartHops > 128 || maxLightHops < 0 || maxLightHops > 4 ||
+        maxLightStates <= 0 || maxLightStates > 256) { setError(8); return 8; }
+
+    const int chartCount = static_cast<int>(charts_.size());
+    const int materialCount = materials_.empty() ? 1 : static_cast<int>(materials_.size());
+    if (static_cast<int>(objects_.size()) > GEO_MAX_OBJECTS ||
+        static_cast<int>(materials_.size()) > GEO_MAX_MATERIALS ||
+        static_cast<int>(lights_.size()) > GEO_MAX_LIGHTS) { setError(5); return 5; }
+    for (const auto& object : objects_) {
+        int code = validateObjectBasics(object, materialCount);
+        if (code == 0) code = validateObjectModel(object);
+        if (code != 0) { setError(code); return code; }
+    }
+    for (const auto& light : lights_) {
+        int code = validateLight(light);
+        if (code != 0) { setError(code); return code; }
+    }
+
+    // Validate only ordinary overlap connectivity and cocycles. Portal loops
+    // intentionally carry quotient holonomy and are not part of this graph.
+    std::vector<UEdge> overlapEdges = buildUndirectedEdges();
+    for (const auto& chart : charts_) for (const auto& edge : chart.edges) {
+        if (edge.neighborId < 0 || edge.neighborId >= chartCount) { setError(3); return 3; }
+    }
+    std::vector<int> depth(chartCount, -1), parentEdge(chartCount, -1), queue;
+    std::vector<Mobius> path(chartCount);
+    depth[cameraChart] = 0; path[cameraChart] = identityMobius(); queue.push_back(cameraChart);
+    for (size_t qi = 0; qi < queue.size(); ++qi) {
+        int from = queue[qi];
+        for (size_t ei = 0; ei < overlapEdges.size(); ++ei) {
+            const UEdge& edge = overlapEdges[ei];
+            int to = edge.a == from ? edge.b : (edge.b == from ? edge.a : -1);
+            if (to < 0 || depth[to] >= 0) continue;
+            path[to] = edgeTransition(from, to, edge).compose(path[from]);
+            depth[to] = depth[from] + 1; parentEdge[to] = static_cast<int>(ei); queue.push_back(to);
+        }
+    }
+    for (int chart = 0; chart < chartCount; ++chart) {
+        if (depth[chart] < 0) { setError(1); return 1; }
+        if (depth[chart] > GEO_MAX_CHART_DEPTH) { setError(5); return 5; }
+    }
+    std::vector<bool> treeEdge(overlapEdges.size(), false);
+    for (int chart = 0; chart < chartCount; ++chart)
+        if (chart != cameraChart && parentEdge[chart] >= 0) treeEdge[parentEdge[chart]] = true;
+    for (size_t ei = 0; ei < overlapEdges.size(); ++ei) {
+        if (treeEdge[ei]) continue;
+        const UEdge& edge = overlapEdges[ei];
+        Mobius treeTransition = path[edge.b].compose(path[edge.a].inverse());
+        if (!mobiusClose(edge.ab, treeTransition, 1e-3f)) { setError(2); return 2; }
+    }
+
+    std::vector<int> authoredCharts;
+    std::vector<int> chartRemap(charts_.size(), -1);
+    for (int chart = 0; chart < static_cast<int>(charts_.size()); ++chart) {
+        if (chart == cameraChartId_) continue; // special camera chart is host-only
+        chartRemap[chart] = static_cast<int>(authoredCharts.size());
+        authoredCharts.push_back(chart);
+    }
+    int baseChartCount = static_cast<int>(authoredCharts.size());
+    if (baseChartCount <= 0 || baseChartCount > GEO_MAX_CHARTS ||
+        static_cast<int>(portals_.size()) > GEO_MAX_PORTALS) { setError(8); return 8; }
+
+    int parent = (cameraChart == cameraChartId_) ? cameraChartFrom_ : cameraChart;
+    if (parent < 0 || parent >= static_cast<int>(chartRemap.size()) || chartRemap[parent] < 0) {
+        setError(4); return 4;
+    }
+
+    std::vector<GPUChart> gpuCharts(baseChartCount);
+    std::vector<GPUPortal> gpuPortals;
+    std::vector<int> portalRemap(portals_.size(), -1);
+    std::vector<Object> gpuObjects;
+    std::vector<PointLight> gpuLights;
+
+    for (int gpuChart = 0; gpuChart < baseChartCount; ++gpuChart) {
+        int chart = authoredCharts[gpuChart];
+        GPUChart gc{};
+        gc.angularRadius = charts_[chart].radius;
+        gc.intrinsicRadius = modelKind_ == GEO_MODEL_H3
+            ? mhAtanh(mhMin(0.999999f, mhSin(charts_[chart].radius)))
+            : charts_[chart].radius;
+        gc.firstPortal = static_cast<int>(gpuPortals.size());
+        for (size_t pi = 0; pi < portals_.size(); ++pi) if (portals_[pi].chartId == chart) {
+            portalRemap[pi] = static_cast<int>(gpuPortals.size());
+            GPUPortal gp{};
+            gp.toNeighbor = portals_[pi].toNeighbor.m;
+            gp.a = portals_[pi].a; gp.b = portals_[pi].b; gp.c = portals_[pi].c;
+            int neighbor = portals_[pi].neighborId;
+            if (neighbor < 0 || neighbor >= static_cast<int>(chartRemap.size()) || chartRemap[neighbor] < 0) {
+                setError(7); return 7;
+            }
+            gp.neighborChart = chartRemap[neighbor];
+            gp.reversePortal = portals_[pi].reversePortal; // remapped below
+            gp.interiorSign = portals_[pi].interiorSign;
+            gpuPortals.push_back(gp);
+        }
+        gc.portalCount = static_cast<int>(gpuPortals.size()) - gc.firstPortal;
+        gc.firstObject = static_cast<int>(gpuObjects.size());
+        for (int objectId : charts_[chart].objectIds) {
+            const ChartObject& in = objects_[objectId];
+            Object out{}; out.a=in.a; out.b=in.b; out.c=in.c;
+            out.kind=in.kind; out.colorIdx=in.colorIdx;
+            gpuObjects.push_back(out);
+        }
+        gc.objectCount = static_cast<int>(gpuObjects.size()) - gc.firstObject;
+        gc.firstLight = static_cast<int>(gpuLights.size());
+        for (int lightId : charts_[chart].lightIds) {
+            const ChartLight& in = lights_[lightId];
+            PointLight out{}; out.position=in.position; out.positionW=in.positionW;
+            out.color=in.color; out.intensity=in.intensity;
+            gpuLights.push_back(out);
+        }
+        gc.lightCount = static_cast<int>(gpuLights.size()) - gc.firstLight;
+        gpuCharts[gpuChart] = gc;
+    }
+    for (size_t old = 0; old < portals_.size(); ++old) {
+        int mapped = portalRemap[old];
+        int reverse = portals_[old].reversePortal;
+        if (mapped < 0 || reverse < 0 || reverse >= static_cast<int>(portalRemap.size()) ||
+            portalRemap[reverse] < 0) { setError(7); return 7; }
+        gpuPortals[mapped].reversePortal = portalRemap[reverse];
+    }
+
+    AtlasPacketHeader hdr{};
+    hdr.meta.magic = GEO_ATLAS_PACKET_MAGIC;
+    hdr.meta.contractVersion = GEO_ATLAS_CONTRACT_VERSION;
+    hdr.meta.objectSize = sizeof(Object);
+    hdr.meta.packetHeaderSize = sizeof(AtlasPacketHeader);
+    hdr.camera.chartId = chartRemap[parent];
+    hdr.camera.fovTan = fovTan_; hdr.camera.aspect = aspect_;
+    float horizonAngle = charts_[cameraChart].radius;
+    hdr.camera.maxTraceDistance = modelKind_ == GEO_MODEL_H3
+        ? mhAtanh(mhMin(0.999999f, mhSin(horizonAngle))) : horizonAngle;
+    hdr.camera.maxTraceHalfAngle = modelKind_ == GEO_MODEL_H3
+        ? mhTanh(0.5f * hdr.camera.maxTraceDistance)
+        : mhSin(0.5f*horizonAngle)/mhCos(0.5f*horizonAngle);
+
+    Mobius cameraToParent = identityMobius();
+    vec4 P(0,0,0,1);
+    if (cameraChart == cameraChartId_) {
+        cameraToParent = cameraChartTransition_.inverse();
+        P = modelKind_ == GEO_MODEL_S3
+            ? vec4(cameraPosition_, cameraPositionW_)
+            : mat4Apply(cameraToParent.m, vec4(0,0,0,1));
+    }
+    hdr.camera.position = P;
+    hdr.camera.right = mat4Apply(cameraToParent.m, vec4(cameraRight_,0));
+    hdr.camera.up = mat4Apply(cameraToParent.m, vec4(cameraUp_,0));
+    hdr.camera.fwd = mat4Apply(cameraToParent.m, vec4(cameraFwd_,0));
+    hdr.controls.shading.maxBounces=maxBounces_; hdr.controls.shading.modelKind=modelKind_;
+    hdr.controls.shading.falloffK=falloffK_; hdr.controls.shading.ambient=ambient_;
+    hdr.controls.shading.bounceAttenuation=bounceAttenuation_;
+    hdr.controls.shading.fogMode=fogMode_; hdr.controls.shading.fogStartFraction=fogStartFraction_;
+    hdr.controls.shading.fogDensity=fogDensity_;
+    hdr.controls.maxChartHops=maxChartHops; hdr.controls.maxLightHops=maxLightHops;
+    hdr.controls.maxLightStates=maxLightStates;
+    hdr.counts.chartCount=baseChartCount; hdr.counts.portalCount=gpuPortals.size();
+    hdr.counts.objectCount=gpuObjects.size(); hdr.counts.materialCount=materials_.empty()?1:materials_.size();
+    hdr.counts.lightCount=gpuLights.size();
+
+    size_t total=sizeof(hdr)+gpuCharts.size()*sizeof(GPUChart)+gpuPortals.size()*sizeof(GPUPortal)+
+        gpuObjects.size()*sizeof(Object)+hdr.counts.materialCount*sizeof(Material)+gpuLights.size()*sizeof(PointLight);
+    packet_.assign(total,0); size_t off=0;
+    auto append=[&](const void* p,size_t bytes){std::memcpy(packet_.data()+off,p,bytes);off+=bytes;};
+    append(&hdr,sizeof(hdr)); append(gpuCharts.data(),gpuCharts.size()*sizeof(GPUChart));
+    append(gpuPortals.data(),gpuPortals.size()*sizeof(GPUPortal));
+    append(gpuObjects.data(),gpuObjects.size()*sizeof(Object));
+    if (materials_.empty()) { Material m{};m.color=vec4(1,1,1,1);m.specular=vec4(0,0,0,1);append(&m,sizeof(m)); }
+    else append(materials_.data(),materials_.size()*sizeof(Material));
+    append(gpuLights.data(),gpuLights.size()*sizeof(PointLight));
+    setError(0); return 0;
 }
 
 } // namespace geo

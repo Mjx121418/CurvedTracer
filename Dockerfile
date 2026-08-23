@@ -29,6 +29,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
 # DeepSeek Harness
 RUN npm install -g @deepseek-ai/dsh
 
+# Codex CLI
+RUN npm install -g @openai/codex
+
 WORKDIR /workspace
 
 CMD ["/bin/bash"]

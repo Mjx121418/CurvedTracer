@@ -16,8 +16,38 @@ enum AmbientSpace: String, CaseIterable, Identifiable {
     var id: Self { self }
 }
 
+enum TraversalMode: String, CaseIterable, Identifiable {
+    case flat = "Flat CPU"
+    case atlas = "GPU Atlas"
+    var id: Self { self }
+}
+
+struct RenderResolution: Equatable {
+    let width: Int
+    let height: Int
+
+    static let hd720 = RenderResolution(width: 1280, height: 720)
+
+    init(width: Int, height: Int) {
+        precondition(Self.isValid(width: width, height: height),
+                     "render resolution dimensions must be positive")
+        self.width = width
+        self.height = height
+    }
+
+    static func isValid(width: Int, height: Int) -> Bool {
+        width > 0 && height > 0
+    }
+
+    var aspectRatio: CGFloat {
+        CGFloat(width) / CGFloat(height)
+    }
+}
+
 struct MetalView: NSViewRepresentable {
     @Binding var ambientSpace: AmbientSpace
+    @Binding var traversalMode: TraversalMode
+    let renderResolution: RenderResolution
 
     func makeCoordinator() -> Renderer {
         Renderer()
@@ -43,13 +73,16 @@ struct MetalView: NSViewRepresentable {
         )
         view.preferredFramesPerSecond = 60
         
-        view.framebufferOnly = false
+        view.framebufferOnly = true
         DispatchQueue.main.async {
             view.window?.acceptsMouseMovedEvents = true
         }
 
-        context.coordinator.configure(device: device, view: view)
+        context.coordinator.configure(device: device,
+                                      view: view,
+                                      renderResolution: renderResolution)
         context.coordinator.ambientSpace = ambientSpace
+        context.coordinator.traversalMode = traversalMode
         context.coordinator.setScenePacket()
         context.coordinator.installEventMonitors()
 
@@ -59,7 +92,12 @@ struct MetalView: NSViewRepresentable {
     }
 
     func updateNSView(_ view: MTKView, context: Context) {
-        context.coordinator.ambientSpace = ambientSpace
+        if context.coordinator.ambientSpace != ambientSpace ||
+           context.coordinator.traversalMode != traversalMode {
+            context.coordinator.ambientSpace = ambientSpace
+            context.coordinator.traversalMode = traversalMode
+            context.coordinator.setScenePacket()
+        }
     }
 }
 
@@ -68,7 +106,10 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var device: (any MTLDevice)!
 
     private var pipeline: (any MTLComputePipelineState)!
+    private var atlasPipeline: (any MTLComputePipelineState)!
+    private var presentationPipeline: (any MTLRenderPipelineState)!
     private var sceneBuffers: [any MTLBuffer] = []
+    private var statusBuffers: [any MTLBuffer] = []
     
     private var commandQueue: (any MTL4CommandQueue)!
     private var commandBuffers: [any MTL4CommandBuffer] = []
@@ -76,13 +117,15 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     private var frameEvent: (any MTLSharedEvent)!
     private var frameEventValue: UInt64 = 0
+    private var frameCompletionValues: [UInt64] = []
     private var frameIndex: Int = 0
     private let maxFramesInFlight = 3
     
-    private var argumentTable: (any MTL4ArgumentTable)!
+    private var argumentTables: [any MTL4ArgumentTable] = []
     private var residencySet: (any MTLResidencySet)!
     
-    private var renderTexture: (any MTLTexture)!
+    private var renderTextures: [any MTLTexture] = []
+    private var renderResolution: RenderResolution = .hd720
 
     private var cameraChart: Int32 = 0
     private var atlas = geo.Atlas()
@@ -98,8 +141,10 @@ final class Renderer: NSObject, MTKViewDelegate {
     private let cameraRollSpeed: Float = 0.01
     private let cameraAutoRotateSpeed: Float = 0.01
     private var pressedKeys: [UInt16: Bool] = [:]
+    private var lastAtlasStatus: UInt32 = 0
 
     var ambientSpace: AmbientSpace = .sphere
+    var traversalMode: TraversalMode = .flat
 
     func installEventMonitors() {
         mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { [weak self] event in
@@ -158,14 +203,35 @@ final class Renderer: NSObject, MTKViewDelegate {
             || keyCode == 125 || keyCode == 126
     }
 
-    func configure(device: MTLDevice, view: MTKView) {
+    func configure(device: MTLDevice,
+                   view: MTKView,
+                   renderResolution: RenderResolution) {
         self.device = device
+        self.renderResolution = renderResolution
 
         let library = device.makeDefaultLibrary()!
         guard let function = library.makeFunction(name: "raytrace") else {
             fatalError("raytrace shader not found")
         }
         self.pipeline = try! device.makeComputePipelineState(function: function)
+        guard let atlasFunction = library.makeFunction(name: "raytraceAtlas") else {
+            fatalError("raytraceAtlas shader not found")
+        }
+        self.atlasPipeline = try! device.makeComputePipelineState(function: atlasFunction)
+
+        guard
+            let presentationVertex = library.makeFunction(name: "presentVertex"),
+            let presentationFragment = library.makeFunction(name: "presentFragment")
+        else {
+            fatalError("presentation shaders not found")
+        }
+        let presentationDescriptor = MTLRenderPipelineDescriptor()
+        presentationDescriptor.label = "Fixed-resolution presentation pipeline"
+        presentationDescriptor.vertexFunction = presentationVertex
+        presentationDescriptor.fragmentFunction = presentationFragment
+        presentationDescriptor.colorAttachments[0].pixelFormat = view.colorPixelFormat
+        self.presentationPipeline = try! device.makeRenderPipelineState(
+            descriptor: presentationDescriptor)
 
         guard let commandQueue = device.makeMTL4CommandQueue() else {
             fatalError("Failed to create Metal 4 command queue")
@@ -176,6 +242,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             fatalError("Failed to create shared event")
         }
         self.frameEvent = frameEvent
+        frameCompletionValues = Array(repeating: 0, count: maxFramesInFlight)
 
         for _ in 0..<maxFramesInFlight {
             guard
@@ -199,40 +266,68 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
         self.commandQueue.addResidencySet(self.residencySet)
 
-        let maxPacketSize = 128 + 4096 * 32 + 256 * 16 + 16 * 32
+        let maxPacketSize = 300_000
         for _ in 0..<maxFramesInFlight {
             guard let buffer = device.makeBuffer(length: maxPacketSize, options: .storageModeShared) else {
                 fatalError("Failed to create scene buffer")
             }
             sceneBuffers.append(buffer)
             residencySet.addAllocation(buffer)
+            guard let status = device.makeBuffer(length: 4, options: .storageModeShared) else {
+                fatalError("Failed to create atlas status buffer")
+            }
+            statusBuffers.append(status)
+            residencySet.addAllocation(status)
         }
 
         let descriptor = MTL4ArgumentTableDescriptor()
-        descriptor.maxBufferBindCount = 1
+        descriptor.maxBufferBindCount = 2
         descriptor.maxTextureBindCount = 1
         
-        self.argumentTable = try! device.makeArgumentTable(descriptor: descriptor)
+        let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: view.colorPixelFormat,
+            width: renderResolution.width,
+            height: renderResolution.height,
+            mipmapped: false)
+        textureDescriptor.storageMode = .private
+        textureDescriptor.usage = [.shaderRead, .shaderWrite]
+        for frame in 0..<maxFramesInFlight {
+            argumentTables.append(try! device.makeArgumentTable(descriptor: descriptor))
+
+            guard let texture = device.makeTexture(descriptor: textureDescriptor) else {
+                fatalError("Failed to create fixed-resolution render texture")
+            }
+            texture.label = "Ray tracing target \(renderResolution.width)x\(renderResolution.height), frame \(frame)"
+            renderTextures.append(texture)
+            residencySet.addAllocation(texture)
+
+            statusBuffers[frame].contents().storeBytes(of: UInt32(0),
+                                                        as: UInt32.self)
+            argumentTables[frame].setAddress(sceneBuffers[frame].gpuAddress,
+                                              index: 0)
+            argumentTables[frame].setAddress(statusBuffers[frame].gpuAddress,
+                                              index: 1)
+            argumentTables[frame].setTexture(texture.gpuResourceID, index: 0)
+        }
     }
     
     func setScenePacket() {
-        // Build the hardcoded spherical 600-cell scene and obtain the camera chart id.
         atlas = geo.Atlas()
-        cameraChart = SphericalScene.cell600(&atlas)
-        // cameraChart = SphericalScene.cell24(&atlas)
-        // cameraChart = HyperbolicScene.configure(&atlas)
-        // cameraChart = HyperbolicScene.honeycombCell(&atlas)
-        // cameraChart = SphericalScene.configure(&atlas)
-        // cameraChart = SphericalScene.cell16(&atlas)
-
-        // Copy the initial packet into every frame slot.
-        for buffer in sceneBuffers {
-            copyAtlasPacket(to: buffer)
-        }
-        if let firstBuffer = sceneBuffers.first {
-            argumentTable.setAddress(firstBuffer.gpuAddress, index: 0)
+        lastAtlasStatus = 0
+        if traversalMode == .atlas {
+            // The first atlas-traversal scene is the compact Seifert-Weber
+            // quotient. The CPU uploads one fundamental domain; rays cross
+            // the six authored face-pairing portals on the GPU.
+            cameraChart = HyperbolicScene.seifertWeberAtlas(&atlas)
+        } else if ambientSpace == .sphere {
+            cameraChart = SphericalScene.cell600(&atlas)
+        } else {
+            cameraChart = HyperbolicScene.honeycombCell(&atlas)
         }
 
+        // draw(in:) uploads into a frame slot only after that slot's previous
+        // GPU work completes. Avoid touching all in-flight buffers here when
+        // the user switches scenes.
         self.residencySet.commit()
         self.residencySet.requestResidency()
     }
@@ -242,6 +337,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         // is an interior pointer into a C++ value type and is not safe to use
         // from Swift when atlas is a stored property.
         let packet = [UInt8](atlas.packetBytes())
+        precondition(packet.count <= buffer.length, "scene packet exceeds the Metal buffer")
         let contents = buffer.contents()
         _ = packet.withUnsafeBytes { rawBuffer in
             memcpy(contents, rawBuffer.baseAddress!, rawBuffer.count)
@@ -327,29 +423,39 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
-        guard size.width > 0, size.height > 0 else {
-            return
+        // The ray-tracing target has a configured fixed resolution. Drawable
+        // changes affect only the presentation viewport in draw(in:).
+    }
+
+    private func presentationViewport(for drawableTexture: any MTLTexture) -> MTLViewport {
+        let drawableWidth = Double(drawableTexture.width)
+        let drawableHeight = Double(drawableTexture.height)
+        let sourceAspect = Double(renderResolution.width)
+                         / Double(renderResolution.height)
+        let drawableAspect = drawableWidth / drawableHeight
+
+        if drawableAspect > sourceAspect {
+            let width = drawableHeight * sourceAspect
+            return MTLViewport(originX: 0.5 * (drawableWidth - width),
+                               originY: 0,
+                               width: width,
+                               height: drawableHeight,
+                               znear: 0,
+                               zfar: 1)
         }
-        
-        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: view.colorPixelFormat, width: Int(size.width), height: Int(size.height), mipmapped: false)
-        
-        descriptor.storageMode = .private
-        descriptor.usage = [.shaderWrite]
-        
-        guard let texture = device.makeTexture(descriptor: descriptor) else {
-            fatalError("Failed to create render texture")
-        }
-        
-        renderTexture = texture
-        
-        residencySet.addAllocation(texture)
-        residencySet.commit()
+
+        let height = drawableWidth / sourceAspect
+        return MTLViewport(originX: 0,
+                           originY: 0.5 * (drawableHeight - height),
+                           width: drawableWidth,
+                           height: height,
+                           znear: 0,
+                           zfar: 1)
     }
 
     func draw(in view: MTKView) {
         guard
             let commandQueue,
-            let renderTexture,
             let drawable = view.currentDrawable
         else {
             return
@@ -358,18 +464,38 @@ final class Renderer: NSObject, MTKViewDelegate {
         let index = frameIndex % maxFramesInFlight
         let commandAllocator = commandAllocators[index]
         let commandBuffer = commandBuffers[index]
+        let argumentTable = argumentTables[index]
+        let renderTexture = renderTextures[index]
 
-        // The same allocator was last used maxFramesInFlight frames ago. Wait
-        // until the GPU has signaled that the old command buffer completed
-        // before resetting and reusing the allocator.
-        let waitValue = frameIndex >= maxFramesInFlight
-            ? UInt64(frameIndex - maxFramesInFlight + 1)
-            : 0
-        _ = frameEvent.wait(untilSignaledValue: waitValue, timeoutMS: 1000)
+        // A slot can be reused only after the queue signal placed after its
+        // previous commit has completed. Never continue after a timeout: doing
+        // so would let the CPU mutate resources that the GPU is still using.
+        let waitValue = frameCompletionValues[index]
+        if waitValue != 0,
+           !frameEvent.wait(untilSignaledValue: waitValue, timeoutMS: 1000) {
+            NSLog("Timed out waiting for GPU frame slot %d", index)
+            return
+        }
+
+        if traversalMode == .atlas {
+            let priorStatus = statusBuffers[index].contents().load(as: UInt32.self)
+            if priorStatus != lastAtlasStatus {
+                if priorStatus == 0 {
+                    NSLog("GPU atlas traversal diagnostics cleared")
+                } else {
+                    NSLog("GPU atlas traversal diagnostics: 0x%08x", priorStatus)
+                }
+                lastAtlasStatus = priorStatus
+            }
+            statusBuffers[index].contents().storeBytes(of: UInt32(0), as: UInt32.self)
+        }
 
         updateScene()
-        let result = atlas.build(cameraChart, 64)
+        let result = traversalMode == .atlas
+            ? atlas.buildAtlas(cameraChart, 64, 1, 32)
+            : atlas.build(cameraChart, 64)
         guard result == 0 else {
+            NSLog("GeometryCore scene build failed with error %d", result)
             return
         }
 
@@ -378,38 +504,62 @@ final class Renderer: NSObject, MTKViewDelegate {
         commandAllocator.reset()
         commandBuffer.beginCommandBuffer(allocator: commandAllocator)
 
-        argumentTable.setAddress(sceneBuffers[index].gpuAddress, index: 0)
-        argumentTable.setTexture(renderTexture.gpuResourceID, index: 0)
-
-        guard let encoder = commandBuffer.makeComputeCommandEncoder() else {
+        guard let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
             return
         }
 
-        encoder.setComputePipelineState(pipeline)
-        encoder.setArgumentTable(argumentTable)
+        let activePipeline = traversalMode == .atlas ? atlasPipeline! : pipeline!
+        computeEncoder.setComputePipelineState(activePipeline)
+        computeEncoder.setArgumentTable(argumentTable)
         
-        let width = drawable.texture.width
-        let height = drawable.texture.height
+        let width = renderTexture.width
+        let height = renderTexture.height
         
-        let threadWidth = pipeline.threadExecutionWidth
-        let threadHeight = max(1, pipeline.maxTotalThreadsPerThreadgroup / threadWidth)
+        let threadWidth = activePipeline.threadExecutionWidth
+        let threadHeight = max(1, activePipeline.maxTotalThreadsPerThreadgroup / threadWidth)
 
         let threadsPerGroup = MTLSize(width: threadWidth, height: threadHeight, depth: 1)
         let threadsPerGrid = MTLSize(width: width, height: height, depth: 1)
         
-        encoder.dispatchThreads(threadsPerGrid: threadsPerGrid, threadsPerThreadgroup: threadsPerGroup)
-        encoder.copy(sourceTexture: renderTexture, destinationTexture: drawable.texture)
+        computeEncoder.dispatchThreads(threadsPerGrid: threadsPerGrid,
+                                       threadsPerThreadgroup: threadsPerGroup)
+        computeEncoder.endEncoding()
 
-        encoder.endEncoding()
+        let renderPass = MTL4RenderPassDescriptor()
+        renderPass.colorAttachments[0].texture = drawable.texture
+        renderPass.colorAttachments[0].loadAction = .clear
+        renderPass.colorAttachments[0].storeAction = .store
+        renderPass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1)
+        guard let presentationEncoder = commandBuffer.makeRenderCommandEncoder(
+            descriptor: renderPass)
+        else {
+            return
+        }
+        // Metal 4 permits stages in separate encoders to overlap. Make the
+        // compute shader's texture writes visible before the presentation
+        // fragment shader samples that texture.
+        presentationEncoder.barrier(afterQueueStages: .dispatch,
+                                    beforeStages: .fragment,
+                                    visibilityOptions: .device)
+        presentationEncoder.setRenderPipelineState(presentationPipeline)
+        presentationEncoder.setArgumentTable(argumentTable, stages: .fragment)
+        presentationEncoder.setViewport(presentationViewport(for: drawable.texture))
+        presentationEncoder.drawPrimitives(primitiveType: .triangle,
+                                           vertexStart: 0,
+                                           vertexCount: 6)
+        presentationEncoder.endEncoding()
         
-        // Schedule the event signal, then close encoding and commit.
-        frameEventValue += 1
-        commandQueue.signalEvent(frameEvent, value: frameEventValue)
-
         commandBuffer.endCommandBuffer()
 
+        // MTL4 queue synchronization operations execute in enqueue order.
+        // The completion event and drawable signal must therefore be queued
+        // after the command buffer they cover has been committed.
         commandQueue.waitForDrawable(drawable)
         commandQueue.commit([commandBuffer])
+
+        frameEventValue += 1
+        frameCompletionValues[index] = frameEventValue
+        commandQueue.signalEvent(frameEvent, value: frameEventValue)
         commandQueue.signalDrawable(drawable)
         
         drawable.present()

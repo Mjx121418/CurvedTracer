@@ -33,6 +33,29 @@ final class GeometryCoreTests: XCTestCase {
         XCTAssertEqual(MemoryLayout<geo.Material>.size, 32)
         XCTAssertEqual(MemoryLayout<geo.PointLight>.size, 32)
         XCTAssertEqual(MemoryLayout<geo.ScenePacketHeader>.size, 128)
+        XCTAssertEqual(MemoryLayout<geo.AtlasPacketHeader>.size, 192)
+        XCTAssertEqual(MemoryLayout<geo.GPUChart>.size, 32)
+        XCTAssertEqual(MemoryLayout<geo.GPUPortal>.size, 96)
+    }
+
+    func testPortalAtlasSwiftInterop() {
+        var atlas = geo.Atlas()
+        atlas.start(0)
+        XCTAssertEqual(atlas.seed(1.2), 0)
+        let t: Float = 0.4
+        let c = cosh(t), s = sinh(t)
+        let boost: [Float] = [c,0,0,s, 0,1,0,0, 0,0,1,0, s,0,0,c]
+        XCTAssertEqual(atlas.addPortalPair(0, geo.vec3(-1,0,0), 0, 0.2, 1,
+                                           0, geo.vec3(1,0,0), 0, 0.2, 1, boost), 0)
+        XCTAssertEqual(atlas.portalCount(), 2)
+        atlas.setCamera(1, 1, geo.vec3(1,0,0), geo.vec3(0,1,0), geo.vec3(0,0,1))
+        let camera = atlas.cameraChartAt(0, geo.vec3(0,0,0), 1.0)
+        XCTAssertEqual(atlas.buildAtlas(Int32(camera), 32, 2, 64), 0)
+        let bytes = [UInt8](atlas.packetBytes())
+        XCTAssertEqual(bytes[0], 0x43)
+        XCTAssertEqual(bytes[1], 0x52)
+        XCTAssertEqual(bytes[2], 0x54)
+        XCTAssertEqual(bytes[3], 0x41)
     }
 
     func testAtlasBuildsAndFlattensThroughCxxInterop() throws {

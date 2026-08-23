@@ -287,7 +287,7 @@ enum SphericalScene {
     static func cell600(_ atlas: inout geo.Atlas) -> Int32 {
         let radius: Float = Float.pi / 2
         let ballCos: Float = 0.995
-        let cameraRadius: Float = Float.pi * 0.6
+        let cameraRadius: Float = Float.pi * 0.9
 
         atlas.start(1)   // S³
         let baseChart = atlas.seed(radius)
@@ -337,11 +337,21 @@ enum SphericalScene {
             }
         }
 
-        // Point lights at two tetrahedral 600-cell cell centers in chart 0.
-        _ = atlas.addLight(0, geo.vec3(0.2185080122, 0.2185080122, -0.2185080122),
-                           geo.vec3(1.00, 0.95, 0.80), 1.0)
-        _ = atlas.addLight(0, geo.vec3(-0.2185080122, -0.2185080122, 0.2185080122),
-                           geo.vec3(0.60, 0.70, 1.00), 0.6)
+        // One point light at the same local tetrahedral-cell-center position
+        // in 4 charts chosen as symmetrically as possible: the positive
+        // basis-vertex charts {e1, e2, e3, e4}, which form a regular
+        // tetrahedron inside the 16-cell formed by the 8 basis vertices of
+        // the 24-cell.
+        let lightPosition = geo.vec3(0.2185080122, 0.2185080122, -0.2185080122)
+        let lightColor = geo.vec3(1.00, 0.95, 0.80)
+        for (index, center) in centers.enumerated() {
+            let axisSum = abs(center.x) + abs(center.y) + abs(center.z) + abs(center.w)
+            let isPositiveBasis = center.x > 0.9 || center.y > 0.9
+                               || center.z > 0.9 || center.w > 0.9
+            if axisSum > 0.9 && axisSum < 1.1 && isPositiveBasis {
+                _ = atlas.addLight(chartIDs[index], lightPosition, lightColor, 1.0)
+            }
+        }
 
         atlas.setCamera(
             1.0,
@@ -358,7 +368,7 @@ enum SphericalScene {
             0.95,
             2.0,
             0.0,
-            0.6
+            0.0
         )
 
         // Put the camera at the center of a tetrahedral 600-cell cell instead

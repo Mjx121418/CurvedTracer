@@ -1,6 +1,6 @@
 # CONTRACT.md — C++ ⇄ Metal/Swift Seam
 
-**Status:** v7 — signed-w S³ disk charts, dynamic camera chart, camera movement/rotation, unified material specular, and intrinsic chart-radius/half-angle horizon fields.
+**Status:** v7 flat packets remain stable. Experimental v9 authored-atlas packets add GPU chart/portal traversal for orientable quotient spaces.
 **Owner:** C++ side maintains this file and the shared artifacts it describes. The Metal/Swift side must be able to code against this document alone **without reading C++ sources**. Any change requires both sides to agree (see §9).
 
 ---
@@ -15,7 +15,7 @@ This repository is a ray tracer for 3-dimensional spherical (S³) and hyperbolic
 | Render loop on GPU | Metal Shading Language (MSL) | Metal owner | Straight-ray casting, disk-chart hyperplane-section intersection, ambient reflection, shading |
 | App / pipeline | Swift + SwiftUI | Metal owner | App shell, Metal pipeline, buffer upload, views |
 
-**The scene is stored intrinsically** (§3): objects are hyperplane sections of open disk charts on S³, charts relate only by pairwise overlap data (transition matrices), and there is **no** anchor chart and **no** stored embedding coordinate. Each chart has a radius. For each frame, C++ flattens the visible region into a single **camera chart** and hands the Metal side one flat packet. **The renderer always works in one chart** (§7); it never sees the atlas, the transitions, or any model-space math.
+**The scene is stored intrinsically** (§3): objects are hyperplane sections of open disk charts on S³, charts relate by overlap data, and there is no stored embedding coordinate. The established v7 path flattens the visible region into one camera chart. The optional v9 path instead uploads authored charts and explicit portal transitions; the GPU follows those transitions while tracing.
 
 Three seams connect the sides; only (A) and (B) reach the Metal/Swift side, (C) is C++-internal:
 
@@ -46,6 +46,7 @@ Shared headers live under `Sources/include/GeometryCore/` inside the `GeometryCo
 | `Mobius.h` | no (host) | transition map (4×4), `apply/compose/inverse/applySurface` |
 | `Chart.h` | no (host) | `Chart` (with radius), `ChartObject`, `Atlas`, flattening/culling |
 | `Scene.h` | **yes** | POD structs for Seam B (canonical layout, §5) |
+| `AtlasScene.h` | **yes** | v9 authored-atlas packet, chart, and portal POD layouts |
 
 The Metal side `#include`s only `Math.h`, `Intersect.h`, `Scene.h` (and any other header marked shared). It never re-implements math; it composes the shared functions into control flow.
 
@@ -126,9 +127,12 @@ There is no separate `PLANE` kind. Old stereographic planes become hyperplane se
 
 **OPAQUE validity**: the boundary must be a sphere (not a hyperplane) and the solid side must be representable inside the chart disk. Exact host-side bounds are derived in the implementation spike; `Atlas::build` rejects any opaque boundary that does not lie strictly inside its home chart and inside the camera chart disk.
 
-### 3.4 Consistency = cocycle condition
+### 3.4 Overlap consistency and portal holonomy
 
-Unchanged from v3: every closed loop must compose to identity within tolerance. Island charts are rejected.
+Every closed loop made only from ordinary overlap edges must compose to
+identity within tolerance, and island charts are rejected. Explicit portal
+edges are excluded from that cocycle graph: their nontrivial loop products are
+the quotient's holonomy and are therefore permitted.
 
 ---
 
@@ -180,7 +184,7 @@ Fixed header total: **128 bytes**.
 | 16 | `up` | vec3 + pad | unit tangent, camera up |
 | 32 | `fwd` | vec3 + pad | unit tangent, into the scene |
 | 48 | `fovTan` | float | tan(vertical FOV / 2) |
-| 52 | `aspect` | float | width / height |
+| 52 | `aspect` | float | host camera-aspect hint; the app renderer uses its fixed output texture width / height |
 | 56 | `chartRadius` | float | intrinsic geodesic radius `R` of the camera chart; H³: `R = atanh(sin(r))`, S³: `R = r` |
 | 60 | `chartRadiusHalfAngle` | float | `tan(R/2)` for S³, `tanh(R/2)` for H³ |
 
@@ -241,6 +245,49 @@ These two fields are the camera-chart horizon data used for ray intersection and
 
 The augmented chart coordinate is `(x,w)` for both models: signed for S³, `+sqrt(1-|x|²)` for H³. A chart contains points with `w > cos(r)`. `PointLight.positionW` carries `w`.
 
+### 5.4 Authored-atlas packet (v9, experimental)
+
+`Atlas::buildAtlas` emits a separate packet type. It uses magic `0x41545243`
+and contract version 9 with this layout:
+
+```text
+AtlasPacket
+├── AtlasPacketHeader (192 B)
+├── charts[]           (32 B each)
+├── portals[]          (96 B each)
+├── objects[]          (32 B each, grouped by chart)
+├── materials[]        (32 B each)
+└── lights[]           (32 B each, grouped by chart)
+```
+
+Each directed portal stores its face equation, destination chart, inverse
+portal index, and orientation-preserving isometry. Portal edges are side
+identifications, not overlap edges, so they are excluded from ordinary
+reachability and cocycle validation. Overlap loops must still compose to
+identity.
+
+Primary, reflected, and shadow rays cross the nearest portal event. View rays
+are bounded by `maxChartHops` and the camera's intrinsic horizon. Light images
+are enumerated on the GPU with `maxLightHops` and `maxLightStates`. Bound
+exhaustion sets a writable `uint32` diagnostic in buffer slot 1.
+
+For numerical stability, every v9 ray segment is recentered at the canonical
+chart origin. A ray carries a radial direction and a chart-to-ray isometry;
+after crossing a portal `M`, a hit recentering `B` updates that isometry as
+`B * chartToRay * inverse(M)`. Intrinsic path distance is accumulated
+separately and is not reset by recentering.
+
+After each positive-distance portal event, the shader validates the new ray
+origin against every portal in the destination chart. If displaced portal
+collars overlap and the origin violates another face, the most strongly
+violated face is crossed immediately at zero additional path distance. Ties
+follow packet portal order, and every such reduction consumes the same
+`maxChartHops` budget as an ordinary portal crossing.
+
+The v9 limits are 256 charts, 1024 directed portals, 4096 objects, 256
+materials, 16 authored lights, 128 chart hops, four light hops, and 256 light
+states. The existing v7 packet and shader remain available unchanged.
+
 ---
 
 ## 6. C++ API (Seam B, Swift side)
@@ -273,6 +320,11 @@ public:
 
     void linkCharts(int a, int b, const float m_ab[16], bool safe);
     void link(int a, int b, const float m_ab[16], bool safe);             // alias
+
+    // Adds both directed sides of a face identification. m_ab maps A to B.
+    int addPortalPair(int chartA, const vec3& aA, float bA, float cA, int interiorSignA,
+                      int chartB, const vec3& aB, float bB, float cB, int interiorSignB,
+                      const float m_ab[16]);
 
     // kind: 0 = OPAQUE, 1 = MIRROR.
     // Object boundary in chart coordinates: a·x + b·sqrt(1 - |x|²) = c.
@@ -320,6 +372,10 @@ public:
     // Validate and flatten. Returns 0, or an error code below.
     int build(int cameraChart, int maxChartDepth);
 
+    // Validate and serialize the v9 authored atlas without CPU flattening.
+    int buildAtlas(int cameraChart, int maxChartHops,
+                   int maxLightHops, int maxLightStates);
+
     std::vector<uint8_t> packetBytes() const;
     int packetSize() const;
     const void* packetData() const;   // Swift-visible raw pointer for upload
@@ -330,7 +386,7 @@ public:
 
 If no material is authored, `build` emits one default white material. If no light is authored, `lightCount` is 0.
 
-**Error codes:** `0` OK; `1` island chart; `2` cocycle violation; `3` invalid object; `4` unknown camera chart; `5` capacity exceeded; `6` model/kind mismatch.
+**Error codes:** `0` OK; `1` island chart; `2` cocycle violation; `3` invalid object; `4` unknown camera chart; `5` capacity exceeded; `6` model/kind mismatch; `7` invalid portal/quotient definition; `8` atlas traversal configuration or quotient-specific capacity failure.
 
 ---
 
@@ -341,8 +397,11 @@ If no material is authored, `build` emits one default white material. If no ligh
 The camera is always at the chart origin. A pixel with NDC `(u,v) ∈ [0,1]²` has direction
 
 ```text
-d = normalize( fwd + right·(2u−1)·fovTan·aspect + up·(2v−1)·fovTan )
+d = normalize( fwd + right·(2u−1)·fovTan·outputAspect + up·(2v−1)·fovTan )
 ```
+
+The app defines `outputAspect = outputTextureWidth / outputTextureHeight` so
+window resizing cannot alter the camera projection or ray-tracing workload.
 
 - **H³**: the ray is `x(t) = t·d`, `t > ε` (`ε = 1e-4`), with `t = |x|`.
 - **S³**: the ray is `(x,w)(t) = (sin t · d, cos t)`, `t > ε`, where `t` is geodesic distance from the camera origin.

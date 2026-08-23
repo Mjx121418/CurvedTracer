@@ -143,6 +143,884 @@ float modelKappa(int modelKind) {
     return modelKind == MODEL_S3 ? 1.0f : -1.0f;
 }
 
+// --------------------------------------------------------------------------
+// CONTRACT v9: authored-atlas traversal. The v7 kernel later in this file
+// remains intact. Forward declarations keep both paths independent.
+// --------------------------------------------------------------------------
+float intrinsicDistanceFromHalfAngle(float halfAngle, float kappa);
+AmbientSurface decodeAmbientSurface(SceneObject obj, int modelKind);
+Roots solveQuadratic(float a, float b, float c);
+float4 liftPointMetric(float3 x, float w, float kappa);
+float ambientDot(float4 a, float4 b, float kappa);
+float4x4 identity4();
+float4x4 movePointToOrigin(float4 point, float kappa);
+int decodeFogMode(float encodedMode);
+float fogVisibility(float distance, float chartRadius, int fogMode,
+                    float fogStartFraction, float fogDensity,
+                    float exponentialBoundary);
+constant int ATLAS_PACKET_MAGIC = 0x41545243;
+constant int ATLAS_CONTRACT_VERSION = 9;
+constant int ATLAS_HEADER_SIZE = 192;
+constant int MAX_ATLAS_CHARTS = 256;
+constant int MAX_ATLAS_PORTALS = 1024;
+constant int MAX_ATLAS_HOPS = 128;
+constant int MAX_LIGHT_ROUTE_DEPTH = 4;
+constant bool ATLAS_SHADOWS_ENABLED = false;
+
+struct AtlasCameraGPU {
+    float4 position;
+    float4 right;
+    float4 up;
+    float4 fwd;
+    float fovTan;
+    float aspect;
+    float maxTraceDistance;
+    float maxTraceHalfAngle;
+    int chartId;
+    int pad0;
+    int pad1;
+    int pad2;
+};
+
+struct AtlasControlsGPU {
+    RenderControls shading;
+    int maxChartHops;
+    int maxLightHops;
+    int maxLightStates;
+    int pad0;
+};
+
+struct AtlasCountsGPU {
+    int chartCount;
+    int portalCount;
+    int objectCount;
+    int materialCount;
+    int lightCount;
+    int pad0;
+    int pad1;
+    int pad2;
+};
+
+struct AtlasHeaderGPU {
+    PacketMeta meta;
+    AtlasCameraGPU camera;
+    AtlasControlsGPU controls;
+    AtlasCountsGPU counts;
+};
+
+struct AtlasChartGPU {
+    float angularRadius;
+    float intrinsicRadius;
+    int firstPortal;
+    int portalCount;
+    int firstObject;
+    int objectCount;
+    int firstLight;
+    int lightCount;
+};
+
+struct AtlasPortalGPU {
+    float4x4 toNeighbor;
+    packed_float3 a;
+    float b;
+    float c;
+    int neighborChart;
+    int reversePortal;
+    int interiorSign;
+};
+
+struct AtlasEvent {
+    bool valid;
+    bool portal;
+    int index;
+    float distance;
+    float4 point;
+    float4 tangent;
+    float4 normal;
+};
+
+struct AtlasSurfaceRoot {
+    bool valid;
+    float halfAngle;
+};
+
+float atlasHalfAngle(float distance, float kappa) {
+    return kappa > 0.0f ? tan(0.5f * distance) : tanh(0.5f * distance);
+}
+
+AtlasSurfaceRoot atlasNearestSurfaceRoot(AmbientSurface surface,
+                                         float3 rayDirection,
+                                         float maximumHalfAngle,
+                                         float minimumHalfAngle,
+                                         float kappa) {
+    AtlasSurfaceRoot nearest = {false, INF};
+
+    // The ray starts at e4. This is the same stable quadratic used by the
+    // legacy flattened tracer after every reflection.
+    float positionProjection = kappa * surface.n.w;
+    float tangentProjection = dot(surface.n.xyz, rayDirection);
+    float quadraticA = -kappa * (positionProjection + surface.h);
+    float quadraticB = 2.0f * tangentProjection;
+    float quadraticC = positionProjection - surface.h;
+    Roots roots = solveQuadratic(quadraticA, quadraticB, quadraticC);
+
+    for (int i = 0; i < roots.count; ++i) {
+        float halfAngle = i == 0 ? roots.r0 : roots.r1;
+        if (!isfinite(halfAngle) ||
+            halfAngle <= minimumHalfAngle ||
+            halfAngle >= maximumHalfAngle ||
+            halfAngle >= nearest.halfAngle) {
+            continue;
+        }
+
+        float halfAngleSquared = halfAngle * halfAngle;
+        float denominator = 1.0f + kappa * halfAngleSquared;
+        if (denominator <= EPS)
+            continue;
+
+        nearest.valid = true;
+        nearest.halfAngle = halfAngle;
+    }
+
+    return nearest;
+}
+
+float atlasSurfaceTangentProjection(AmbientSurface surface,
+                                    float3 rayDirection,
+                                    float halfAngle,
+                                    float kappa) {
+    float halfAngleSquared = halfAngle * halfAngle;
+    float inverseDenominator = 1.0f
+                             / (1.0f + kappa * halfAngleSquared);
+    float sine = 2.0f * halfAngle * inverseDenominator;
+    float cosine = (1.0f - kappa * halfAngleSquared)
+                 * inverseDenominator;
+    return cosine * dot(surface.n.xyz, rayDirection)
+         - sine * surface.n.w;
+}
+
+AtlasEvent atlasMaterializeSurfaceEvent(AmbientSurface surface,
+                                        float3 rayDirection,
+                                        float halfAngle,
+                                        float kappa,
+                                        bool isPortal,
+                                        int index) {
+    AtlasEvent event;
+    event.valid = false;
+    event.portal = isPortal;
+    event.index = index;
+    event.distance = INF;
+
+    float halfAngleSquared = halfAngle * halfAngle;
+    float denominator = 1.0f + kappa * halfAngleSquared;
+    if (denominator <= EPS)
+        return event;
+
+    float sine = 2.0f * halfAngle / denominator;
+    float cosine = (1.0f - kappa * halfAngleSquared) / denominator;
+    float4 hitPoint = float4(sine * rayDirection, cosine);
+    float4 hitTangent = float4(cosine * rayDirection,
+                               -kappa * sine);
+    event.distance = intrinsicDistanceFromHalfAngle(halfAngle, kappa);
+    event.point = hitPoint;
+    event.tangent = hitTangent;
+
+    // Portal traversal needs the point and tangent, but never the normal.
+    if (isPortal) {
+        event.valid = true;
+        event.normal = float4(0.0f);
+        return event;
+    }
+
+    float4 hitNormal = surface.n - kappa * surface.h * hitPoint;
+    float normalSquared = ambientDot(hitNormal, hitNormal, kappa);
+    if (normalSquared <= EPS * EPS)
+        return event;
+
+    event.valid = true;
+    event.normal = hitNormal * rsqrt(normalSquared);
+    return event;
+}
+
+AmbientSurface atlasPortalSurface(AtlasPortalGPU portal, int modelKind) {
+    SceneObject face;
+    face.a = portal.a;
+    face.b = portal.b;
+    face.c = portal.c;
+    face.kind = 0;
+    face.colorIdx = 0;
+    face.pad0 = 0;
+    return decodeAmbientSurface(face, modelKind);
+}
+
+AtlasEvent atlasNearest(float3 rayDirection,
+                        float4x4 chartToRay,
+                        int chartId,
+                        float remainingDistance,
+                        float minimumObjectDistance,
+                        int modelKind,
+                        device const AtlasChartGPU* charts,
+                        device const AtlasPortalGPU* portals,
+                        device const SceneObject* objects) {
+    float kappa = modelKappa(modelKind);
+    AtlasEvent nearest;
+    nearest.valid = false;
+    nearest.portal = false;
+    nearest.index = -1;
+    nearest.distance = INF;
+    float nearestHalfAngle = INF;
+    AmbientSurface nearestSurface;
+
+    float maximumHalfAngle = atlasHalfAngle(remainingDistance, kappa);
+    float minimumObjectHalfAngle = atlasHalfAngle(minimumObjectDistance,
+                                                  kappa);
+
+    AtlasChartGPU chart = charts[chartId];
+    for (int i = 0; i < chart.objectCount; ++i) {
+        int objectIndex = chart.firstObject + i;
+        AmbientSurface surface = decodeAmbientSurface(objects[objectIndex],
+                                                       modelKind);
+        surface.n = chartToRay * surface.n;
+        AtlasSurfaceRoot root = atlasNearestSurfaceRoot(
+            surface,
+            rayDirection,
+            maximumHalfAngle,
+            minimumObjectHalfAngle,
+            kappa);
+        if (root.valid && root.halfAngle < nearestHalfAngle) {
+            nearest.valid = true;
+            nearest.index = objectIndex;
+            nearest.portal = false;
+            nearestHalfAngle = root.halfAngle;
+            nearestSurface = surface;
+        }
+    }
+
+    for (int i = 0; i < chart.portalCount; ++i) {
+        int portalIndex = chart.firstPortal + i;
+        AtlasPortalGPU portal = portals[portalIndex];
+        AmbientSurface surface = atlasPortalSurface(portal, modelKind);
+        surface.n = chartToRay * surface.n;
+        float modelOrientation = modelKind == MODEL_S3 ? 1.0f : -1.0f;
+        AtlasSurfaceRoot root = atlasNearestSurfaceRoot(
+            surface,
+            rayDirection,
+            maximumHalfAngle,
+            0.0f,
+            kappa);
+        if (!root.valid)
+            continue;
+
+        float crossingDirection = modelOrientation
+                                * float(portal.interiorSign)
+                                * atlasSurfaceTangentProjection(
+                                    surface,
+                                    rayDirection,
+                                    root.halfAngle,
+                                    kappa);
+        if (crossingDirection <= EPS)
+            continue;
+
+        float halfAngleTolerance = nearest.valid
+            ? 0.5f
+              * (1.0f + kappa * nearestHalfAngle * nearestHalfAngle)
+              * EPS
+            : 0.0f;
+        bool isCloser = !nearest.valid
+                     || root.halfAngle
+                        < nearestHalfAngle - halfAngleTolerance;
+        bool winsTie = nearest.valid
+                    && fabs(root.halfAngle - nearestHalfAngle)
+                       <= halfAngleTolerance
+                    && (!nearest.portal || portalIndex < nearest.index);
+        if (isCloser || winsTie) {
+            nearest.valid = true;
+            nearest.index = portalIndex;
+            nearest.portal = true;
+            nearestHalfAngle = root.halfAngle;
+            nearestSurface = surface;
+        }
+    }
+
+    if (!nearest.valid)
+        return nearest;
+
+    return atlasMaterializeSurfaceEvent(nearestSurface,
+                                        rayDirection,
+                                        nearestHalfAngle,
+                                        kappa,
+                                        nearest.portal,
+                                        nearest.index);
+}
+
+float4 atlasInverseIsometryPoint(float4x4 transform,
+                                 float4 point,
+                                 float kappa) {
+    // For S3 this is transpose(transform). For H3 it is
+    // G * transpose(transform) * G, where G = diag(1, 1, 1, -1).
+    float4 metricPoint = float4(point.xyz, kappa * point.w);
+    float4 inversePoint = transpose(transform) * metricPoint;
+    inversePoint.w *= kappa;
+    return inversePoint;
+}
+
+bool atlasAdvancePortal(thread float3& rayDirection,
+                        thread float4x4& chartToRay,
+                        thread int& chartId,
+                        AtlasEvent event,
+                        int maxHops,
+                        thread int& portalHops,
+                        device const AtlasChartGPU* charts,
+                        device const AtlasPortalGPU* portals,
+                        float kappa,
+                        thread uint& errorBits) {
+    if (portalHops >= maxHops) {
+        errorBits |= 2u;
+        return false;
+    }
+    ++portalHops;
+
+    AtlasPortalGPU portal = portals[event.index];
+    AtlasPortalGPU reversePortal = portals[portal.reversePortal];
+    float4x4 recenter = movePointToOrigin(event.point, kappa);
+    float4 recenteredTangent = recenter * event.tangent;
+    float directionSquared = dot(recenteredTangent.xyz,
+                                 recenteredTangent.xyz);
+    float4x4 nextChartToRay = recenter
+                            * chartToRay
+                            * reversePortal.toNeighbor;
+    if (!all(isfinite(recenteredTangent)) ||
+        !all(isfinite(nextChartToRay[0])) ||
+        !all(isfinite(nextChartToRay[1])) ||
+        !all(isfinite(nextChartToRay[2])) ||
+        !all(isfinite(nextChartToRay[3])) ||
+        directionSquared <= EPS * EPS) {
+        errorBits |= 16u;
+        return false;
+    }
+
+    rayDirection = recenteredTangent.xyz * rsqrt(directionSquared);
+    chartToRay = nextChartToRay;
+    chartId = portal.neighborChart;
+
+    // Outward-displaced portal collars overlap near domain edges and
+    // vertices. A face pairing puts the origin inside its reverse face, but
+    // it can put it beyond another face. Resolve those additional crossings
+    // immediately: they change only the chart representative, not the ray's
+    // accumulated geometric distance.
+    int modelKind = kappa > 0.0f ? MODEL_S3 : MODEL_H3;
+    float modelOrientation = modelKind == MODEL_S3 ? 1.0f : -1.0f;
+    float4 localOrigin = atlasInverseIsometryPoint(
+        chartToRay,
+        float4(0.0f, 0.0f, 0.0f, 1.0f),
+        kappa);
+    if (!all(isfinite(localOrigin))) {
+        errorBits |= 16u;
+        return false;
+    }
+
+    while (true) {
+        AtlasChartGPU chart = charts[chartId];
+        int selectedPortal = -1;
+        float strongestViolation = 0.0f;
+
+        for (int i = 0; i < chart.portalCount; ++i) {
+            int portalIndex = chart.firstPortal + i;
+            AtlasPortalGPU candidate = portals[portalIndex];
+            AmbientSurface surface = atlasPortalSurface(candidate,
+                                                        modelKind);
+            float violation = modelOrientation
+                            * float(candidate.interiorSign)
+                            * (ambientDot(surface.n, localOrigin, kappa)
+                               - surface.h);
+            float tangentNormalSquared = ambientDot(surface.n,
+                                                     surface.n,
+                                                     kappa)
+                                       - kappa * surface.h * surface.h;
+            float normalizedViolation = violation
+                                      / sqrt(max(abs(tangentNormalSquared),
+                                                 EPS * EPS));
+            if (normalizedViolation > EPS &&
+                normalizedViolation > strongestViolation) {
+                selectedPortal = portalIndex;
+                strongestViolation = normalizedViolation;
+            }
+        }
+
+        if (selectedPortal < 0)
+            return true;
+        if (portalHops >= maxHops) {
+            errorBits |= 2u;
+            return false;
+        }
+        ++portalHops;
+
+        AtlasPortalGPU extraPortal = portals[selectedPortal];
+        AtlasPortalGPU extraReverse = portals[extraPortal.reversePortal];
+        nextChartToRay = chartToRay * extraReverse.toNeighbor;
+        if (!all(isfinite(nextChartToRay[0])) ||
+            !all(isfinite(nextChartToRay[1])) ||
+            !all(isfinite(nextChartToRay[2])) ||
+            !all(isfinite(nextChartToRay[3]))) {
+            errorBits |= 16u;
+            return false;
+        }
+        float4 nextLocalOrigin = extraPortal.toNeighbor * localOrigin;
+        if (!all(isfinite(nextLocalOrigin))) {
+            errorBits |= 16u;
+            return false;
+        }
+        localOrigin = nextLocalOrigin;
+        chartToRay = nextChartToRay;
+        chartId = extraPortal.neighborChart;
+    }
+}
+
+bool atlasOccluded(float3 rayDirection,
+                   float4x4 chartToRay,
+                   int chartId,
+                   float distance,
+                   int maxHops,
+                   int modelKind,
+                   device const AtlasChartGPU* charts,
+                   device const AtlasPortalGPU* portals,
+                   device const SceneObject* objects,
+                   thread uint& errorBits) {
+    float kappa = modelKappa(modelKind);
+    float remainingDistance = distance;
+    int portalHops = 0;
+
+    while (true) {
+        AtlasEvent event = atlasNearest(rayDirection,
+                                        chartToRay,
+                                        chartId,
+                                        remainingDistance,
+                                        SHADOW_HIT_EPS,
+                                        modelKind,
+                                        charts,
+                                        portals,
+                                        objects);
+        if (!event.valid)
+            return false;
+        if (!event.portal)
+            return true;
+
+        remainingDistance -= event.distance;
+        if (!atlasAdvancePortal(rayDirection,
+                                chartToRay,
+                                chartId,
+                                event,
+                                maxHops,
+                                portalHops,
+                                charts,
+                                portals,
+                                kappa,
+                                errorBits)) {
+            return true;
+        }
+    }
+}
+
+bool atlasLightVector(float4 point,
+                      float4 lightPoint,
+                      float kappa,
+                      thread float& distance,
+                      thread float4& direction) {
+    float cosine = kappa > 0.0f
+        ? clamp(ambientDot(point, lightPoint, kappa), -1.0f, 1.0f)
+        : max(1.0f, -ambientDot(point, lightPoint, kappa));
+    distance = kappa > 0.0f ? acos(cosine) : acosh(cosine);
+    float sine = kappa > 0.0f ? sin(distance) : sinh(distance);
+    if (sine <= EPS)
+        return false;
+
+    direction = (lightPoint - cosine * point) / sine;
+    return all(isfinite(direction));
+}
+
+DirectLighting atlasLighting(float4x4 hitChartToRay,
+                             float3 incoming,
+                             float3 normal,
+                             int startChart,
+                             float horizon,
+                             float falloffK,
+                             int modelKind,
+                             int maxHops,
+                             int maxLightHops,
+                             int maxLightStates,
+                             device const AtlasChartGPU* charts,
+                             device const AtlasPortalGPU* portals,
+                             device const SceneObject* objects,
+                             device const PointLight* lights,
+                             thread uint& errorBits) {
+    DirectLighting result;
+    result.diffuse = float3(0.0f);
+    result.specular = float3(0.0f);
+    float kappa = modelKappa(modelKind);
+
+    // Iterative depth-first traversal avoids recursion in Metal. Every matrix
+    // maps points from the chart at this depth back into the hit's chart.
+    float4x4 chartToStart[MAX_LIGHT_ROUTE_DEPTH + 1];
+    int chartStack[MAX_LIGHT_ROUTE_DEPTH + 1];
+    int nextPortal[MAX_LIGHT_ROUTE_DEPTH + 1];
+    int incomingReverse[MAX_LIGHT_ROUTE_DEPTH + 1];
+
+    chartToStart[0] = identity4();
+    chartStack[0] = startChart;
+    nextPortal[0] = 0;
+    incomingReverse[0] = -1;
+
+    int depth = 0;
+    int stateCount = 1;
+    while (depth >= 0) {
+        AtlasChartGPU chart = charts[chartStack[depth]];
+        if (nextPortal[depth] == 0) {
+            for (int i = 0; i < chart.lightCount; ++i) {
+                PointLight light = lights[chart.firstLight + i];
+                float4 localLight = liftPointMetric(float3(light.position),
+                                                    light.positionW,
+                                                    kappa);
+                float4 lightPoint = hitChartToRay
+                                  * chartToStart[depth]
+                                  * localLight;
+                float lightDistance;
+                float4 ambientLightDirection;
+                if (!atlasLightVector(float4(0, 0, 0, 1),
+                                      lightPoint,
+                                      kappa,
+                                      lightDistance,
+                                      ambientLightDirection) ||
+                    lightDistance >= horizon) {
+                    continue;
+                }
+                float directionSquared = dot(ambientLightDirection.xyz,
+                                             ambientLightDirection.xyz);
+                if (directionSquared <= EPS * EPS)
+                    continue;
+                float3 lightDirection = ambientLightDirection.xyz
+                                      * rsqrt(directionSquared);
+
+                if (ATLAS_SHADOWS_ENABLED &&
+                    atlasOccluded(lightDirection,
+                                  hitChartToRay,
+                                  startChart,
+                                  lightDistance,
+                                  maxHops,
+                                  modelKind,
+                                  charts,
+                                  portals,
+                                  objects,
+                                  errorBits)) {
+                    continue;
+                }
+
+                float normalLight = max(dot(normal, lightDirection), 0.0f);
+                if (normalLight <= 0.0f)
+                    continue;
+
+                float radialSine = kappa > 0.0f
+                    ? sin(lightDistance)
+                    : sinh(lightDistance);
+                float attenuation = 1.0f
+                    / (1.0f + max(falloffK, 0.0f)
+                       * radialSine * radialSine);
+                float3 lightColor = float3(light.color.x,
+                                           light.color.y,
+                                           light.color.z);
+                float3 irradiance = lightColor
+                                  * light.intensity
+                                  * attenuation;
+                result.diffuse += irradiance * normalLight;
+
+                float3 viewDirection = -incoming;
+                float3 halfway = viewDirection + lightDirection;
+                float halfwaySquared = dot(halfway, halfway);
+                if (halfwaySquared > EPS) {
+                    halfway *= rsqrt(halfwaySquared);
+                    float specularLobe = pow(max(dot(normal, halfway),
+                                                 0.0f),
+                                             32.0f);
+                    result.specular += irradiance
+                                     * specularLobe
+                                     * normalLight;
+                }
+            }
+        }
+
+        if (depth >= maxLightHops ||
+            nextPortal[depth] >= chart.portalCount) {
+            --depth;
+            continue;
+        }
+
+        int portalIndex = chart.firstPortal + nextPortal[depth]++;
+        if (portalIndex == incomingReverse[depth])
+            continue;
+        if (stateCount++ >= maxLightStates) {
+            errorBits |= 4u;
+            break;
+        }
+
+        AtlasPortalGPU portal = portals[portalIndex];
+        int nextDepth = depth + 1;
+        chartStack[nextDepth] = portal.neighborChart;
+        nextPortal[nextDepth] = 0;
+        incomingReverse[nextDepth] = portal.reversePortal;
+        chartToStart[nextDepth] = chartToStart[depth]
+                                * portals[portal.reversePortal].toNeighbor;
+        depth = nextDepth;
+    }
+
+    return result;
+}
+
+kernel void raytraceAtlas(device const uchar* packet [[buffer(0)]],
+                          device atomic_uint* status [[buffer(1)]],
+                          texture2d<float, access::write> output [[texture(0)]],
+                          uint2 pixel [[thread_position_in_grid]]) {
+    if (pixel.x >= output.get_width() || pixel.y >= output.get_height())
+        return;
+
+    device const AtlasHeaderGPU* header =
+        reinterpret_cast<device const AtlasHeaderGPU*>(packet);
+    uint errors = 0;
+
+    if (header->meta.magic != ATLAS_PACKET_MAGIC ||
+        header->meta.contractVersion != ATLAS_CONTRACT_VERSION ||
+        header->meta.packetHeaderSize != ATLAS_HEADER_SIZE) {
+        errors |= 1u;
+    }
+
+    int chartCount = header->counts.chartCount;
+    int portalCount = header->counts.portalCount;
+    int objectCount = header->counts.objectCount;
+    int materialCount = header->counts.materialCount;
+    int lightCount = header->counts.lightCount;
+    if (chartCount <= 0 || chartCount > MAX_ATLAS_CHARTS ||
+        portalCount < 0 || portalCount > MAX_ATLAS_PORTALS ||
+        objectCount < 0 || objectCount > 4096 ||
+        materialCount <= 0 || materialCount > 256 ||
+        lightCount < 0 || lightCount > 16) {
+        errors |= 1u;
+    }
+
+    if (header->camera.chartId < 0 ||
+        header->camera.chartId >= chartCount ||
+        header->controls.maxChartHops <= 0 ||
+        header->controls.maxChartHops > MAX_ATLAS_HOPS ||
+        header->controls.maxLightHops < 0 ||
+        header->controls.maxLightHops > MAX_LIGHT_ROUTE_DEPTH ||
+        header->controls.maxLightStates <= 0 ||
+        header->controls.maxLightStates > 256) {
+        errors |= 1u;
+    }
+
+    if (errors != 0) {
+        atomic_fetch_or_explicit(status, errors, memory_order_relaxed);
+        output.write(float4(1, 0, 1, 1), pixel);
+        return;
+    }
+
+    uint offset = ATLAS_HEADER_SIZE;
+    device const AtlasChartGPU* charts =
+        reinterpret_cast<device const AtlasChartGPU*>(packet + offset);
+    offset += uint(chartCount) * uint(sizeof(AtlasChartGPU));
+    device const AtlasPortalGPU* portals =
+        reinterpret_cast<device const AtlasPortalGPU*>(packet + offset);
+    offset += uint(portalCount) * uint(sizeof(AtlasPortalGPU));
+    device const SceneObject* objects =
+        reinterpret_cast<device const SceneObject*>(packet + offset);
+    offset += uint(objectCount) * uint(sizeof(SceneObject));
+    device const Material* materials =
+        reinterpret_cast<device const Material*>(packet + offset);
+    offset += uint(materialCount) * uint(sizeof(Material));
+    device const PointLight* lights =
+        reinterpret_cast<device const PointLight*>(packet + offset);
+
+    float2 uv = (float2(pixel) + 0.5f)
+              / float2(output.get_width(), output.get_height());
+    float2 screen = 2.0f * uv - 1.0f;
+    screen.y = -screen.y;
+    float renderAspect = float(output.get_width())
+                       / float(output.get_height());
+
+    float kappa = modelKappa(header->controls.shading.modelKind);
+    float4 cameraTangent = header->camera.fwd
+                         + screen.x
+                           * renderAspect
+                           * header->camera.fovTan
+                           * header->camera.right
+                         + screen.y
+                           * header->camera.fovTan
+                           * header->camera.up;
+    float4x4 chartToRay = movePointToOrigin(header->camera.position,
+                                            kappa);
+    float4 recenteredTangent = chartToRay * cameraTangent;
+    float directionSquared = dot(recenteredTangent.xyz,
+                                 recenteredTangent.xyz);
+    if (!isfinite(directionSquared) || directionSquared <= EPS * EPS) {
+        atomic_fetch_or_explicit(status, 16u, memory_order_relaxed);
+        output.write(float4(1, 0, 1, 1), pixel);
+        return;
+    }
+    float3 rayDirection = recenteredTangent.xyz * rsqrt(directionSquared);
+
+    int chartId = header->camera.chartId;
+    float remainingDistance = header->camera.maxTraceDistance;
+    float pathDistance = 0.0f;
+    float3 throughput = float3(1.0f);
+    float3 radiance = float3(0.0f);
+
+    int fogMode = decodeFogMode(header->controls.shading.fogMode);
+    float fogDensity = max(header->controls.shading.fogDensity, 0.0f);
+    float pathVisibility = 1.0f;
+    float exponentialBoundary =
+        fogMode == FOG_EXPONENTIAL &&
+        fogDensity * header->camera.maxTraceDistance >= 1e-3f
+            ? exp(-fogDensity * header->camera.maxTraceDistance)
+            : 0.0f;
+    float3 fogColor = float3(header->controls.shading.ambient);
+
+    int portalHops = 0;
+    int maxBounces = clamp(header->controls.shading.maxBounces,
+                           0,
+                           MAX_BOUNCES);
+    for (int bounce = 0; bounce <= maxBounces;) {
+        AtlasEvent event = atlasNearest(
+            rayDirection,
+            chartToRay,
+            chartId,
+            remainingDistance,
+            0.5f * SELF_HIT_EPS,
+            header->controls.shading.modelKind,
+            charts,
+            portals,
+            objects);
+        if (!event.valid) {
+            radiance += throughput * fogColor;
+            break;
+        }
+
+        remainingDistance -= event.distance;
+        pathDistance += event.distance;
+        float nextVisibility = fogVisibility(
+            pathDistance,
+            header->camera.maxTraceDistance,
+            fogMode,
+            header->controls.shading.fogStartFraction,
+            fogDensity,
+            exponentialBoundary);
+        float segmentVisibility = pathVisibility > EPS
+            ? clamp(nextVisibility / pathVisibility, 0.0f, 1.0f)
+            : 0.0f;
+        radiance += throughput * fogColor * (1.0f - segmentVisibility);
+        throughput *= segmentVisibility;
+        pathVisibility = nextVisibility;
+        if (pathVisibility <= EPS)
+            break;
+
+        if (event.portal) {
+            if (!atlasAdvancePortal(rayDirection,
+                                    chartToRay,
+                                    chartId,
+                                    event,
+                                    header->controls.maxChartHops,
+                                    portalHops,
+                                    charts,
+                                    portals,
+                                    kappa,
+                                    errors)) {
+                break;
+            }
+            continue;
+        }
+
+        SceneObject object = objects[event.index];
+        if (object.colorIdx < 0 || object.colorIdx >= materialCount) {
+            errors |= 16u;
+            break;
+        }
+        Material material = materials[object.colorIdx];
+
+        if (object.kind == OBJECT_OPAQUE_SPHERE) {
+            float4x4 recenter = movePointToOrigin(event.point, kappa);
+            float4x4 hitChartToRay = recenter * chartToRay;
+            float3 hitIncoming = (recenter * event.tangent).xyz;
+            float3 shadingNormal = (recenter * event.normal).xyz;
+            float incomingSquared = dot(hitIncoming, hitIncoming);
+            float normalSquared = dot(shadingNormal, shadingNormal);
+            if (incomingSquared <= EPS * EPS || normalSquared <= EPS * EPS) {
+                errors |= 16u;
+                break;
+            }
+            hitIncoming *= rsqrt(incomingSquared);
+            shadingNormal *= rsqrt(normalSquared);
+            if (dot(shadingNormal, -hitIncoming) < 0.0f)
+                shadingNormal = -shadingNormal;
+
+            DirectLighting direct = atlasLighting(
+                hitChartToRay,
+                hitIncoming,
+                shadingNormal,
+                chartId,
+                header->camera.maxTraceDistance,
+                header->controls.shading.falloffK,
+                header->controls.shading.modelKind,
+                header->controls.maxChartHops,
+                header->controls.maxLightHops,
+                header->controls.maxLightStates,
+                charts,
+                portals,
+                objects,
+                lights,
+                errors);
+            radiance += throughput
+                      * (material.color.rgb
+                         * (header->controls.shading.ambient
+                            + direct.diffuse)
+                         + material.specular.rgb
+                           * material.specular.a
+                           * direct.specular);
+            break;
+        }
+
+        if (object.kind == OBJECT_MIRROR_SPHERE && bounce < maxBounces) {
+            throughput *= material.specular.rgb
+                        * material.specular.a
+                        * header->controls.shading.bounceAttenuation;
+            float4 reflectedTangent = event.tangent
+                                    - 2.0f
+                                      * ambientDot(event.tangent,
+                                                   event.normal,
+                                                   kappa)
+                                      * event.normal;
+            float4x4 recenter = movePointToOrigin(event.point, kappa);
+            float3 recenteredReflection = (recenter
+                                           * reflectedTangent).xyz;
+            float reflectionSquared = dot(recenteredReflection,
+                                          recenteredReflection);
+            if (reflectionSquared <= EPS * EPS) {
+                errors |= 16u;
+                break;
+            }
+            rayDirection = recenteredReflection * rsqrt(reflectionSquared);
+            chartToRay = recenter * chartToRay;
+            ++bounce;
+            continue;
+        }
+
+        radiance += throughput * fogColor;
+        break;
+    }
+
+    if (errors != 0) {
+        atomic_fetch_or_explicit(status, errors, memory_order_relaxed);
+        radiance = float3(1, 0, 1);
+    }
+
+    output.write(float4(clamp(radiance, 0.0f, 1.0f), 1.0f), pixel);
+}
+
 float ambientDot(float4 a, float4 b, float kappa) {
     return dot(a.xyz, b.xyz) + kappa * a.w * b.w;
 }
@@ -617,12 +1495,12 @@ DirectLighting computeDirectLighting(Hit hit,
         if (NoL <= 0.0f)
             continue;
 
-        if (isShadowed(light,
+        /*if (isShadowed(light,
                        frame.sceneTransform,
                        modelKind,
                        objects,
                        objectCount))
-            continue;
+            continue;*/
 
         float attenuation = 1.0f /
             (1.0f + max(falloffK, 0.0f)
@@ -702,11 +1580,12 @@ kernel void raytrace(device const uchar* packet [[buffer(0)]],
     float2 uv = (float2(pixel) + 0.5f) / float2(width, height);
     float2 screen = 2.0f * uv - 1.0f;
     screen.y = -screen.y;
+    float renderAspect = float(width) / float(height);
 
     float3 rayDirection = normalize(
         header->camera.fwd.xyz
         + screen.x
-            * header->camera.aspect
+            * renderAspect
             * header->camera.fovTan
             * header->camera.right.xyz
         + screen.y

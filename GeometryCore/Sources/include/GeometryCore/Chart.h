@@ -3,6 +3,7 @@
 // this header is never included by Metal shaders.
 #include "GeometryCore/Mobius.h"
 #include "GeometryCore/Scene.h"
+#include "GeometryCore/AtlasScene.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -64,6 +65,17 @@ struct Chart {
     std::vector<int> lightIds;
 };
 
+struct ChartPortal {
+    int chartId = -1;
+    int neighborId = -1;
+    vec3 a;
+    float b = 0.0f;
+    float c = 0.0f;
+    int interiorSign = 1;
+    int reversePortal = -1;
+    Mobius toNeighbor;
+};
+
 class Atlas {
 public:
     Atlas();
@@ -75,6 +87,9 @@ public:
     int seed(float radius);            // anchorless base chart; returns 0
     int addChart(float radius, int fromChart, const float m[16], bool safe);   // returns new chart id
     void linkCharts(int a, int b, const float m_ab[16], bool safe);
+    int addPortalPair(int chartA, const vec3& aA, float bA, float cA, int interiorSignA,
+                      int chartB, const vec3& aB, float bB, float cB, int interiorSignB,
+                      const float m_ab[16]);
 
     // Shorter aliases.
     int add(float radius, int fromChart, const float m[16], bool safe) { return addChart(radius, fromChart, m, safe); }
@@ -125,8 +140,11 @@ public:
 
     // Validate and flatten.  Returns 0, or CONTRACT.md §6 error code:
     // 1 island chart, 2 cocycle violation, 3 invalid object, 4 unknown camera chart,
-    // 5 capacity exceeded, 6 model/kind mismatch.
+    // 5 capacity exceeded, 6 model/kind mismatch, 7 invalid portal,
+    // 8 atlas traversal configuration/capacity failure.
     int build(int cameraChart, int maxChartDepth);
+    int buildAtlas(int cameraChart, int maxChartHops, int maxLightHops, int maxLightStates);
+    int portalCount() const { return static_cast<int>(portals_.size()); }
 
     const std::vector<uint8_t>& packet() const { return packet_; }
     // Swift-friendly packet access: Swift C++ interop hides methods returning
@@ -143,6 +161,7 @@ private:
     std::vector<Chart> charts_;
     std::vector<ChartObject> objects_;
     std::vector<ChartLight> lights_;
+    std::vector<ChartPortal> portals_;
     std::vector<Material> materials_;
     int cameraChartId_ = -1;
     int cameraChartFrom_ = 0;
@@ -190,6 +209,7 @@ private:
     CameraPlacement resolveCameraPlacementAugmented(int startChart, const vec4& candidateAugmented) const;
     static Mobius edgeTransition(int from, int to, const UEdge& e);
     bool mobiusClose(const Mobius& a, const Mobius& b, float tol) const;
+    bool validPortalIsometry(const Mobius& m) const;
 };
 
 } // namespace geo

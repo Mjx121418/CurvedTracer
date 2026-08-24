@@ -4,6 +4,7 @@
 //
 
 import AppKit
+import Combine
 import Darwin
 import GeometryCore
 import MetalKit
@@ -21,6 +22,103 @@ enum TraversalMode: String, CaseIterable, Identifiable {
     case flat = "Flat CPU"
     case atlas = "GPU Atlas"
     var id: Self { self }
+}
+
+enum HyperbolicAtlasVariant: String, CaseIterable, Identifiable {
+    case oneChart = "Seifert-Weber (1 chart)"
+    case multiChart = "Seifert-Weber (14-state atlas)"
+
+    var id: Self { self }
+}
+
+enum SphericalFlatSceneVariant: String, CaseIterable, Identifiable {
+    case cell600 = "600-cell (24 charts)"
+    case objectDemo = "Object and mirror demo"
+
+    var id: Self { self }
+}
+
+enum HyperbolicFlatSceneVariant: String, CaseIterable, Identifiable {
+    case honeycombCell = "{4,3,5} honeycomb cell"
+    case poincareBallDemo = "Poincaré-ball demo"
+
+    var id: Self { self }
+}
+
+struct PerformanceSnapshot {
+    var framesPerSecond: Double = 0
+    var frameMilliseconds: Double = 0
+    var gpuMilliseconds: Double = 0
+    var portalHopsPerRay: Double = 0
+    var compoundHopsPerRay: Double = 0
+    var portalTestsPerRay: Double = 0
+    var maximumPortalHops: UInt32 = 0
+    var hopLimitRays: UInt32 = 0
+}
+
+final class PerformanceStats: ObservableObject {
+    @Published private(set) var snapshot = PerformanceSnapshot()
+
+    private var frameInterval = 0.0
+    private var gpuDuration = 0.0
+    private var portalHopsPerRay = 0.0
+    private var compoundHopsPerRay = 0.0
+    private var portalTestsPerRay = 0.0
+    private var maximumPortalHops: UInt32 = 0
+    private var hopLimitRays: UInt32 = 0
+    private var lastFrameTime = 0.0
+    private var lastPublishTime = 0.0
+    private var hasTraceSample = false
+
+    private func smooth(_ current: Double, _ sample: Double, alpha: Double) -> Double {
+        current == 0 ? sample : current + alpha * (sample - current)
+    }
+
+    func recordFrame(at time: Double) {
+        if lastFrameTime > 0 {
+            frameInterval = smooth(frameInterval, time - lastFrameTime, alpha: 0.1)
+        }
+        lastFrameTime = time
+
+        guard time - lastPublishTime >= 0.25 else { return }
+        lastPublishTime = time
+        snapshot = PerformanceSnapshot(
+            framesPerSecond: frameInterval > 0 ? 1 / frameInterval : 0,
+            frameMilliseconds: frameInterval * 1_000,
+            gpuMilliseconds: gpuDuration * 1_000,
+            portalHopsPerRay: portalHopsPerRay,
+            compoundHopsPerRay: compoundHopsPerRay,
+            portalTestsPerRay: portalTestsPerRay,
+            maximumPortalHops: maximumPortalHops,
+            hopLimitRays: hopLimitRays)
+    }
+
+    func recordGPUTime(seconds: Double) {
+        guard seconds > 0, seconds.isFinite else { return }
+        gpuDuration = smooth(gpuDuration, seconds, alpha: 0.1)
+    }
+
+    func recordTrace(
+        rayCount: UInt32,
+        portalHops: UInt32,
+        compoundHops: UInt32,
+        maximumHops: UInt32,
+        hopLimitRays: UInt32,
+        portalTests: UInt32
+    ) {
+        guard rayCount > 0 else { return }
+        let rays = Double(rayCount)
+        let alpha = hasTraceSample ? 0.15 : 1.0
+        portalHopsPerRay = smooth(
+            portalHopsPerRay, Double(portalHops) / rays, alpha: alpha)
+        compoundHopsPerRay = smooth(
+            compoundHopsPerRay, Double(compoundHops) / rays, alpha: alpha)
+        portalTestsPerRay = smooth(
+            portalTestsPerRay, Double(portalTests) / rays, alpha: alpha)
+        maximumPortalHops = maximumHops
+        self.hopLimitRays = hopLimitRays
+        hasTraceSample = true
+    }
 }
 
 struct RenderResolution: Equatable {
@@ -49,10 +147,14 @@ struct RenderResolution: Equatable {
 struct MetalView: NSViewRepresentable {
     @Binding var ambientSpace: AmbientSpace
     @Binding var traversalMode: TraversalMode
+    @Binding var sphericalFlatSceneVariant: SphericalFlatSceneVariant
+    @Binding var hyperbolicFlatSceneVariant: HyperbolicFlatSceneVariant
+    @Binding var hyperbolicAtlasVariant: HyperbolicAtlasVariant
+    let performanceStats: PerformanceStats
     let renderResolution: RenderResolution
 
     func makeCoordinator() -> Renderer {
-        Renderer()
+        Renderer(performanceStats: performanceStats)
     }
 
     func makeNSView(context: Context) -> MTKView {
@@ -86,6 +188,9 @@ struct MetalView: NSViewRepresentable {
             renderResolution: renderResolution)
         context.coordinator.ambientSpace = ambientSpace
         context.coordinator.traversalMode = traversalMode
+        context.coordinator.sphericalFlatSceneVariant = sphericalFlatSceneVariant
+        context.coordinator.hyperbolicFlatSceneVariant = hyperbolicFlatSceneVariant
+        context.coordinator.hyperbolicAtlasVariant = hyperbolicAtlasVariant
         context.coordinator.setScenePacket()
         context.coordinator.installEventMonitors()
 
@@ -97,15 +202,25 @@ struct MetalView: NSViewRepresentable {
     func updateNSView(_ view: MTKView, context: Context) {
         if context.coordinator.ambientSpace != ambientSpace
             || context.coordinator.traversalMode != traversalMode
+            || context.coordinator.sphericalFlatSceneVariant != sphericalFlatSceneVariant
+            || context.coordinator.hyperbolicFlatSceneVariant != hyperbolicFlatSceneVariant
+            || context.coordinator.hyperbolicAtlasVariant != hyperbolicAtlasVariant
         {
             context.coordinator.ambientSpace = ambientSpace
             context.coordinator.traversalMode = traversalMode
+            context.coordinator.sphericalFlatSceneVariant = sphericalFlatSceneVariant
+            context.coordinator.hyperbolicFlatSceneVariant = hyperbolicFlatSceneVariant
+            context.coordinator.hyperbolicAtlasVariant = hyperbolicAtlasVariant
             context.coordinator.setScenePacket()
         }
     }
 }
 
 final class Renderer: NSObject, MTKViewDelegate {
+    private static let traceStatsWordCount = 8
+    private static let traceStatsByteCount = traceStatsWordCount * MemoryLayout<UInt32>.size
+
+    private let performanceStats: PerformanceStats
     private var device: (any MTLDevice)!
 
     private var tracingPipelines: [Int: any MTLComputePipelineState] = [:]
@@ -114,6 +229,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var statusBuffers: [any MTLBuffer] = []
 
     private var commandQueue: (any MTL4CommandQueue)!
+    private var commitOptions: MTL4CommitOptions!
     private var commandBuffers: [any MTL4CommandBuffer] = []
     private var commandAllocators: [any MTL4CommandAllocator] = []
 
@@ -147,6 +263,14 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     var ambientSpace: AmbientSpace = .sphere
     var traversalMode: TraversalMode = .flat
+    var sphericalFlatSceneVariant: SphericalFlatSceneVariant = .cell600
+    var hyperbolicFlatSceneVariant: HyperbolicFlatSceneVariant = .honeycombCell
+    var hyperbolicAtlasVariant: HyperbolicAtlasVariant = .oneChart
+
+    init(performanceStats: PerformanceStats) {
+        self.performanceStats = performanceStats
+        super.init()
+    }
 
     func installEventMonitors() {
         mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { [weak self] event in
@@ -251,6 +375,15 @@ final class Renderer: NSObject, MTKViewDelegate {
             fatalError("Failed to create Metal 4 command queue")
         }
         self.commandQueue = commandQueue
+        let commitOptions = MTL4CommitOptions()
+        commitOptions.addFeedbackHandler { [weak performanceStats] feedback in
+            let duration = feedback.gpuEndTime - feedback.gpuStartTime
+            guard duration > 0 else { return }
+            DispatchQueue.main.async {
+                performanceStats?.recordGPUTime(seconds: duration)
+            }
+        }
+        self.commitOptions = commitOptions
 
         guard let frameEvent = device.makeSharedEvent() else {
             fatalError("Failed to create shared event")
@@ -288,7 +421,11 @@ final class Renderer: NSObject, MTKViewDelegate {
             }
             sceneBuffers.append(buffer)
             residencySet.addAllocation(buffer)
-            guard let status = device.makeBuffer(length: 4, options: .storageModeShared) else {
+            guard
+                let status = device.makeBuffer(
+                    length: Self.traceStatsByteCount,
+                    options: .storageModeShared)
+            else {
                 fatalError("Failed to create atlas status buffer")
             }
             statusBuffers.append(status)
@@ -317,9 +454,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             renderTextures.append(texture)
             residencySet.addAllocation(texture)
 
-            statusBuffers[frame].contents().storeBytes(
-                of: UInt32(0),
-                as: UInt32.self)
+            memset(statusBuffers[frame].contents(), 0, Self.traceStatsByteCount)
             argumentTables[frame].setAddress(
                 sceneBuffers[frame].gpuAddress,
                 index: 0)
@@ -334,11 +469,23 @@ final class Renderer: NSObject, MTKViewDelegate {
         atlas = geo.Atlas()
         lastAtlasStatus = 0
         switch (traversalMode, ambientSpace) {
-        case (.flat, .sphere): cameraChart = SphericalScene.cell600(&atlas)
-        case (.flat, .hyperbolic): cameraChart = HyperbolicScene.honeycombCell(&atlas)
+        case (.flat, .sphere):
+            switch sphericalFlatSceneVariant {
+            case .cell600: cameraChart = SphericalScene.cell600(&atlas)
+            case .objectDemo: cameraChart = SphericalScene.objectDemo(&atlas)
+            }
+        case (.flat, .hyperbolic):
+            switch hyperbolicFlatSceneVariant {
+            case .honeycombCell: cameraChart = HyperbolicScene.honeycombCell(&atlas)
+            case .poincareBallDemo: cameraChart = HyperbolicScene.poincareBallDemo(&atlas)
+            }
         case (.flat, .euclidean): cameraChart = EuclideanScene.finite(&atlas)
         case (.atlas, .sphere): cameraChart = SphericalScene.lensSpaceL52(&atlas)
-        case (.atlas, .hyperbolic): cameraChart = HyperbolicScene.seifertWeberAtlas(&atlas)
+        case (.atlas, .hyperbolic):
+            switch hyperbolicAtlasVariant {
+            case .oneChart: cameraChart = HyperbolicScene.seifertWeberAtlas(&atlas)
+            case .multiChart: cameraChart = HyperbolicScene.seifertWeberMultiChartAtlas(&atlas)
+            }
         case (.atlas, .euclidean): cameraChart = EuclideanScene.torus(&atlas)
         }
 
@@ -485,6 +632,30 @@ final class Renderer: NSObject, MTKViewDelegate {
             zfar: 1)
     }
 
+    private func consumeTraceStats(from buffer: any MTLBuffer) {
+        let words = buffer.contents().bindMemory(
+            to: UInt32.self,
+            capacity: Self.traceStatsWordCount)
+        let errorBits = words[0]
+        performanceStats.recordTrace(
+            rayCount: words[1],
+            portalHops: words[2],
+            compoundHops: words[3],
+            maximumHops: words[4],
+            hopLimitRays: words[5],
+            portalTests: words[6])
+
+        if errorBits != lastAtlasStatus {
+            if errorBits == 0 {
+                NSLog("GPU tracing diagnostics cleared")
+            } else {
+                NSLog("GPU tracing diagnostics: 0x%08x", errorBits)
+            }
+            lastAtlasStatus = errorBits
+        }
+        memset(buffer.contents(), 0, Self.traceStatsByteCount)
+    }
+
     func draw(in view: MTKView) {
         guard
             let commandQueue,
@@ -492,6 +663,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         else {
             return
         }
+        performanceStats.recordFrame(at: ProcessInfo.processInfo.systemUptime)
 
         let index = frameIndex % maxFramesInFlight
         let commandAllocator = commandAllocators[index]
@@ -510,16 +682,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             return
         }
 
-        let priorStatus = statusBuffers[index].contents().load(as: UInt32.self)
-        if priorStatus != lastAtlasStatus {
-            if priorStatus == 0 {
-                NSLog("GPU tracing diagnostics cleared")
-            } else {
-                NSLog("GPU tracing diagnostics: 0x%08x", priorStatus)
-            }
-            lastAtlasStatus = priorStatus
-        }
-        statusBuffers[index].contents().storeBytes(of: UInt32(0), as: UInt32.self)
+        consumeTraceStats(from: statusBuffers[index])
 
         updateScene()
         let result =
@@ -600,7 +763,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         // The completion event and drawable signal must therefore be queued
         // after the command buffer they cover has been committed.
         commandQueue.waitForDrawable(drawable)
-        commandQueue.commit([commandBuffer])
+        commandQueue.commit([commandBuffer], options: commitOptions)
 
         frameEventValue += 1
         frameCompletionValues[index] = frameEventValue

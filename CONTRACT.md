@@ -60,11 +60,12 @@ at distance `d` is encoded as:
 | H³ | `(cosh(d)u,sinh(d))` | `0` | `<n,P>_L <= h` |
 | R³ | `(u,0)` | `d` | `dot(n,P) <= h` |
 
-Portal trigger planes include a `0.01`-unit outward intrinsic collar. A pairing
-must map its mathematical face to the opposite face and its outward tangent to
-the neighbor's inward tangent. Camera movement and GPU tracing use the
-exponential map, direct isometry tangent transport, and compound portal
-reduction.
+`addPortalPair` gives trigger planes a `0.01`-unit outward intrinsic collar.
+`addPortalPairWithCollar` accepts an explicit nonnegative collar for atlas
+experiments. A pairing must map its mathematical face to the opposite face and
+its outward tangent to the neighbor's inward tangent. Camera movement and GPU
+tracing use the exponential map, direct isometry tangent transport, and
+compound portal reduction.
 
 ## Packet
 

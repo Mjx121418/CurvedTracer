@@ -338,13 +338,20 @@ int Atlas::addLight(int chart, const vec4 &raw, const vec3 &color,
 
 int Atlas::addPortalPair(int ca, const vec3 &da, float fa, int cb,
                          const vec3 &db, float fb, const float raw[16]) {
+  return addPortalPairWithCollar(ca, da, fa, cb, db, fb, raw,
+                                 PORTAL_COLLAR);
+}
+
+int Atlas::addPortalPairWithCollar(int ca, const vec3 &da, float fa, int cb,
+                                   const vec3 &db, float fb,
+                                   const float raw[16], float collar) {
   packet_.clear();
   float la = length(da), lb = length(db);
   if (!validChartId(ca) || !validChartId(cb) || !raw || !finite(da) ||
       !finite(db) || la < 1e-8f || lb < 1e-8f || !finite(fa) || !finite(fb) ||
-      fa < 0 || fb < 0 ||
-      fa + PORTAL_COLLAR > charts_[ca].radius + CONTAIN_TOL ||
-      fb + PORTAL_COLLAR > charts_[cb].radius + CONTAIN_TOL ||
+      !finite(collar) || fa < 0 || fb < 0 || collar < 0 ||
+      fa + collar > charts_[ca].radius + CONTAIN_TOL ||
+      fb + collar > charts_[cb].radius + CONTAIN_TOL ||
       portals_.size() + 2 > GEO_MAX_PORTALS) {
     setError(7);
     return -1;
@@ -386,14 +393,14 @@ int Atlas::addPortalPair(int ca, const vec3 &da, float fa, int cb,
   ChartPortal a, b;
   a.chartId = ca;
   a.neighborId = cb;
-  a.normal = planeNormal(da / la, fa + PORTAL_COLLAR);
-  a.offset = modelKind_ == GEO_MODEL_R3 ? fa + PORTAL_COLLAR : 0;
+  a.normal = planeNormal(da / la, fa + collar);
+  a.offset = modelKind_ == GEO_MODEL_R3 ? fa + collar : 0;
   a.reversePortal = ib;
   a.toNeighbor = ab;
   b.chartId = cb;
   b.neighborId = ca;
-  b.normal = planeNormal(db / lb, fb + PORTAL_COLLAR);
-  b.offset = modelKind_ == GEO_MODEL_R3 ? fb + PORTAL_COLLAR : 0;
+  b.normal = planeNormal(db / lb, fb + collar);
+  b.offset = modelKind_ == GEO_MODEL_R3 ? fb + collar : 0;
   b.reversePortal = ia;
   b.toNeighbor = ab.inverse();
   portals_.push_back(a);

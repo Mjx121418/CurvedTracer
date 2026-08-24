@@ -59,6 +59,16 @@ struct LightGPU {
     packed_float3 color;
     float intensity;
 };
+struct TraceStatsGPU {
+    atomic_uint errorBits;
+    atomic_uint rayCount;
+    atomic_uint totalPortalHops;
+    atomic_uint compoundPortalHops;
+    atomic_uint maximumPortalHops;
+    atomic_uint hopLimitRays;
+    atomic_uint totalPortalTests;
+    atomic_uint reserved;
+};
 
 struct Event {
     bool valid;
@@ -230,7 +240,8 @@ float4 portalNormal(PortalGPU o, float4 hit) {
 Event nearestEvent(float4 p, float4 v, int chartId, float maximum,
                    float objectMinimum, device const ChartGPU *charts,
                    device const PortalGPU *portals,
-                   device const ObjectGPU *objects) {
+                   device const ObjectGPU *objects,
+                   thread uint &portalTests) {
     Event e{};
     e.valid = false;
     e.distance = maximum + 1;
@@ -253,7 +264,8 @@ Event nearestEvent(float4 p, float4 v, int chartId, float maximum,
             e.distance = d;
         }
     }
-    if (ENABLE_PORTALS)
+    if (ENABLE_PORTALS) {
+        portalTests += uint(chart.portalCount);
         for (int local = 0; local < chart.portalCount; ++local) {
             int i = chart.firstPortal + local;
             // Portal crossings are directional transitions, not reflective
@@ -267,6 +279,7 @@ Event nearestEvent(float4 p, float4 v, int chartId, float maximum,
                 e.distance = d;
             }
         }
+    }
     if (e.valid) {
         e.point = rayPoint(p, v, e.distance);
         e.tangent = tangentNormalize(rayTangent(p, v, e.distance));
@@ -287,9 +300,10 @@ bool applyPortalPairing(int portalIndex, thread float4 &point,
                         thread float4 &tangent, thread int &chartId,
                         thread int &portalHops, int maxPortalHops,
                         device const PortalGPU *portals,
-                        thread uint &errorBits) {
+                        thread uint &errorBits, thread bool &hitHopLimit) {
     if (portalHops >= maxPortalHops) {
         errorBits |= 8u;
+        hitHopLimit = true;
         return false;
     }
 
@@ -309,11 +323,13 @@ bool applyPortalPairing(int portalIndex, thread float4 &point,
 bool advancePortal(Event event, thread float4 &point, thread float4 &tangent,
                    thread int &chartId, thread int &portalHops,
                    int maxPortalHops, device const ChartGPU *charts,
-                   device const PortalGPU *portals, thread uint &errorBits) {
+                   device const PortalGPU *portals, thread uint &errorBits,
+                   thread uint &compoundPortalHops,
+                   thread uint &portalTests, thread bool &hitHopLimit) {
     point = event.point;
     tangent = event.tangent;
     if (!applyPortalPairing(event.index, point, tangent, chartId, portalHops,
-                            maxPortalHops, portals, errorBits))
+                            maxPortalHops, portals, errorBits, hitHopLimit))
         return false;
 
     // Outward-displaced collars overlap near edges and vertices. A pairing
@@ -324,6 +340,7 @@ bool advancePortal(Event event, thread float4 &point, thread float4 &tangent,
         ChartGPU chart = charts[chartId];
         int selectedPortal = -1;
         float strongestViolation = 4.0f * EPS;
+        portalTests += uint(chart.portalCount);
 
         for (int local = 0; local < chart.portalCount; ++local) {
             int candidateIndex = chart.firstPortal + local;
@@ -338,9 +355,60 @@ bool advancePortal(Event event, thread float4 &point, thread float4 &tangent,
         if (selectedPortal < 0)
             return true;
         if (!applyPortalPairing(selectedPortal, point, tangent, chartId, portalHops,
-                                maxPortalHops, portals, errorBits))
+                                maxPortalHops, portals, errorBits, hitHopLimit))
             return false;
+        ++compoundPortalHops;
     }
+}
+
+void recordTraceStats(device TraceStatsGPU *stats, uint portalHops,
+                      uint compoundPortalHops, uint portalTests,
+                      bool hitHopLimit, uint laneInSIMDGroup,
+                      uint simdGroupIndex, uint threadIndex,
+                      uint simdGroupCount, threadgroup uint *rayPartials,
+                      threadgroup uint *hopPartials,
+                      threadgroup uint *compoundPartials,
+                      threadgroup uint *maximumPartials,
+                      threadgroup uint *limitedPartials,
+                      threadgroup uint *testPartials) {
+    uint rays = simd_sum(1u);
+    uint hops = simd_sum(portalHops);
+    uint compound = simd_sum(compoundPortalHops);
+    uint maximum = simd_max(portalHops);
+    uint limited = simd_sum(hitHopLimit ? 1u : 0u);
+    uint tests = simd_sum(portalTests);
+    if (laneInSIMDGroup == 0) {
+        rayPartials[simdGroupIndex] = rays;
+        hopPartials[simdGroupIndex] = hops;
+        compoundPartials[simdGroupIndex] = compound;
+        maximumPartials[simdGroupIndex] = maximum;
+        limitedPartials[simdGroupIndex] = limited;
+        testPartials[simdGroupIndex] = tests;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (threadIndex != 0)
+        return;
+
+    rays = hops = compound = maximum = limited = tests = 0;
+    for (uint group = 0; group < simdGroupCount; ++group) {
+        rays += rayPartials[group];
+        hops += hopPartials[group];
+        compound += compoundPartials[group];
+        maximum = max(maximum, maximumPartials[group]);
+        limited += limitedPartials[group];
+        tests += testPartials[group];
+    }
+    atomic_fetch_add_explicit(&stats->rayCount, rays, memory_order_relaxed);
+    atomic_fetch_add_explicit(&stats->totalPortalHops, hops,
+                              memory_order_relaxed);
+    atomic_fetch_add_explicit(&stats->compoundPortalHops, compound,
+                              memory_order_relaxed);
+    atomic_fetch_max_explicit(&stats->maximumPortalHops, maximum,
+                              memory_order_relaxed);
+    atomic_fetch_add_explicit(&stats->hopLimitRays, limited,
+                              memory_order_relaxed);
+    atomic_fetch_add_explicit(&stats->totalPortalTests, tests,
+                              memory_order_relaxed);
 }
 
 float intrinsicDistance(float4 a, float4 b) {
@@ -442,9 +510,20 @@ float fogVisibility(float distance, float horizon, int mode,
 }
 
 kernel void raytrace(device const uchar *packet [[buffer(0)]],
-                     device atomic_uint *status [[buffer(1)]],
+                     device TraceStatsGPU *stats [[buffer(1)]],
                      texture2d<float, access::write> output [[texture(0)]],
-                     uint2 pixel [[thread_position_in_grid]]) {
+                     uint2 pixel [[thread_position_in_grid]],
+                     uint laneInSIMDGroup [[thread_index_in_simdgroup]],
+                     uint simdGroupIndex [[simdgroup_index_in_threadgroup]],
+                     uint threadIndex [[thread_index_in_threadgroup]],
+                     uint2 threadsPerGroup [[threads_per_threadgroup]],
+                     uint threadsPerSIMDGroup [[threads_per_simdgroup]]) {
+    threadgroup uint rayPartials[32];
+    threadgroup uint hopPartials[32];
+    threadgroup uint compoundPartials[32];
+    threadgroup uint maximumPartials[32];
+    threadgroup uint limitedPartials[32];
+    threadgroup uint testPartials[32];
     if (pixel.x >= output.get_width() || pixel.y >= output.get_height())
         return;
     device const HeaderGPU *h =
@@ -471,7 +550,7 @@ kernel void raytrace(device const uchar *packet [[buffer(0)]],
     if (!ENABLE_PORTALS && h->counts.portalCount != 0)
         error |= 2;
     if (error) {
-        atomic_fetch_or_explicit(status, error, memory_order_relaxed);
+        atomic_fetch_or_explicit(&stats->errorBits, error, memory_order_relaxed);
         output.write(float4(1, 0, 1, 1), pixel);
         return;
     }
@@ -502,7 +581,7 @@ kernel void raytrace(device const uchar *packet [[buffer(0)]],
                                 h->camera.right +
                                 screen.y * h->camera.fovTan * h->camera.up);
     if (!canonicalizeRayState(p, v)) {
-        atomic_fetch_or_explicit(status, 4, memory_order_relaxed);
+        atomic_fetch_or_explicit(&stats->errorBits, 4, memory_order_relaxed);
         output.write(float4(1, 0, 1, 1), pixel);
         return;
     }
@@ -510,6 +589,8 @@ kernel void raytrace(device const uchar *packet [[buffer(0)]],
     float remaining = h->camera.maxTraceDistance, path = 0;
     float3 throughput = 1, radiance = 0;
     int hops = 0;
+    uint compoundPortalHops = 0, portalTests = 0;
+    bool hitHopLimit = false;
     float pathVisibility = 1;
     int maxBounces = clamp(h->controls.maxBounces, 0, 64);
     int fogMode = clamp(int(floor(h->controls.fogMode + 0.5f)), FOG_DISABLED,
@@ -522,7 +603,7 @@ kernel void raytrace(device const uchar *packet [[buffer(0)]],
     : 0.0f;
     for (int bounce = 0; bounce <= maxBounces;) {
         Event e = nearestEvent(p, v, chartId, remaining, SELF_EPS, charts, portals,
-                               objects);
+                               objects, portalTests);
         if (!e.valid) {
             // The remaining transmitted light terminates in the homogeneous
             // fog color. Together with the segment contributions below, this
@@ -544,7 +625,8 @@ kernel void raytrace(device const uchar *packet [[buffer(0)]],
             break;
         if (e.portal) {
             if (!advancePortal(e, p, v, chartId, hops, h->controls.maxChartHops,
-                               charts, portals, error))
+                               charts, portals, error, compoundPortalHops,
+                               portalTests, hitHopLimit))
                 break;
             continue;
         }
@@ -579,6 +661,13 @@ kernel void raytrace(device const uchar *packet [[buffer(0)]],
         ++bounce;
     }
     if (error)
-        atomic_fetch_or_explicit(status, error, memory_order_relaxed);
+        atomic_fetch_or_explicit(&stats->errorBits, error, memory_order_relaxed);
+    uint threadsInGroup = threadsPerGroup.x * threadsPerGroup.y;
+    uint simdGroupCount =
+    (threadsInGroup + threadsPerSIMDGroup - 1) / threadsPerSIMDGroup;
+    recordTraceStats(stats, uint(hops), compoundPortalHops, portalTests,
+                     hitHopLimit, laneInSIMDGroup, simdGroupIndex, threadIndex,
+                     simdGroupCount, rayPartials, hopPartials, compoundPartials,
+                     maximumPartials, limitedPartials, testPartials);
     output.write(float4(clamp(radiance, 0.0f, 1.0f), 1), pixel);
 }

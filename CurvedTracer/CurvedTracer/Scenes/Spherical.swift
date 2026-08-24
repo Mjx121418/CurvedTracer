@@ -194,6 +194,16 @@ enum SphericalScene {
         atlas.setControls(6, 0.05, 0.18, 0.92, 2, 0, 0.0)
     }
 
+    /// Builds the original one-chart object and mirror demonstration.
+    @discardableResult static func objectDemo(_ atlas: inout geo.Atlas) -> Int32 {
+        configure(&atlas)
+        let camera = atlas.cameraChartAt(
+            0, atlas.pointFromOriginTangent(geo.vec3(0.12, 0.08, -0.1)), 2.6)
+        let result = atlas.build(camera, 64)
+        if result != 0 { fatalError("S³ object demo build failed: \(result)") }
+        return camera
+    }
+
     /// Builds the original 24-chart 600-cell scene. The overlap graph is the
     /// complete 24-cell graph: 24 chart vertices, degree eight, and 96 edges.
     @discardableResult static func cell600(_ atlas: inout geo.Atlas) -> Int32 {

@@ -94,6 +94,10 @@ public:
   int addPortalPair(int chartA, const vec3 &outwardA, float faceDistanceA,
                     int chartB, const vec3 &outwardB, float faceDistanceB,
                     const float pairingAB[16]);
+  int addPortalPairWithCollar(
+      int chartA, const vec3 &outwardA, float faceDistanceA, int chartB,
+      const vec3 &outwardB, float faceDistanceB, const float pairingAB[16],
+      float triggerCollar);
   int addMaterial(const vec4 &color, const vec4 &specular);
 
   void setCamera(float fovTan, float aspect, const vec3 &right, const vec3 &up,

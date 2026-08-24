@@ -1,17 +1,23 @@
 # CurvedTracer
 
-CurvedTracer is a Metal ray tracer for the three simply connected unit space
-forms. Geometry is authored directly in its native model:
+CurvedTracer is a Metal ray tracer for three-dimensional spherical, hyperbolic,
+and Euclidean geometry. Every scene is chart based: its camera, objects, and
+lights are placed in coordinate domains of the appropriate native model:
 
 - **S³** — the unit sphere in Euclidean R⁴;
 - **H³** — the future unit hyperboloid in Lorentz R³,¹;
 - **R³** — homogeneous points `(x,y,z,1)`.
 
-`GeometryCore` owns chart validation, isometries, camera transport, quotient
-portals, and the version-10 GPU packet. Both CPU-flattened and authored-atlas
-rendering consume that same packet and the same `raytrace` Metal kernel. At app
-startup Metal compiles six specializations (three space forms, with portal
-traversal on or off).
+Charts are connected by isometries that transport points, tangent vectors, and
+the camera between local domains. Quotient spaces are realized by providing a
+correct atlas: fundamental domains are represented by charts, identified
+boundary surfaces become paired portals, and each portal carries the required
+transition isometry. A ray crossing a portal continues in the corresponding
+chart without introducing an artificial boundary in the represented space.
+
+`GeometryCore` constructs and validates these chart graphs and encodes them for
+the Metal tracer. The renderer therefore uses the same chart representation for
+ordinary curved scenes, multi-chart covers, and quotient spaces.
 
 ## Scenes
 

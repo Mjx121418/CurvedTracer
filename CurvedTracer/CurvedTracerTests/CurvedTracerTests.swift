@@ -53,19 +53,67 @@ struct CurvedTracerTests {
         #expect(!RenderResolution.isValid(width: 1280, height: -1))
     }
 
+    @Test func performanceStatisticsNormalizeAndPublishSamples() {
+        let stats = PerformanceStats()
+        stats.recordFrame(at: 10)
+        stats.recordGPUTime(seconds: 0.01)
+        stats.recordTrace(
+            rayCount: 100,
+            portalHops: 200,
+            compoundHops: 5,
+            maximumHops: 7,
+            hopLimitRays: 1,
+            portalTests: 1_200)
+        stats.recordFrame(at: 10.5)
+
+        #expect(abs(stats.snapshot.framesPerSecond - 2) < 0.0001)
+        #expect(abs(stats.snapshot.frameMilliseconds - 500) < 0.0001)
+        #expect(abs(stats.snapshot.gpuMilliseconds - 10) < 0.0001)
+        #expect(abs(stats.snapshot.portalHopsPerRay - 2) < 0.0001)
+        #expect(abs(stats.snapshot.compoundHopsPerRay - 0.05) < 0.0001)
+        #expect(abs(stats.snapshot.portalTestsPerRay - 12) < 0.0001)
+        #expect(stats.snapshot.maximumPortalHops == 7)
+        #expect(stats.snapshot.hopLimitRays == 1)
+    }
+
     @Test func allSpaceTraversalScenesBuildV10Packets() {
         #expect(AmbientSpace.allCases.count == 3)
         #expect(TraversalMode.allCases.count == 2)
+        #expect(SphericalFlatSceneVariant.allCases.count == 2)
+        #expect(HyperbolicFlatSceneVariant.allCases.count == 2)
+        #expect(HyperbolicAtlasVariant.allCases.count == 2)
         var atlas = geo.Atlas()
         let builders: [(inout geo.Atlas) -> Int32] = [
-            SphericalScene.cell600, SphericalScene.lensSpaceL52,
-            HyperbolicScene.honeycombCell, HyperbolicScene.seifertWeberAtlas,
+            SphericalScene.cell600, SphericalScene.objectDemo,
+            SphericalScene.lensSpaceL52,
+            HyperbolicScene.honeycombCell, HyperbolicScene.poincareBallDemo,
+            HyperbolicScene.seifertWeberAtlas,
+            HyperbolicScene.seifertWeberMultiChartAtlas,
             EuclideanScene.finite, EuclideanScene.torus,
         ]
         for build in builders {
             _ = build(&atlas)
             #expect(atlas.packetSize() >= 192)
         }
+    }
+
+    @Test func multiChartSeifertWeberBuildsStateGraph() {
+        var atlas = geo.Atlas()
+        _ = HyperbolicScene.seifertWeberMultiChartAtlas(&atlas)
+        let bytes = [UInt8](atlas.packetBytes())
+
+        #expect(int32(bytes, at: 160) == 14)
+        #expect(int32(bytes, at: 164) == 168)
+        #expect(int32(bytes, at: 168) == 28)
+        #expect(int32(bytes, at: 176) == 14)
+
+        let firstPortalOffset = 192 + 14 * 32
+        // Explicit zero displacement puts the trigger on the mathematical
+        // face: H3 normals use sinh(distance) in their w component.
+        let q: Float = 1 / sqrt(5)
+        let inradius = asinh(sqrt((q + cos(2 * Float.pi / 5)) / (1 - q)))
+        #expect(abs(abs(float32(bytes, at: firstPortalOffset + 64 + 12)) - sinh(inradius)) < 0.0001)
+        #expect(int32(bytes, at: firstPortalOffset + 84) == 1)
     }
 
     @Test func sphericalAtlasIsLensSpaceL52() {
@@ -120,7 +168,7 @@ struct CurvedTracerTests {
     @Test func mirrorTintAndAtlasFogAreEncodedInScenePackets() {
         var atlas = geo.Atlas()
 
-        _ = HyperbolicScene.configure(&atlas)
+        _ = HyperbolicScene.poincareBallDemo(&atlas)
         var bytes = [UInt8](atlas.packetBytes())
         let chartCount = Int(int32(bytes, at: 160))
         let portalCount = Int(int32(bytes, at: 164))

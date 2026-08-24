@@ -106,6 +106,23 @@ void test_atlas() {
           0);
     CHECK(a.portalCount() == 2);
   }
+  // Explicit trigger collars leave the default API unchanged and allow a
+  // true-face transition for overlap-atlas experiments.
+  {
+    Atlas a;
+    a.start(GEO_MODEL_R3);
+    CHECK(a.seed(2) == 0);
+    float translation[16];
+    identity(translation);
+    translation[12] = -2;
+    CHECK(a.addPortalPairWithCollar(0, vec3(1, 0, 0), 1, 0,
+                                    vec3(-1, 0, 0), 1, translation, 0) >= 0);
+    CHECK(a.cameraChartAt(0, vec4(.99f, 0, 0, 1), 2) == 0);
+    CHECK(a.cameraMove(vec3(.02f, 0, 0)) == 0);
+    CHECK(a.buildAtlas(0, 64, 1, 32) == 0);
+    CHECK_NEAR(atlasPortal(a, 0).offset, 1.0f, 1e-6);
+    CHECK_NEAR(header(a).camera.position.x, -.99f, 2e-5);
+  }
   // Repeated forward steps follow the same geodesic as one combined step in
   // every model, even when the camera starts away from the chart origin.
   for (int model = GEO_MODEL_H3; model <= GEO_MODEL_R3; ++model) {

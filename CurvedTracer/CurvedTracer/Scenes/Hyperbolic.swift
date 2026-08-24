@@ -12,6 +12,7 @@ enum HyperbolicScene {
 
     private static func addPoincareBall(
         _ atlas: inout geo.Atlas,
+        chart: Int32 = 0,
         center: SIMD3<Float>,
         radius: Float,
         material: Int32
@@ -33,7 +34,7 @@ enum HyperbolicScene {
                 center.x * centerScale,
                 center.y * centerScale,
                 center.z * centerScale))
-        _ = atlas.addBall(0, centerPoint, intrinsicRadius, material)
+        _ = atlas.addBall(chart, centerPoint, intrinsicRadius, material)
     }
 
     private static func intrinsicRadius(fromCompactAngle angle: Float) -> Float {
@@ -50,6 +51,10 @@ enum HyperbolicScene {
             }
         }
         return r
+    }
+
+    private static func identity() -> [Float] {
+        [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
     }
     private static func facePairing(_ u: SIMD3<Float>, distance: Float, twist: Float) -> [Float] {
         let c = cosh(distance)
@@ -106,7 +111,8 @@ enum HyperbolicScene {
         addMirrorMaterial(&atlas)
     }
 
-    @discardableResult static func configure(_ atlas: inout geo.Atlas) -> Int32 {
+    /// Builds the one-chart Poincaré-ball object and mirror demonstration.
+    @discardableResult static func poincareBallDemo(_ atlas: inout geo.Atlas) -> Int32 {
         atlas.start(0)
         _ = atlas.seed(intrinsicRadius(fromCompactAngle: Float.pi * 0.999 / 2))
 
@@ -140,7 +146,7 @@ enum HyperbolicScene {
         let traceRadius = intrinsicRadius(fromCompactAngle: Float.pi * 0.99 / 2)
         let camera = atlas.cameraChartAt(0, cameraPosition, traceRadius)
         let result = atlas.build(camera, 64)
-        if result != 0 { fatalError("H³ flat build failed: \(result)") }
+        if result != 0 { fatalError("H³ Poincaré-ball demo build failed: \(result)") }
         return camera
     }
 
@@ -232,6 +238,75 @@ enum HyperbolicScene {
         let camera = atlas.cameraChartAt(0, geo.vec4(0, 0, 0, 1), 3.5)
         let result = atlas.buildAtlas(camera, 64, 1, 32)
         if result != 0 { fatalError("H³ atlas build failed: \(result)") }
+        return camera
+    }
+
+    /// A state-expanded Seifert-Weber atlas used to compare the one-chart
+    /// quotient with a sparse multi-chart graph. Every chart has the same
+    /// dodecahedral coordinates and scene contents. Face pairings move between
+    /// chart states, while zero trigger displacement keeps crossings on the
+    /// mathematical faces and avoids overlap between displaced face collars.
+    @discardableResult static func seifertWeberMultiChartAtlas(_ atlas: inout geo.Atlas) -> Int32 {
+        atlas.start(0)
+        let chartRadius: Float = 2.05
+        _ = atlas.seed(chartRadius)
+
+        let chartCount: Int32 = 14
+        let chartIdentity = identity()
+        for chart in 1..<chartCount {
+            if atlas.addChart(chartRadius, 0, chartIdentity, true) != chart {
+                fatalError("failed to add Seifert-Weber chart state")
+            }
+        }
+
+        materials(&atlas)
+        let phi: Float = (1 + sqrt(5)) / 2
+        let scale: Float = 1 / sqrt(1 + phi * phi)
+        let directions = [
+            SIMD3<Float>(0, 1, phi), SIMD3<Float>(0, -1, phi), SIMD3<Float>(1, phi, 0),
+            SIMD3<Float>(-1, phi, 0), SIMD3<Float>(phi, 0, 1), SIMD3<Float>(phi, 0, -1),
+        ].map { $0 * scale }
+        let q: Float = 1 / sqrt(5)
+        let inradius = asinh(sqrt((q + cos(2 * Float.pi / 5)) / (1 - q)))
+
+        // Each generator acts as a permutation of the chart states. Because
+        // every state carries the same local geometry, the extra state is not
+        // observable in the rendered quotient, but it exercises a nontrivial
+        // GPU chart graph. Shift 1 makes the graph connected.
+        let stateShifts: [Int32] = [1, 2, 3, 5, 7, 9]
+        for (generator, u) in directions.enumerated() {
+            let pairing = facePairing(u, distance: 2 * inradius, twist: 3 * Float.pi / 5)
+            for chart in 0..<chartCount {
+                let neighbor = (chart + stateShifts[generator]) % chartCount
+                if atlas.addPortalPairWithCollar(
+                    chart, geo.vec3(-u.x, -u.y, -u.z), inradius,
+                    neighbor, geo.vec3(u.x, u.y, u.z), inradius,
+                    pairing, 0) < 0
+                {
+                    fatalError("invalid multi-chart Seifert-Weber portal")
+                }
+            }
+        }
+
+        // Duplicate local scene data because any chart state can be active.
+        // The objects remain far inside every true face, preserving the
+        // object-free collar independently of trigger-plane displacement.
+        for chart in 0..<chartCount {
+            addPoincareBall(
+                &atlas, chart: chart, center: [0.17, -0.10, 0.05], radius: 0.09, material: 0)
+            addPoincareBall(
+                &atlas, chart: chart, center: [-0.20, 0.075, 0.13], radius: 0.10, material: 1)
+            _ = atlas.addLight(
+                chart, pointFromKlein(&atlas, [0.10, -0.12, 0.18]),
+                geo.vec3(1, 0.92, 0.72), 0.75)
+        }
+
+        atlas.setCamera(
+            0.9, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0), geo.vec3(0, 0, 1))
+        atlas.setControls(5, 0.04, 0.16, 0.9, 2, 0, 0.0)
+        let camera = atlas.cameraChartAt(0, geo.vec4(0, 0, 0, 1), 3.5)
+        let result = atlas.buildAtlas(camera, 64, 1, 32)
+        if result != 0 { fatalError("H³ multi-chart atlas build failed: \(result)") }
         return camera
     }
 }

@@ -46,6 +46,42 @@ bool matrixClose(const mat4 &a, const mat4 &b, float e = 2e-3f) {
   return true;
 }
 
+mat4 transpose(const mat4 &m) {
+  mat4 out;
+  for (int row = 0; row < 4; ++row)
+    for (int column = 0; column < 4; ++column)
+      out.m[column * 4 + row] = m.m[row * 4 + column];
+  return out;
+}
+
+float matrixScale(const mat4 &m) {
+  float largest = 0;
+  for (float value : m.m)
+    largest = std::max(largest, std::fabs(value));
+  return largest;
+}
+
+mat4 normalizedMatrix(const mat4 &m) {
+  mat4 out = m;
+  float scale = matrixScale(m);
+  if (scale == 0 || !finite(scale))
+    return out;
+  float squaredNorm = 0;
+  for (float value : m.m) {
+    float scaled = value / scale;
+    squaredNorm += scaled * scaled;
+  }
+  float normalizedScale = std::sqrt(squaredNorm);
+  for (float &value : out.m)
+    value = (value / scale) / normalizedScale;
+  return out;
+}
+
+mat4 transformQuadric(const Isometry &m, const mat4 &quadric) {
+  mat4 inverse = m.inverse().m;
+  return normalizedMatrix(mat4Mul(mat4Mul(transpose(inverse), quadric), inverse));
+}
+
 vec4 transformPlane(const Isometry &m, const vec4 &normal, float &offset,
                     int model) {
   if (model != GEO_MODEL_R3)
@@ -65,6 +101,7 @@ void Atlas::reset() {
   modelKind_ = GEO_MODEL_H3;
   charts_.clear();
   objects_.clear();
+  clips_.clear();
   lights_.clear();
   portals_.clear();
   materials_.clear();
@@ -263,10 +300,16 @@ int Atlas::addMaterial(const vec4 &color, const vec4 &spec) {
 }
 
 int Atlas::addBall(int chart, const vec4 &raw, float r, int material) {
+  return addBallSurface(chart, raw, r, material, GEO_RESPONSE_OPAQUE);
+}
+
+int Atlas::addBallSurface(int chart, const vec4 &raw, float r, int material,
+                          int response) {
   packet_.clear();
   vec4 center;
   if (!validChartId(chart) || !canonicalizePoint(raw, center) || !finite(r) ||
       r <= 0 || material < 0 || material >= int(materials_.size()) ||
+      (response != GEO_RESPONSE_OPAQUE && response != GEO_RESPONSE_MIRROR) ||
       originDistance(center) + r > charts_[chart].radius + CONTAIN_TOL ||
       objects_.size() >= GEO_MAX_OBJECTS) {
     setError(3);
@@ -274,10 +317,70 @@ int Atlas::addBall(int chart, const vec4 &raw, float r, int material) {
   }
   ChartObject o;
   o.chartId = chart;
-  o.kind = GEO_OBJECT_OPAQUE;
-  o.geometry = center;
-  o.intrinsicRadius = r;
+  o.responseKind = response;
+  if (modelKind_ == GEO_MODEL_R3) {
+    o.equationKind = GEO_EQUATION_R3_SPHERE;
+    o.geometry = center;
+    o.parameter = r;
+  } else {
+    // A curved-space sphere is an oriented ambient linear section. Negating
+    // both sides makes the tangent gradient point away from its center.
+    float level = modelKind_ == GEO_MODEL_S3 ? std::cos(r) : -std::cosh(r);
+    o.equationKind = GEO_EQUATION_LINEAR;
+    o.geometry = -center;
+    o.parameter = -level;
+  }
   o.colorIdx = material;
+  objects_.push_back(o);
+  charts_[chart].objectIds.push_back(int(objects_.size() - 1));
+  setError(0);
+  return int(objects_.size() - 1);
+}
+
+bool Atlas::normalizedLinearForm(const vec4 &raw, float offset, vec4 &normal,
+                                 float &normalizedOffset) const {
+  if (!finite(raw) || !finite(offset))
+    return false;
+  if (modelKind_ == GEO_MODEL_R3) {
+    float scale = length(raw.xyz());
+    if (scale < 1e-8f || std::fabs(raw.w) > 1e-5f)
+      return false;
+    normal = vec4(raw.xyz() / scale, 0);
+    normalizedOffset = offset / scale;
+    return true;
+  }
+  float metricNorm = modelKind_ == GEO_MODEL_H3 ? lorDot(raw, raw) : dot(raw, raw);
+  float scale = std::fabs(metricNorm) > 1e-8f
+                    ? std::sqrt(std::fabs(metricNorm))
+                    : length(raw);
+  if (scale < 1e-8f)
+    return false;
+  normal = raw / scale;
+  normalizedOffset = offset / scale;
+  return true;
+}
+
+int Atlas::addLinearSurface(int chart, const vec4 &raw, float offset,
+                            int material, int response) {
+  packet_.clear();
+  vec4 normal;
+  float normalizedOffset = 0;
+  if (!validChartId(chart) ||
+      !normalizedLinearForm(raw, offset, normal, normalizedOffset) ||
+      material < 0 || material >= int(materials_.size()) ||
+      (response != GEO_RESPONSE_OPAQUE && response != GEO_RESPONSE_MIRROR) ||
+      objects_.size() >= GEO_MAX_OBJECTS) {
+    setError(3);
+    return -1;
+  }
+  ChartObject o;
+  o.chartId = chart;
+  o.equationKind = GEO_EQUATION_LINEAR;
+  o.responseKind = response;
+  o.geometry = normal;
+  o.parameter = normalizedOffset;
+  o.colorIdx = material;
+  o.needsChartBound = true;
   objects_.push_back(o);
   charts_[chart].objectIds.push_back(int(objects_.size() - 1));
   setError(0);
@@ -292,26 +395,114 @@ vec4 Atlas::planeNormal(const vec3 &u, float d) const {
   return vec4(u, 0);
 }
 
-int Atlas::addMirrorPlane(int chart, const vec3 &dir, float d, int material) {
-  packet_.clear();
+int Atlas::addPlane(int chart, const vec3 &dir, float d, int material,
+                    int response) {
   float l = length(dir);
   if (!validChartId(chart) || !finite(dir) || l < 1e-8f || !finite(d) ||
-      d < 0 || d > charts_[chart].radius + CONTAIN_TOL || material < 0 ||
+      std::fabs(d) > charts_[chart].radius + CONTAIN_TOL) {
+    setError(3);
+    return -1;
+  }
+  vec4 normal = planeNormal(dir / l, d);
+  float offset = modelKind_ == GEO_MODEL_R3 ? d : 0;
+  return addLinearSurface(chart, normal, offset, material, response);
+}
+
+int Atlas::addMirrorPlane(int chart, const vec3 &dir, float d, int material) {
+  if (!finite(d) || d < 0) {
+    setError(3);
+    return -1;
+  }
+  return addPlane(chart, dir, d, material, GEO_RESPONSE_MIRROR);
+}
+
+int Atlas::addQuadric(int chart, const float coefficients[16], int material,
+                      int response) {
+  packet_.clear();
+  if (!validChartId(chart) || coefficients == nullptr || material < 0 ||
       material >= int(materials_.size()) ||
+      (response != GEO_RESPONSE_OPAQUE && response != GEO_RESPONSE_MIRROR) ||
       objects_.size() >= GEO_MAX_OBJECTS) {
     setError(3);
     return -1;
   }
+  mat4 q;
+  for (int i = 0; i < 16; ++i) {
+    if (!finite(coefficients[i])) {
+      setError(3);
+      return -1;
+    }
+    q.m[i] = coefficients[i];
+  }
+  float scale = matrixScale(q);
+  if (!finite(scale) || scale == 0) {
+    setError(3);
+    return -1;
+  }
+  for (int row = 0; row < 4; ++row) {
+    for (int column = row + 1; column < 4; ++column) {
+      if (std::fabs(q.m[column * 4 + row] - q.m[row * 4 + column]) >
+          1e-5f * scale) {
+        setError(3);
+        return -1;
+      }
+      float symmetric =
+          0.5f * (q.m[column * 4 + row] + q.m[row * 4 + column]);
+      q.m[column * 4 + row] = symmetric;
+      q.m[row * 4 + column] = symmetric;
+    }
+  }
   ChartObject o;
   o.chartId = chart;
-  o.kind = GEO_OBJECT_MIRROR;
-  o.geometry = planeNormal(dir / l, d);
-  o.planeOffset = modelKind_ == GEO_MODEL_R3 ? d : 0;
+  o.equationKind = GEO_EQUATION_QUADRIC;
+  o.responseKind = response;
+  o.quadric = normalizedMatrix(q);
   o.colorIdx = material;
+  o.needsChartBound = true;
   objects_.push_back(o);
   charts_[chart].objectIds.push_back(int(objects_.size() - 1));
   setError(0);
   return int(objects_.size() - 1);
+}
+
+int Atlas::addCliffordTorus(int chart, int material, int response) {
+  if (modelKind_ != GEO_MODEL_S3) {
+    setError(3);
+    return -1;
+  }
+  float q[16] = {0};
+  q[0] = q[5] = 1;
+  q[10] = q[15] = -1;
+  return addQuadric(chart, q, material, response);
+}
+
+int Atlas::addObjectClip(int object, const vec4 &raw, float offset) {
+  packet_.clear();
+  vec4 normal;
+  float normalizedOffset = 0;
+  if (object < 0 || object >= int(objects_.size()) ||
+      objects_[object].clipIds.size() >= GEO_MAX_CLIPS_PER_OBJECT ||
+      clips_.size() >= GEO_MAX_CLIPS ||
+      !normalizedLinearForm(raw, offset, normal, normalizedOffset)) {
+    setError(3);
+    return -1;
+  }
+  clips_.push_back(ChartClip{normal, normalizedOffset});
+  objects_[object].clipIds.push_back(int(clips_.size() - 1));
+  setError(0);
+  return int(clips_.size() - 1);
+}
+
+int Atlas::addObjectClipPlane(int object, const vec3 &dir, float d) {
+  float l = length(dir);
+  if (object < 0 || object >= int(objects_.size()) || !finite(dir) ||
+      l < 1e-8f || !finite(d)) {
+    setError(3);
+    return -1;
+  }
+  vec4 normal = planeNormal(dir / l, d);
+  float offset = modelKind_ == GEO_MODEL_R3 ? d : 0;
+  return addObjectClip(object, normal, offset);
 }
 
 int Atlas::addLight(int chart, const vec4 &raw, const vec3 &color,
@@ -686,11 +877,22 @@ int Atlas::chartTransformsTo(int camera, std::vector<Isometry> &out) const {
 bool Atlas::validateScene() const {
   if (!validModelKind() || charts_.empty() ||
       objects_.size() > GEO_MAX_OBJECTS ||
-      materials_.size() > GEO_MAX_MATERIALS || lights_.size() > GEO_MAX_LIGHTS)
+      clips_.size() > GEO_MAX_CLIPS || materials_.size() > GEO_MAX_MATERIALS ||
+      lights_.size() > GEO_MAX_LIGHTS)
     return false;
-  for (const auto &o : objects_)
-    if (o.colorIdx < 0 || o.colorIdx >= int(materials_.size()))
+  for (const auto &o : objects_) {
+    if (o.colorIdx < 0 || o.colorIdx >= int(materials_.size()) ||
+        (o.equationKind != GEO_EQUATION_LINEAR &&
+         o.equationKind != GEO_EQUATION_R3_SPHERE &&
+         o.equationKind != GEO_EQUATION_QUADRIC) ||
+        (o.responseKind != GEO_RESPONSE_OPAQUE &&
+         o.responseKind != GEO_RESPONSE_MIRROR) ||
+        o.clipIds.size() > GEO_MAX_CLIPS_PER_OBJECT)
       return false;
+    for (int clipId : o.clipIds)
+      if (clipId < 0 || clipId >= int(clips_.size()))
+        return false;
+  }
   for (const auto &p : portals_)
     if (!p.toNeighbor.validate() || !validChartId(p.neighborId) ||
         p.reversePortal < 0 || p.reversePortal >= int(portals_.size()))
@@ -756,8 +958,64 @@ int Atlas::emit(bool flatten, int cameraChart, int depth, int hops,
   std::vector<GPUChart> gpuCharts;
   std::vector<GPUPortal> gpuPortals;
   std::vector<Object> gpuObjects;
+  std::vector<Quadric> gpuQuadrics;
+  std::vector<PrimitiveClip> gpuClips;
   std::vector<PointLight> gpuLights;
   Isometry recenter = movePointToOrigin(cameraPosition_);
+  Isometry localIdentity;
+  localIdentity.kind = kind();
+  localIdentity.m = mat4Identity();
+
+  auto appendObject = [&](const ChartObject &o, const Isometry &transform,
+                          bool developed) {
+    Object x{};
+    x.equationKind = o.equationKind;
+    x.responseKind = o.responseKind;
+    x.colorIdx = o.colorIdx;
+    x.quadricIndex = -1;
+    if (o.equationKind == GEO_EQUATION_LINEAR) {
+      x.parameter = o.parameter;
+      x.geometry = developed
+                       ? transformPlane(transform, o.geometry, x.parameter,
+                                        modelKind_)
+                       : o.geometry;
+    } else if (o.equationKind == GEO_EQUATION_R3_SPHERE) {
+      x.geometry = developed ? transform.applyPoint(o.geometry) : o.geometry;
+      x.parameter = o.parameter;
+    } else {
+      x.quadricIndex = int(gpuQuadrics.size());
+      gpuQuadrics.push_back(
+          Quadric{developed ? transformQuadric(transform, o.quadric)
+                            : o.quadric});
+    }
+
+    x.firstClip = int(gpuClips.size());
+    for (int clipId : o.clipIds) {
+      const auto &clip = clips_[clipId];
+      PrimitiveClip emitted{};
+      emitted.kind = GEO_CLIP_LINEAR;
+      emitted.parameter = clip.offset;
+      emitted.geometry = developed
+                             ? transformPlane(transform, clip.normal,
+                                              emitted.parameter, modelKind_)
+                             : clip.normal;
+      gpuClips.push_back(emitted);
+    }
+    if (developed && o.needsChartBound) {
+      PrimitiveClip bound{};
+      bound.kind = GEO_CLIP_BALL;
+      bound.geometry = transform.applyPoint(vec4(0, 0, 0, 1));
+      float radius = charts_[o.chartId].radius;
+      bound.parameter = modelKind_ == GEO_MODEL_S3 ? std::cos(radius)
+                        : modelKind_ == GEO_MODEL_H3
+                            ? -std::cosh(radius)
+                            : radius;
+      gpuClips.push_back(bound);
+    }
+    x.clipCount = int(gpuClips.size()) - x.firstClip;
+    gpuObjects.push_back(x);
+  };
+
   if (flatten) {
     GPUChart c{};
     c.intrinsicRadius = cameraTraceRadius_;
@@ -767,20 +1025,7 @@ int Atlas::emit(bool flatten, int cameraChart, int depth, int hops,
     gpuCharts.push_back(c);
     for (const auto &o : objects_) {
       Isometry m = recenter.compose(toCamera[o.chartId]);
-      Object x{};
-      x.kind = o.kind;
-      x.colorIdx = o.colorIdx;
-      if (o.kind == GEO_OBJECT_OPAQUE) {
-        x.geometry = m.applyPoint(o.geometry);
-        x.parameter = modelKind_ == GEO_MODEL_S3 ? std::cos(o.intrinsicRadius)
-                      : modelKind_ == GEO_MODEL_H3
-                          ? -std::cosh(o.intrinsicRadius)
-                          : o.intrinsicRadius;
-      } else {
-        x.parameter = o.planeOffset;
-        x.geometry = transformPlane(m, o.geometry, x.parameter, modelKind_);
-      }
-      gpuObjects.push_back(x);
+      appendObject(o, m, true);
     }
     for (const auto &l : lights_) {
       Isometry m = recenter.compose(toCamera[l.chartId]);
@@ -814,17 +1059,7 @@ int Atlas::emit(bool flatten, int cameraChart, int depth, int hops,
         gpuPortals.push_back(x);
       }
       for (int id : c.objectIds) {
-        const auto &o = objects_[id];
-        Object x{};
-        x.geometry = o.geometry;
-        x.kind = o.kind;
-        x.colorIdx = o.colorIdx;
-        x.parameter = o.kind == GEO_OBJECT_MIRROR  ? o.planeOffset
-                      : modelKind_ == GEO_MODEL_S3 ? std::cos(o.intrinsicRadius)
-                      : modelKind_ == GEO_MODEL_H3
-                          ? -std::cosh(o.intrinsicRadius)
-                          : o.intrinsicRadius;
-        gpuObjects.push_back(x);
+        appendObject(objects_[id], localIdentity, false);
       }
       for (int id : c.lightIds) {
         const auto &l = lights_[id];
@@ -832,6 +1067,12 @@ int Atlas::emit(bool flatten, int cameraChart, int depth, int hops,
       }
       gpuCharts.push_back(g);
     }
+  }
+  if (gpuQuadrics.size() > GEO_MAX_OBJECTS ||
+      gpuClips.size() > GEO_MAX_CLIPS) {
+    packet_.clear();
+    setError(3);
+    return 3;
   }
   ScenePacketHeader h{};
   h.meta = {GEO_PACKET_MAGIC, GEO_CONTRACT_VERSION, int(sizeof(Object)),
@@ -869,13 +1110,15 @@ int Atlas::emit(bool flatten, int cameraChart, int depth, int hops,
               int(gpuObjects.size()),
               int(materials_.size()),
               int(gpuLights.size()),
-              0,
-              0,
+              int(gpuQuadrics.size()),
+              int(gpuClips.size()),
               0};
   append(packet_, h);
   appendMany(packet_, gpuCharts);
   appendMany(packet_, gpuPortals);
   appendMany(packet_, gpuObjects);
+  appendMany(packet_, gpuQuadrics);
+  appendMany(packet_, gpuClips);
   appendMany(packet_, materials_);
   appendMany(packet_, gpuLights);
   setError(0);

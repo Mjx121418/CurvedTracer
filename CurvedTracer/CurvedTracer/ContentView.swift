@@ -16,7 +16,7 @@ struct ContentView: View {
   private let renderResolution: RenderResolution = .hd720
 
   var body: some View {
-    ZStack(alignment: .topTrailing) {
+    ZStack {
       MetalView(
         ambientSpace: $ambienSpace,
         traversalMode: $traversalMode,
@@ -26,8 +26,9 @@ struct ContentView: View {
         performanceStats: performanceStats,
         renderResolution: renderResolution
       )
-      .ignoresSafeArea()
       .aspectRatio(renderResolution.aspectRatio, contentMode: .fit)
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+      .ignoresSafeArea()
 
       PerformanceOverlay(stats: performanceStats)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -65,6 +66,7 @@ struct ContentView: View {
       .pickerStyle(.menu)
       .fixedSize()
       .padding(12)
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
     }
   }
 }

@@ -34,6 +34,8 @@ enum HyperbolicAtlasVariant: String, CaseIterable, Identifiable {
 enum SphericalFlatSceneVariant: String, CaseIterable, Identifiable {
     case cell600 = "600-cell (24 charts)"
     case objectDemo = "Object and mirror demo"
+    case primitiveGallery = "Primitive gallery"
+    case cliffordTorusConstruction = "Clifford torus construction"
 
     var id: Self { self }
 }
@@ -41,6 +43,7 @@ enum SphericalFlatSceneVariant: String, CaseIterable, Identifiable {
 enum HyperbolicFlatSceneVariant: String, CaseIterable, Identifiable {
     case honeycombCell = "{4,3,5} honeycomb cell"
     case poincareBallDemo = "Poincaré-ball demo"
+    case primitiveGallery = "Primitive gallery"
 
     var id: Self { self }
 }
@@ -413,7 +416,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
         self.commandQueue.addResidencySet(self.residencySet)
 
-        let maxPacketSize = 300_000
+        // Covers the v11 maxima, including quadric payloads and clip records.
+        let maxPacketSize = 3_000_000
         for _ in 0..<maxFramesInFlight {
             guard let buffer = device.makeBuffer(length: maxPacketSize, options: .storageModeShared)
             else {
@@ -473,11 +477,15 @@ final class Renderer: NSObject, MTKViewDelegate {
             switch sphericalFlatSceneVariant {
             case .cell600: cameraChart = SphericalScene.cell600(&atlas)
             case .objectDemo: cameraChart = SphericalScene.objectDemo(&atlas)
+            case .primitiveGallery: cameraChart = SphericalScene.primitiveGallery(&atlas)
+            case .cliffordTorusConstruction:
+                cameraChart = SphericalScene.cliffordTorusConstruction(&atlas)
             }
         case (.flat, .hyperbolic):
             switch hyperbolicFlatSceneVariant {
             case .honeycombCell: cameraChart = HyperbolicScene.honeycombCell(&atlas)
             case .poincareBallDemo: cameraChart = HyperbolicScene.poincareBallDemo(&atlas)
+            case .primitiveGallery: cameraChart = HyperbolicScene.primitiveGallery(&atlas)
             }
         case (.flat, .euclidean): cameraChart = EuclideanScene.finite(&atlas)
         case (.atlas, .sphere): cameraChart = SphericalScene.lensSpaceL52(&atlas)

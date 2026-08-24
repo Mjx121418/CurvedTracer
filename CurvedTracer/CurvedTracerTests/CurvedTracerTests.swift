@@ -76,17 +76,19 @@ struct CurvedTracerTests {
         #expect(stats.snapshot.hopLimitRays == 1)
     }
 
-    @Test func allSpaceTraversalScenesBuildV10Packets() {
+    @Test func allSpaceTraversalScenesBuildV11Packets() {
         #expect(AmbientSpace.allCases.count == 3)
         #expect(TraversalMode.allCases.count == 2)
-        #expect(SphericalFlatSceneVariant.allCases.count == 2)
-        #expect(HyperbolicFlatSceneVariant.allCases.count == 2)
+        #expect(SphericalFlatSceneVariant.allCases.count == 4)
+        #expect(HyperbolicFlatSceneVariant.allCases.count == 3)
         #expect(HyperbolicAtlasVariant.allCases.count == 2)
         var atlas = geo.Atlas()
         let builders: [(inout geo.Atlas) -> Int32] = [
             SphericalScene.cell600, SphericalScene.objectDemo,
+            SphericalScene.primitiveGallery, SphericalScene.cliffordTorusConstruction,
             SphericalScene.lensSpaceL52,
             HyperbolicScene.honeycombCell, HyperbolicScene.poincareBallDemo,
+            HyperbolicScene.primitiveGallery,
             HyperbolicScene.seifertWeberAtlas,
             HyperbolicScene.seifertWeberMultiChartAtlas,
             EuclideanScene.finite, EuclideanScene.torus,
@@ -94,7 +96,76 @@ struct CurvedTracerTests {
         for build in builders {
             _ = build(&atlas)
             #expect(atlas.packetSize() >= 192)
+            #expect(int32([UInt8](atlas.packetBytes()), at: 4) == 11)
         }
+    }
+
+    @Test func primitiveGalleriesEncodeLinearQuadraticAndClippedSurfaces() {
+        var atlas = geo.Atlas()
+        _ = SphericalScene.primitiveGallery(&atlas)
+        var bytes = [UInt8](atlas.packetBytes())
+        #expect(int32(bytes, at: 168) == 3)
+        #expect(int32(bytes, at: 180) == 0)
+        #expect(int32(bytes, at: 184) == 8)
+        let firstObject = 192 + 32
+        #expect(int32(bytes, at: firstObject + 20) == 0)
+
+        _ = HyperbolicScene.primitiveGallery(&atlas)
+        bytes = [UInt8](atlas.packetBytes())
+        #expect(int32(bytes, at: 168) == 4)
+        #expect(int32(bytes, at: 180) == 1)
+        #expect(int32(bytes, at: 184) == 10)
+    }
+
+    @Test func cliffordTorusUsesEightCheckerboardReflectionPatches() {
+        var atlas = geo.Atlas()
+        _ = SphericalScene.cliffordTorusConstruction(&atlas)
+        let bytes = [UInt8](atlas.packetBytes())
+        #expect(int32(bytes, at: 168) == 8)
+        #expect(int32(bytes, at: 172) == 2)
+        #expect(int32(bytes, at: 180) == 8)
+        #expect(int32(bytes, at: 184) == 40)
+
+        let firstObject = 192 + 32
+        var colors: [Int32] = []
+        for piece in 0..<8 {
+            let object = firstObject + piece * 48
+            #expect(int32(bytes, at: object + 20) == 2)
+            colors.append(int32(bytes, at: object + 28))
+            #expect(int32(bytes, at: object + 32) == Int32(piece * 5))
+            #expect(int32(bytes, at: object + 36) == 5)
+            #expect(int32(bytes, at: object + 40) == Int32(piece))
+        }
+        #expect(Set(colors) == Set([Int32(0), Int32(1)]))
+
+        let signs = [
+            [1, 1, 1, 1], [1, 1, -1, -1], [1, -1, 1, -1],
+            [1, -1, -1, 1], [-1, 1, 1, -1], [-1, 1, -1, 1],
+            [-1, -1, 1, 1], [-1, -1, -1, -1],
+        ]
+        let edgeHalfTurns = [
+            [1, 1, -1, -1], [-1, 1, 1, -1],
+            [-1, -1, 1, 1], [1, -1, -1, 1],
+        ]
+        for piece in signs.indices {
+            for halfTurn in edgeHalfTurns {
+                let neighborSigns = zip(signs[piece], halfTurn).map { pair in
+                    pair.0 * pair.1
+                }
+                let neighbor = signs.firstIndex(of: neighborSigns)!
+                #expect(colors[piece] != colors[neighbor])
+            }
+        }
+
+        var visitedCharts = Set<Int32>([atlas.cameraChartId()])
+        for _ in 0..<400 {
+            let forward = atlas.cameraFwd()
+            _ = atlas.cameraMove(
+                geo.vec3(forward.x * 0.01, forward.y * 0.01, forward.z * 0.01))
+            visitedCharts.insert(atlas.cameraChartId())
+        }
+        #expect(visitedCharts == Set([Int32(0), Int32(1)]))
+        #expect(atlas.build(atlas.cameraChartId(), 64) == 0)
     }
 
     @Test func multiChartSeifertWeberBuildsStateGraph() {
@@ -176,7 +247,10 @@ struct CurvedTracerTests {
         #expect(objectCount == 7)
         #expect(int32(bytes, at: 172) == 8)
         #expect(int32(bytes, at: 176) == 2)
-        let materialOffset = 192 + chartCount * 32 + portalCount * 96 + objectCount * 32
+        let quadricCount = Int(int32(bytes, at: 180))
+        let clipCount = Int(int32(bytes, at: 184))
+        let materialOffset = 192 + chartCount * 32 + portalCount * 96
+            + objectCount * 48 + quadricCount * 64 + clipCount * 32
         let mirrorColorOffset = materialOffset + 6 * 32
         #expect(float32(bytes, at: mirrorColorOffset) == 0.0)
         #expect(abs(float32(bytes, at: mirrorColorOffset + 4) - 0.8) < 0.0001)
@@ -188,13 +262,13 @@ struct CurvedTracerTests {
         #expect(abs(float32(bytes, at: 192) - 2.05) < 0.0001)
         let seifertPortalCount = Int(int32(bytes, at: 164))
         let seifertObjectOffset = 192 + 32 + seifertPortalCount * 96
-        let firstRadius = acosh(-float32(bytes, at: seifertObjectOffset + 16))
-        let secondRadius = acosh(-float32(bytes, at: seifertObjectOffset + 32 + 16))
+        let firstRadius = acosh(float32(bytes, at: seifertObjectOffset + 16))
+        let secondRadius = acosh(float32(bytes, at: seifertObjectOffset + 48 + 16))
         #expect(abs(firstRadius - 0.1883983) < 0.0001)
         #expect(abs(secondRadius - 0.2143091) < 0.0001)
 
         let firstCenter = (0..<4).map { float32(bytes, at: seifertObjectOffset + $0 * 4) }
-        let secondCenter = (0..<4).map { float32(bytes, at: seifertObjectOffset + 32 + $0 * 4) }
+        let secondCenter = (0..<4).map { float32(bytes, at: seifertObjectOffset + 48 + $0 * 4) }
         let lorentzProduct =
         firstCenter[0] * secondCenter[0]
         + firstCenter[1] * secondCenter[1]

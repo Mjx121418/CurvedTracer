@@ -1,7 +1,7 @@
-# GeometryCore contract, version 10
+# GeometryCore contract, version 11
 
-Version 10 is a clean native-model contract. Compact spherical-disk authoring
-and the former v7/v9 packet split are not part of this contract.
+Version 11 adds oriented ambient linear sections, clipped surface patches, and
+homogeneous quadratic surfaces to the native-model contract.
 
 ## Models and points
 
@@ -44,7 +44,14 @@ The native public operations are:
 
 ```cpp
 addBall(chart, vec4 center, float intrinsicRadius, material)
+addBallSurface(chart, center, radius, material, response)
+addLinearSurface(chart, vec4 normal, offset, material, response)
+addPlane(chart, outwardDirection, signedDistance, material, response)
 addMirrorPlane(chart, vec3 outwardDirection, float intrinsicDistance, material)
+addQuadric(chart, columnMajorSymmetricMatrix, material, response)
+addCliffordTorus(chart, material, response)
+addObjectClip(object, normal, offset)
+addObjectClipPlane(object, outwardDirection, signedDistance)
 addLight(chart, vec4 position, color, intensity)
 cameraChartAt(chart, vec4 position, float intrinsicTraceRadius)
 addPortalPair(chartA, outwardA, distanceA,
@@ -60,6 +67,22 @@ at distance `d` is encoded as:
 | H³ | `(cosh(d)u,sinh(d))` | `0` | `<n,P>_L <= h` |
 | R³ | `(u,0)` | `d` | `dot(n,P) <= h` |
 
+Linear surfaces use `metricDot(n,P) - h = 0`. In S³ and H³ this one equation
+family includes geodesic spheres, totally geodesic planes, equidistant
+hypersurfaces, and (in H³) null-normal horospheres. `addBallSurface` emits an
+outward-oriented linear section in S³/H³ and a Euclidean sphere in R³.
+`addBall` and `addMirrorPlane` remain opaque-ball and mirror-plane convenience
+operations.
+
+A quadric is the zero set `PᵀQP = 0` of a nonzero symmetric homogeneous 4×4
+matrix. The coefficient scale is normalized during authoring. In R³,
+`P=(x,y,z,1)`, so this includes affine quadratic and linear terms. Surface
+response is independent of equation kind: both linear and quadratic surfaces
+may be opaque or reflective.
+
+Each object may carry up to 16 linear clips. A clip retains
+`metricDot(n,P) <= h`; clip surfaces are invisible and do not create caps.
+
 `addPortalPair` gives trigger planes a `0.01`-unit outward intrinsic collar.
 `addPortalPairWithCollar` accepts an explicit nonnegative collar for atlas
 experiments. A pairing must map its mathematical face to the opposite face and
@@ -69,14 +92,16 @@ compound portal reduction.
 
 ## Packet
 
-`GEO_CONTRACT_VERSION` is 10 and `GEO_PACKET_MAGIC` is `0x41545243`. Both
+`GEO_CONTRACT_VERSION` is 11 and `GEO_PACKET_MAGIC` is `0x41545243`. Both
 `build()` and `buildAtlas()` emit:
 
 ```text
 ScenePacketHeader (192)
 GPUChart[chartCount] (32 each)
 GPUPortal[portalCount] (96 each)
-Object[objectCount] (32 each)
+Object[objectCount] (48 each)
+Quadric[quadricCount] (64 each)
+PrimitiveClip[clipCount] (32 each)
 Material[materialCount] (32 each)
 PointLight[lightCount] (32 each)
 ```
@@ -84,10 +109,11 @@ PointLight[lightCount] (32 each)
 `build()` emits one flattened chart and zero portals. `buildAtlas()` preserves
 authored charts and quotient portals.
 
-The 32-byte object is `vec4 geometry`, `float parameter`, kind, material, and
-padding. For balls, `geometry` is the model center and `parameter` is
-`cos(radius)` in S³, `-cosh(radius)` in H³, or the radius in R³. For mirrors,
-`geometry` is the ambient plane normal and `parameter` is its offset.
+An object descriptor stores its equation kind, response, material, inline
+linear/sphere coefficients, optional quadric index, and clip range. The three
+former padding counts now contain `quadricCount`, `clipCount`, and one reserved
+word. Flattened unbounded surfaces receive an internal source-chart ball clip;
+authored-atlas tracing obtains the same bound from the active chart horizon.
 
 Each chart stores its intrinsic radius and tracing parameter:
 
@@ -103,7 +129,8 @@ rejects a packet whose `controls.modelKind` differs from the specialization.
 
 Radial calculations use
 `Sκ(u)=2u/(1+κu²)` and `Cκ(u)=(1-κu²)/(1+κu²)`. Distance recovery is
-`2 atan(u)`, `2 atanh(u)`, or `2u`. Curved balls and planes use ambient
-quadratics; R³ balls use the Euclidean sphere quadratic and R³ planes use a
-linear root. Light attenuation uses the natural area radius `sin(d)`,
-`sinh(d)`, or `d`.
+`2 atan(u)`, `2 atanh(u)`, or `2u`. Linear sections retain the existing
+half-angle root calculation. R³ quadrics use a line quadratic; S³ quadrics use
+a double-angle sinusoid; H³ quadrics use a quadratic in `exp(2d)`. Candidate
+roots are tested in distance order against every clip. Light attenuation uses
+the natural area radius `sin(d)`, `sinh(d)`, or `d`.

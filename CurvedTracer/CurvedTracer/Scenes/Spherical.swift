@@ -204,6 +204,165 @@ enum SphericalScene {
         return camera
     }
 
+    /// Demonstrates linear sections, convex clipping, and independent mirror
+    /// response in S³.
+    @discardableResult static func primitiveGallery(_ atlas: inout geo.Atlas) -> Int32 {
+        atlas.start(1)
+        _ = atlas.seed(Float.pi * 0.94)
+
+        for (color, specular) in [
+            (geo.vec4(0.95, 0.18, 0.08, 1), geo.vec4(0.3, 0.3, 0.3, 1)),
+            (geo.vec4(0.12, 0.72, 1.0, 1), geo.vec4(0.3, 0.3, 0.3, 1)),
+            (geo.vec4(0.0, 0.8, 0.9, 1), geo.vec4(0.5, 0.95, 1.0, 0.88)),
+        ] {
+            _ = atlas.addMaterial(color, specular)
+        }
+
+        let truncatedBall = atlas.addBallSurface(
+            0, atlas.pointFromOriginTangent(geo.vec3(0.48, -0.18, 0.22)),
+            0.28, 0, 0)
+        if truncatedBall < 0
+            || atlas.addObjectClipPlane(truncatedBall, geo.vec3(-1, 0, 0), -0.35) < 0
+        {
+            fatalError("invalid clipped S³ ball")
+        }
+
+        let triangle = atlas.addPlane(0, geo.vec3(0, 0, 1), 0.72, 1, 0)
+        let triangleDirections: [geo.vec3] = [
+            geo.vec3(1, 0, 0),
+            geo.vec3(-0.5, 0.8660254, 0),
+            geo.vec3(-0.5, -0.8660254, 0),
+        ]
+        if triangle < 0
+            || triangleDirections.contains(where: {
+                atlas.addObjectClipPlane(triangle, $0, 0.48) < 0
+            })
+        {
+            fatalError("invalid clipped S³ triangle")
+        }
+
+        let mirrorPatch = atlas.addPlane(0, geo.vec3(0, -1, 0), 1.05, 2, 1)
+        if mirrorPatch < 0
+            || atlas.addObjectClipPlane(mirrorPatch, geo.vec3(1, 0, 0), 0.65) < 0
+            || atlas.addObjectClipPlane(mirrorPatch, geo.vec3(-1, 0, 0), 0.65) < 0
+        {
+            fatalError("invalid reflective S³ plane patch")
+        }
+
+        _ = atlas.addLight(
+            0, atlas.pointFromOriginTangent(geo.vec3(-0.35, 0.25, 0.15)),
+            geo.vec3(1, 0.92, 0.75), 1)
+        _ = atlas.addLight(
+            0, atlas.pointFromOriginTangent(geo.vec3(0.2, -0.15, 0.55)),
+            geo.vec3(0.45, 0.65, 1), 0.65)
+        atlas.setCamera(
+            0.82, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0),
+            geo.vec3(0, 0, 1))
+        atlas.setControls(5, 0.05, 0.2, 0.92, 2, 0, 0)
+        let camera = atlas.cameraChartAt(
+            0, atlas.pointFromOriginTangent(geo.vec3(0, 0, -0.12)), 2.65)
+        let result = atlas.build(camera, 64)
+        if result != 0 { fatalError("S³ primitive gallery build failed: \(result)") }
+        return camera
+    }
+
+    /// Displays Lawson's reflection construction of the Clifford torus. The
+    /// linked polar circles are P = C₁₂ and Q = C₃₄, with the four uniformly
+    /// spaced points ±e₁, ±e₂ on P and ±e₃, ±e₄ on Q. The base minimal disk
+    /// is the positive-orthant patch of xz = yw, bounded by the great-circle
+    /// arcs e₁e₂, e₂e₃, e₃e₄, and e₄e₁. Half-turns about those edges generate
+    /// the eight diagonal SO(4) images below.
+    @discardableResult static func cliffordTorusConstruction(
+        _ atlas: inout geo.Atlas
+    ) -> Int32 {
+        atlas.start(1)
+        // Two antipodal charts of radius > π/2 cover S³. Assigning every
+        // patch to the chart centered on its w-hemisphere keeps the automatic
+        // flattened-chart bound strictly outside the whole patch. The same
+        // overlap also lets camera movement cross either chart boundary
+        // without approaching the coordinate singularity at its antipode.
+        let chartRadius = Float.pi * 0.56
+        _ = atlas.seed(chartRadius)
+        let antipodal: [Float] = [
+            -1, 0, 0, 0,
+            0, -1, 0, 0,
+            0, 0, -1, 0,
+            0, 0, 0, -1,
+        ]
+        let antipodalChart = atlas.addChart(chartRadius, 0, antipodal, true)
+        if antipodalChart != 1 { fatalError("invalid antipodal S³ chart") }
+        _ = atlas.addMaterial(
+            geo.vec4(0.95, 0.24, 0.10, 1), geo.vec4(0.35, 0.35, 0.35, 1))
+        _ = atlas.addMaterial(
+            geo.vec4(0.08, 0.62, 1.0, 1), geo.vec4(0.35, 0.35, 0.35, 1))
+
+        // The symmetric matrix represents xz - yw = 0. This is an isometric
+        // coordinate form of the usual x² + y² = z² + w² Clifford torus.
+        var quadric = [Float](repeating: 0, count: 16)
+        quadric[2] = 0.5
+        quadric[8] = 0.5
+        quadric[7] = -0.5
+        quadric[13] = -0.5
+
+        // Each even sign pattern is a diagonal orientation-preserving
+        // isometry preserving xz = yw. Applied to the positive patch, these
+        // are precisely the eight pieces obtained by successive edge
+        // half-turns. Opposite signs identify the image orthant.
+        let imageSigns: [[Float]] = [
+            [1, 1, 1, 1],
+            [1, 1, -1, -1],
+            [1, -1, 1, -1],
+            [1, -1, -1, 1],
+            [-1, 1, 1, -1],
+            [-1, 1, -1, 1],
+            [-1, -1, 1, 1],
+            [-1, -1, -1, -1],
+        ]
+
+        for globalSigns in imageSigns {
+            // This parity changes under every edge half-turn, so patches
+            // sharing a great-circle edge always receive different colors.
+            let color: Int32 = globalSigns[0] * globalSigns[2] < 0 ? 1 : 0
+            let chart: Int32 = globalSigns[3] > 0 ? 0 : antipodalChart
+            // Chart 1 uses y = -x, so all four orthant signs reverse there.
+            let localSigns = chart == 0 ? globalSigns : globalSigns.map { -$0 }
+            let patch = atlas.addQuadric(chart, quadric, color, 0)
+            if patch < 0 { fatalError("invalid Clifford torus patch") }
+
+            let coordinates = [
+                geo.vec4(-localSigns[0], 0, 0, 0),
+                geo.vec4(0, -localSigns[1], 0, 0),
+                geo.vec4(0, 0, -localSigns[2], 0),
+                geo.vec4(0, 0, 0, -localSigns[3]),
+            ]
+            for normal in coordinates {
+                if atlas.addObjectClip(patch, normal, 0) < 0 {
+                    fatalError("invalid Clifford torus patch clip")
+                }
+            }
+        }
+
+        _ = atlas.addLight(
+            0, atlas.pointFromOriginTangent(geo.vec3(-0.42, 0.28, 0.20)),
+            geo.vec3(1, 0.92, 0.74), 1)
+        _ = atlas.addLight(
+            0, atlas.pointFromOriginTangent(geo.vec3(0.30, -0.18, 0.52)),
+            geo.vec3(0.45, 0.68, 1), 0.7)
+        atlas.setCamera(
+            0.82, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0),
+            geo.vec3(0, 0, 1))
+        atlas.setControls(5, 0.05, 0.2, 0.92, 2, 0, 0)
+        let quarterTurn = Float.pi / (2 * sqrt(2))
+        let camera = atlas.cameraChartAt(
+            0, atlas.pointFromOriginTangent(geo.vec3(quarterTurn, 0, quarterTurn)),
+            Float.pi * 0.98)
+        let result = atlas.build(camera, 64)
+        if result != 0 {
+            fatalError("Clifford torus construction build failed: \(result)")
+        }
+        return camera
+    }
+
     /// Builds the original 24-chart 600-cell scene. The overlap graph is the
     /// complete 24-cell graph: 24 chart vertices, degree eight, and 96 edges.
     @discardableResult static func cell600(_ atlas: inout geo.Atlas) -> Int32 {

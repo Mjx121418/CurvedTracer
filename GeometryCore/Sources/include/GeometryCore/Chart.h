@@ -18,15 +18,23 @@
 
 namespace geo {
 
-inline std::string geometryCoreName() { return "Geometry Core v10"; }
+inline std::string geometryCoreName() { return "Geometry Core v11"; }
 
 struct ChartObject {
   int chartId = -1;
-  int kind = GEO_OBJECT_OPAQUE;
+  int equationKind = GEO_EQUATION_LINEAR;
+  int responseKind = GEO_RESPONSE_OPAQUE;
   vec4 geometry;
-  float intrinsicRadius = 0.0f; // balls only
-  float planeOffset = 0.0f;     // mirrors only
+  float parameter = 0.0f;
+  mat4 quadric;
   int colorIdx = 0;
+  bool needsChartBound = false;
+  std::vector<int> clipIds;
+};
+
+struct ChartClip {
+  vec4 normal;
+  float offset = 0.0f;
 };
 
 struct ChartLight {
@@ -87,8 +95,20 @@ public:
 
   int addBall(int chart, const vec4 &center, float intrinsicRadius,
               int material);
+  int addBallSurface(int chart, const vec4 &center, float intrinsicRadius,
+                     int material, int response);
+  int addLinearSurface(int chart, const vec4 &normal, float offset,
+                       int material, int response);
+  int addPlane(int chart, const vec3 &outwardDirection, float signedDistance,
+               int material, int response);
   int addMirrorPlane(int chart, const vec3 &outwardDirection,
                      float intrinsicDistance, int material);
+  int addQuadric(int chart, const float coefficients[16], int material,
+                 int response);
+  int addCliffordTorus(int chart, int material, int response);
+  int addObjectClip(int object, const vec4 &normal, float offset);
+  int addObjectClipPlane(int object, const vec3 &outwardDirection,
+                         float signedDistance);
   int addLight(int chart, const vec4 &position, const vec3 &color,
                float intensity);
   int addPortalPair(int chartA, const vec3 &outwardA, float faceDistanceA,
@@ -136,6 +156,7 @@ private:
   int modelKind_ = GEO_MODEL_H3;
   std::vector<Chart> charts_;
   std::vector<ChartObject> objects_;
+  std::vector<ChartClip> clips_;
   std::vector<ChartLight> lights_;
   std::vector<ChartPortal> portals_;
   std::vector<Material> materials_;
@@ -168,6 +189,8 @@ private:
   float originDistance(const vec4 &p) const;
   float tracingParameter(float radius) const;
   vec4 planeNormal(const vec3 &outward, float distance) const;
+  bool normalizedLinearForm(const vec4 &normal, float offset,
+                            vec4 &normalized, float &normalizedOffset) const;
   float planeValue(const ChartPortal &p, const vec4 &x) const;
   Isometry movePointToOrigin(const vec4 &p) const;
   vec4 expMap(const vec4 &p, const vec4 &tangent) const;

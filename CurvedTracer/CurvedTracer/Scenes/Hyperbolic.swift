@@ -150,6 +150,78 @@ enum HyperbolicScene {
         return camera
     }
 
+    /// Demonstrates clipped linear and quadratic surfaces in H³.
+    @discardableResult static func primitiveGallery(_ atlas: inout geo.Atlas) -> Int32 {
+        atlas.start(0)
+        _ = atlas.seed(3.0)
+        addDiffuseMaterial(&atlas, [0.95, 0.16, 0.08])
+        addDiffuseMaterial(&atlas, [0.10, 0.68, 1.0])
+        addDiffuseMaterial(&atlas, [0.95, 0.72, 0.10])
+        addMirrorMaterial(&atlas)
+
+        let truncatedBall = atlas.addBallSurface(
+            0, atlas.pointFromOriginTangent(geo.vec3(-0.45, -0.12, 0.38)),
+            0.32, 0, 0)
+        if truncatedBall < 0
+            || atlas.addObjectClipPlane(truncatedBall, geo.vec3(1, 0, 0), 0.25) < 0
+        {
+            fatalError("invalid clipped H³ ball")
+        }
+
+        let triangle = atlas.addPlane(0, geo.vec3(0, 0, 1), 0.82, 1, 0)
+        let triangleDirections: [geo.vec3] = [
+            geo.vec3(1, 0, 0),
+            geo.vec3(-0.5, 0.8660254, 0),
+            geo.vec3(-0.5, -0.8660254, 0),
+        ]
+        if triangle < 0
+            || triangleDirections.contains(where: {
+                atlas.addObjectClipPlane(triangle, $0, 0.5) < 0
+            })
+        {
+            fatalError("invalid clipped H³ triangle")
+        }
+
+        var quadric = [Float](repeating: 0, count: 16)
+        quadric[0] = 1.0
+        quadric[5] = 1.6
+        quadric[10] = 0.7
+        quadric[15] = -0.22
+        let quadricPatch = atlas.addQuadric(0, quadric, 2, 0)
+        if quadricPatch < 0
+            || atlas.addObjectClipPlane(quadricPatch, geo.vec3(-1, 0, 0), 0.7) < 0
+        {
+            fatalError("invalid H³ quadric patch")
+        }
+
+        // A spacelike ambient normal with a nonzero level gives an
+        // equidistant hypersurface rather than a totally geodesic plane.
+        let mirrorPatch = atlas.addLinearSurface(
+            0, geo.vec4(0, -1, 0, 0), sinh(Float(0.95)), 3, 1)
+        if mirrorPatch < 0
+            || atlas.addObjectClipPlane(mirrorPatch, geo.vec3(1, 0, 0), 0.65) < 0
+            || atlas.addObjectClipPlane(mirrorPatch, geo.vec3(-1, 0, 0), 0.65) < 0
+        {
+            fatalError("invalid reflective H³ plane patch")
+        }
+
+        _ = atlas.addLight(
+            0, pointFromKlein(&atlas, [-0.25, 0.20, 0.12]),
+            geo.vec3(1, 0.92, 0.75), 1)
+        _ = atlas.addLight(
+            0, pointFromKlein(&atlas, [0.22, -0.12, 0.32]),
+            geo.vec3(0.48, 0.66, 1), 0.6)
+        atlas.setCamera(
+            0.82, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0),
+            geo.vec3(0, 0, 1))
+        atlas.setControls(5, 0.05, 0.2, 0.92, 2, 0, 0)
+        let camera = atlas.cameraChartAt(
+            0, atlas.pointFromOriginTangent(geo.vec3(0, 0, -0.12)), 2.7)
+        let result = atlas.build(camera, 64)
+        if result != 0 { fatalError("H³ primitive gallery build failed: \(result)") }
+        return camera
+    }
+
     @discardableResult static func honeycombCell(_ atlas: inout geo.Atlas) -> Int32 {
         atlas.start(0)
         _ = atlas.seed(intrinsicRadius(fromCompactAngle: Float.pi * 0.999 / 2))

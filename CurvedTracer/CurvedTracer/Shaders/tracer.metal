@@ -4,12 +4,15 @@ using namespace metal;
 constant int SPACE_FORM [[function_constant(0)]]; // 0 H³, 1 S³, 2 R³
 constant bool ENABLE_PORTALS [[function_constant(1)]];
 
-constant int PACKET_MAGIC = 0x41545243, CONTRACT_VERSION = 10,
-HEADER_SIZE = 192, OBJECT_SIZE = 32;
+constant int PACKET_MAGIC = 0x41545243, CONTRACT_VERSION = 11,
+HEADER_SIZE = 192, OBJECT_SIZE = 48;
 constant int MODEL_H3 = 0, MODEL_S3 = 1, MODEL_R3 = 2;
-constant int OBJECT_OPAQUE = 0, OBJECT_MIRROR = 1;
+constant int EQUATION_LINEAR = 0, EQUATION_R3_SPHERE = 1, EQUATION_QUADRIC = 2;
+constant int RESPONSE_OPAQUE = 0, RESPONSE_MIRROR = 1;
+constant int CLIP_LINEAR = 0, CLIP_BALL = 1;
 constant int FOG_DISABLED = 0, FOG_COMPACT = 1, FOG_EXPONENTIAL = 2;
-constant float EPS = 1e-5f, SELF_EPS = 1e-4f, INF = 1e30f;
+constant float EPS = 1e-5f, SELF_EPS = 1e-4f, INF = 1e30f,
+TWO_PI = 6.28318530718f;
 
 struct PacketMeta {
     int magic, contractVersion, objectSize, packetHeaderSize;
@@ -26,8 +29,8 @@ struct ControlsGPU {
     int maxChartHops, maxLightHops, maxLightStates, pad0;
 };
 struct CountsGPU {
-    int chartCount, portalCount, objectCount, materialCount, lightCount, pad0,
-    pad1, pad2;
+    int chartCount, portalCount, objectCount, materialCount, lightCount,
+    quadricCount, clipCount, pad0;
 };
 struct HeaderGPU {
     PacketMeta meta;
@@ -49,7 +52,16 @@ struct PortalGPU {
 struct ObjectGPU {
     float4 geometry;
     float parameter;
-    int kind, colorIdx, pad0;
+    int equationKind, responseKind, colorIdx, firstClip, clipCount,
+    quadricIndex, pad0;
+};
+struct QuadricGPU {
+    float4x4 coefficients;
+};
+struct PrimitiveClipGPU {
+    float4 geometry;
+    float parameter;
+    int kind, pad0, pad1;
 };
 struct MaterialGPU {
     float4 color, specular;
@@ -155,7 +167,8 @@ int roots(float a, float b, float c, thread float &r0, thread float &r1) {
         return 1;
     }
     float disc = b * b - 4 * a * c;
-    if (disc < 0)
+    float discTolerance = EPS * (1 + abs(b * b) + abs(4 * a * c));
+    if (disc < -discTolerance)
         return 0;
     float s = sqrt(max(disc, 0.0f));
     float q = -.5f * (b + copysign(s, b));
@@ -166,7 +179,7 @@ int roots(float a, float b, float c, thread float &r0, thread float &r1) {
         r0 = r1;
         r1 = t;
     }
-    return disc <= EPS ? 1 : 2;
+    return disc <= discTolerance ? 1 : 2;
 }
 
 float curvedRoot(float A, float B, float q, float minimum, float maximum) {
@@ -186,22 +199,170 @@ float curvedRoot(float A, float B, float q, float minimum, float maximum) {
     return best;
 }
 
-float objectRoot(ObjectGPU o, float4 p, float4 v, float minimum,
-                 float maximum) {
-    if (SPACE_FORM == MODEL_R3 && o.kind == OBJECT_OPAQUE) {
-        float3 oc = p.xyz - o.geometry.xyz;
-        float r0, r1;
-        int n = roots(dot(v.xyz, v.xyz), 2 * dot(oc, v.xyz),
-                      dot(oc, oc) - o.parameter * o.parameter, r0, r1);
-        float d = INF;
-        if (n > 0 && r0 >= minimum && r0 <= maximum)
-            d = r0;
-        if (n > 1 && r1 >= minimum && r1 <= maximum)
-            d = min(d, r1);
-        return d;
+void insertCandidate(float distance, float minimum, float maximum,
+                     thread float &first, thread float &second,
+                     thread int &count) {
+    if (!isfinite(distance) || distance < minimum || distance > maximum)
+        return;
+    if (count > 0 && abs(distance - first) <= EPS)
+        return;
+    if (count == 0 || distance < first) {
+        second = first;
+        first = distance;
+        count = min(count + 1, 2);
+    } else if (count == 1 || distance < second) {
+        second = distance;
+        count = 2;
     }
-    float A = mdot(o.geometry, p), B = mdot(o.geometry, v);
-    return curvedRoot(A, B, o.parameter, minimum, maximum);
+}
+
+int curvedCandidates(float A, float B, float level, float minimum,
+                     float maximum, thread float &first,
+                     thread float &second) {
+    float r0, r1;
+    int rootsFound = roots(-kappa() * (A + level), 2 * B, A - level,
+                           r0, r1);
+    int count = 0;
+    first = second = INF;
+    if (rootsFound > 0 && r0 >= 0)
+        insertCandidate(distanceFromU(r0), minimum, maximum,
+                        first, second, count);
+    if (rootsFound > 1 && r1 >= 0)
+        insertCandidate(distanceFromU(r1), minimum, maximum,
+                        first, second, count);
+    return count;
+}
+
+float quadricValue(float4x4 q, float4 first, float4 second) {
+    return dot(first, q * second);
+}
+
+int quadricCandidates(float4x4 q, float4 p, float4 v, float minimum,
+                      float maximum, thread float &first,
+                      thread float &second) {
+    float A = quadricValue(q, p, p);
+    float B = quadricValue(q, p, v);
+    float D = quadricValue(q, v, v);
+    first = second = INF;
+    int count = 0;
+    if (SPACE_FORM == MODEL_R3) {
+        float r0, r1;
+        int rootsFound = roots(D, 2 * B, A, r0, r1);
+        if (rootsFound > 0)
+            insertCandidate(r0, minimum, maximum, first, second, count);
+        if (rootsFound > 1)
+            insertCandidate(r1, minimum, maximum, first, second, count);
+        return count;
+    }
+    if (SPACE_FORM == MODEL_H3) {
+        float mean = 0.5f * (A + D);
+        float r0, r1;
+        int rootsFound = roots(mean + B, A - D, mean - B, r0, r1);
+        if (rootsFound > 0 && r0 >= 1)
+            insertCandidate(0.5f * log(r0), minimum, maximum,
+                            first, second, count);
+        if (rootsFound > 1 && r1 >= 1)
+            insertCandidate(0.5f * log(r1), minimum, maximum,
+                            first, second, count);
+        return count;
+    }
+
+    float constantPart = 0.5f * (A + D);
+    float cosinePart = 0.5f * (A - D);
+    float amplitude = length(float2(cosinePart, B));
+    if (amplitude <= EPS || abs(constantPart) > amplitude + EPS)
+        return 0;
+    float target = clamp(-constantPart / amplitude, -1.0f, 1.0f);
+    float phase = atan2(B, cosinePart);
+    float alpha = acos(target);
+    for (int branch = 0; branch < 2; ++branch) {
+        float theta = phase + (branch == 0 ? alpha : -alpha);
+        theta -= floor(theta / TWO_PI) * TWO_PI;
+        insertCandidate(0.5f * theta, minimum, maximum,
+                        first, second, count);
+    }
+    return count;
+}
+
+float4 objectNormal(ObjectGPU o, float4 hit,
+                    device const QuadricGPU *quadrics) {
+    if (o.equationKind == EQUATION_R3_SPHERE)
+        return float4(normalize(hit.xyz - o.geometry.xyz), 0);
+    if (o.equationKind == EQUATION_LINEAR) {
+        if (SPACE_FORM == MODEL_R3)
+            return float4(normalize(o.geometry.xyz), 0);
+        return tangentNormalize(
+            o.geometry - kappa() * mdot(o.geometry, hit) * hit);
+    }
+    float4 covector = quadrics[o.quadricIndex].coefficients * hit;
+    float4 gradient = SPACE_FORM == MODEL_H3
+    ? float4(covector.xyz, -covector.w) : covector;
+    if (SPACE_FORM == MODEL_R3)
+        return float4(normalize(gradient.xyz), 0);
+    return tangentNormalize(gradient - kappa() * mdot(gradient, hit) * hit);
+}
+
+bool insideClip(PrimitiveClipGPU clip, float4 point) {
+    if (clip.kind == CLIP_LINEAR) {
+        float scale = 1 + length(clip.geometry) + abs(clip.parameter);
+        return mdot(clip.geometry, point) <= clip.parameter + 4 * EPS * scale;
+    }
+    if (SPACE_FORM == MODEL_R3)
+        return distance(point.xyz, clip.geometry.xyz) <= clip.parameter + 4 * EPS;
+    return mdot(clip.geometry, point) >= clip.parameter - 4 * EPS;
+}
+
+float objectRoot(ObjectGPU o, float4 p, float4 v, float minimum,
+                 float maximum, device const QuadricGPU *quadrics,
+                 device const PrimitiveClipGPU *clips,
+                 thread uint &errorBits) {
+    float first = INF, second = INF;
+    int count = 0;
+    if (o.equationKind == EQUATION_R3_SPHERE) {
+        float3 delta = p.xyz - o.geometry.xyz;
+        float r0, r1;
+        count = roots(dot(v.xyz, v.xyz), 2 * dot(delta, v.xyz),
+                      dot(delta, delta) - o.parameter * o.parameter, r0, r1);
+        int accepted = 0;
+        first = second = INF;
+        if (count > 0)
+            insertCandidate(r0, minimum, maximum, first, second, accepted);
+        if (count > 1)
+            insertCandidate(r1, minimum, maximum, first, second, accepted);
+        count = accepted;
+    } else if (o.equationKind == EQUATION_LINEAR) {
+        if (SPACE_FORM == MODEL_R3) {
+            float denominator = dot(o.geometry.xyz, v.xyz);
+            if (abs(denominator) >= EPS) {
+                count = 0;
+                insertCandidate(
+                    (o.parameter - dot(o.geometry.xyz, p.xyz)) / denominator,
+                    minimum, maximum, first, second, count);
+            }
+        } else {
+            count = curvedCandidates(mdot(o.geometry, p), mdot(o.geometry, v),
+                                     o.parameter, minimum, maximum,
+                                     first, second);
+        }
+    } else if (o.equationKind == EQUATION_QUADRIC && o.quadricIndex >= 0) {
+        count = quadricCandidates(quadrics[o.quadricIndex].coefficients, p, v,
+                                  minimum, maximum, first, second);
+    }
+
+    for (int candidate = 0; candidate < count; ++candidate) {
+        float distance = candidate == 0 ? first : second;
+        float4 point = rayPoint(p, v, distance);
+        bool accepted = true;
+        for (int local = 0; local < o.clipCount; ++local)
+            accepted = accepted && insideClip(clips[o.firstClip + local], point);
+        if (!accepted)
+            continue;
+        float4 normal = objectNormal(o, point, quadrics);
+        if (all(isfinite(normal)) && mdot(normal, normal) > 0.5f)
+            return distance;
+        errorBits |= 32u;
+    }
+    return INF;
 }
 float portalRoot(PortalGPU portal, float4 p, float4 v, float minimum,
                  float maximum) {
@@ -219,17 +380,6 @@ float portalRoot(PortalGPU portal, float4 p, float4 v, float minimum,
     return d;
 }
 
-float4 objectNormal(ObjectGPU o, float4 hit) {
-    if (SPACE_FORM == MODEL_R3) {
-        if (o.kind == OBJECT_OPAQUE)
-            return float4(normalize(hit.xyz - o.geometry.xyz), 0);
-        return float4(normalize(o.geometry.xyz), 0);
-    }
-    if (o.kind == OBJECT_OPAQUE)
-        return tangentNormalize(kappa() * o.parameter * hit - o.geometry);
-    float q = mdot(o.geometry, hit);
-    return tangentNormalize(o.geometry - kappa() * q * hit);
-}
 float4 portalNormal(PortalGPU o, float4 hit) {
     if (SPACE_FORM == MODEL_R3)
         return float4(normalize(o.normal.xyz), 0);
@@ -241,22 +391,35 @@ Event nearestEvent(float4 p, float4 v, int chartId, float maximum,
                    float objectMinimum, device const ChartGPU *charts,
                    device const PortalGPU *portals,
                    device const ObjectGPU *objects,
-                   thread uint &portalTests) {
+                   device const QuadricGPU *quadrics,
+                   device const PrimitiveClipGPU *clips,
+                   thread uint &portalTests, thread uint &errorBits) {
     Event e{};
     e.valid = false;
     e.distance = maximum + 1;
     ChartGPU chart = charts[chartId];
-    ObjectGPU horizon{};
-    horizon.kind = OBJECT_OPAQUE;
-    horizon.geometry = origin();
-    horizon.parameter = SPACE_FORM == MODEL_S3   ? cos(chart.intrinsicRadius)
-    : SPACE_FORM == MODEL_H3 ? -cosh(chart.intrinsicRadius)
-    : chart.intrinsicRadius;
-    float chartExit = objectRoot(horizon, p, v, objectMinimum, maximum);
+    float chartExit = INF;
+    if (SPACE_FORM == MODEL_R3) {
+        float r0, r1;
+        int count = roots(dot(v.xyz, v.xyz), 2 * dot(p.xyz, v.xyz),
+                          dot(p.xyz, p.xyz) -
+                          chart.intrinsicRadius * chart.intrinsicRadius,
+                          r0, r1);
+        if (count > 0 && r0 >= objectMinimum && r0 <= maximum)
+            chartExit = r0;
+        if (count > 1 && r1 >= objectMinimum && r1 <= maximum)
+            chartExit = min(chartExit, r1);
+    } else {
+        float level = SPACE_FORM == MODEL_S3 ? cos(chart.intrinsicRadius)
+        : -cosh(chart.intrinsicRadius);
+        chartExit = curvedRoot(mdot(origin(), p), mdot(origin(), v), level,
+                               objectMinimum, maximum);
+    }
     float localMaximum = min(maximum, chartExit);
     for (int local = 0; local < chart.objectCount; ++local) {
         int i = chart.firstObject + local;
-        float d = objectRoot(objects[i], p, v, objectMinimum, localMaximum);
+        float d = objectRoot(objects[i], p, v, objectMinimum, localMaximum,
+                             quadrics, clips, errorBits);
         if (d < e.distance) {
             e.valid = true;
             e.portal = false;
@@ -284,7 +447,7 @@ Event nearestEvent(float4 p, float4 v, int chartId, float maximum,
         e.point = rayPoint(p, v, e.distance);
         e.tangent = tangentNormalize(rayTangent(p, v, e.distance));
         e.normal = e.portal ? portalNormal(portals[e.index], e.point)
-        : objectNormal(objects[e.index], e.point);
+        : objectNormal(objects[e.index], e.point, quadrics);
     }
     return e;
 }
@@ -540,7 +703,9 @@ kernel void raytrace(device const uchar *packet [[buffer(0)]],
         h->counts.portalCount < 0 || h->counts.portalCount > 1024 ||
         h->counts.objectCount < 0 || h->counts.objectCount > 4096 ||
         h->counts.materialCount < 0 || h->counts.materialCount > 256 ||
-        h->counts.lightCount < 0 || h->counts.lightCount > 16)
+        h->counts.lightCount < 0 || h->counts.lightCount > 16 ||
+        h->counts.quadricCount < 0 || h->counts.quadricCount > 4096 ||
+        h->counts.clipCount < 0 || h->counts.clipCount > 65536)
         error |= 1;
     if (h->camera.chartId < 0 || h->camera.chartId >= h->counts.chartCount ||
         h->controls.maxChartHops <= 0 || h->controls.maxChartHops > 128 ||
@@ -564,6 +729,12 @@ kernel void raytrace(device const uchar *packet [[buffer(0)]],
     device const ObjectGPU *objects =
     reinterpret_cast<device const ObjectGPU *>(packet + offset);
     offset += h->counts.objectCount * sizeof(ObjectGPU);
+    device const QuadricGPU *quadrics =
+    reinterpret_cast<device const QuadricGPU *>(packet + offset);
+    offset += h->counts.quadricCount * sizeof(QuadricGPU);
+    device const PrimitiveClipGPU *clips =
+    reinterpret_cast<device const PrimitiveClipGPU *>(packet + offset);
+    offset += h->counts.clipCount * sizeof(PrimitiveClipGPU);
     device const MaterialGPU *materials =
     reinterpret_cast<device const MaterialGPU *>(packet + offset);
     offset += h->counts.materialCount * sizeof(MaterialGPU);
@@ -603,7 +774,7 @@ kernel void raytrace(device const uchar *packet [[buffer(0)]],
     : 0.0f;
     for (int bounce = 0; bounce <= maxBounces;) {
         Event e = nearestEvent(p, v, chartId, remaining, SELF_EPS, charts, portals,
-                               objects, portalTests);
+                               objects, quadrics, clips, portalTests, error);
         if (!e.valid) {
             // The remaining transmitted light terminates in the homogeneous
             // fog color. Together with the segment contributions below, this
@@ -636,7 +807,7 @@ kernel void raytrace(device const uchar *packet [[buffer(0)]],
             break;
         }
         MaterialGPU m = materials[o.colorIdx];
-        if (o.kind == OBJECT_OPAQUE) {
+        if (o.responseKind == RESPONSE_OPAQUE) {
             radiance +=
             throughput * shade(e, o, m, chartId, -e.tangent, charts, portals,
                                lights, h->controls.ambient, h->controls.falloffK,
@@ -644,7 +815,7 @@ kernel void raytrace(device const uchar *packet [[buffer(0)]],
                                clamp(h->controls.maxLightStates, 1, 256), error);
             break;
         }
-        if (o.kind != OBJECT_MIRROR)
+        if (o.responseKind != RESPONSE_MIRROR)
             break;
 
         if (bounce == maxBounces) {

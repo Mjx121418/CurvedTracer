@@ -1,8 +1,8 @@
 #pragma once
-// Version-10 scene packet shared verbatim by C++ and Metal.
+// Version-11 scene packet shared verbatim by C++ and Metal.
 #include "GeometryCore/Math.h"
 
-#define GEO_CONTRACT_VERSION 10
+#define GEO_CONTRACT_VERSION 11
 #define GEO_PACKET_MAGIC 0x41545243
 
 #define GEO_MAX_OBJECTS 4096
@@ -11,13 +11,26 @@
 #define GEO_MAX_CHARTS 256
 #define GEO_MAX_PORTALS 1024
 #define GEO_MAX_CHART_DEPTH 64
+#define GEO_MAX_CLIPS 65536
+#define GEO_MAX_CLIPS_PER_OBJECT 16
 
 #define GEO_MODEL_H3 0
 #define GEO_MODEL_S3 1
 #define GEO_MODEL_R3 2
 
-#define GEO_OBJECT_OPAQUE 0
-#define GEO_OBJECT_MIRROR 1
+#define GEO_EQUATION_LINEAR 0
+#define GEO_EQUATION_R3_SPHERE 1
+#define GEO_EQUATION_QUADRIC 2
+
+#define GEO_RESPONSE_OPAQUE 0
+#define GEO_RESPONSE_MIRROR 1
+
+// Source-compatibility aliases for the former shape/response constants.
+#define GEO_OBJECT_OPAQUE GEO_RESPONSE_OPAQUE
+#define GEO_OBJECT_MIRROR GEO_RESPONSE_MIRROR
+
+#define GEO_CLIP_LINEAR 0
+#define GEO_CLIP_BALL 1
 
 namespace geo {
 
@@ -64,9 +77,9 @@ struct Counts {
     int objectCount;
     int materialCount;
     int lightCount;
+    int quadricCount;
+    int clipCount;
     int pad0;
-    int pad1;
-    int pad2;
 };
 
 struct ScenePacketHeader {
@@ -76,14 +89,33 @@ struct ScenePacketHeader {
     Counts counts;
 };
 
-// Ball: geometry=center, parameter=cos(r), -cosh(r), or r.
-// Mirror: geometry=ambient outward normal, parameter=plane offset.
+// LINEAR: geometry=ambient metric normal, parameter=offset.
+// R3_SPHERE: geometry=center, parameter=radius.
+// QUADRIC: quadricIndex selects P^T Q P = 0; geometry/parameter are unused.
 struct Object {
     vec4 geometry;
     float parameter;
-    int kind;
+    int equationKind;
+    int responseKind;
     int colorIdx;
+    int firstClip;
+    int clipCount;
+    int quadricIndex;
     int pad0;
+};
+
+struct Quadric {
+    mat4 coefficients;
+};
+
+// LINEAR retains metricDot(geometry, P) <= parameter.
+// BALL retains the intrinsic ball encoded by geometry/parameter.
+struct PrimitiveClip {
+    vec4 geometry;
+    float parameter;
+    int kind;
+    int pad0;
+    int pad1;
 };
 
 struct Material {
@@ -104,7 +136,9 @@ static_assert(sizeof(Camera) == 96, "Camera must be 96 bytes");
 static_assert(sizeof(RenderControls) == 48, "RenderControls must be 48 bytes");
 static_assert(sizeof(Counts) == 32, "Counts must be 32 bytes");
 static_assert(sizeof(ScenePacketHeader) == 192, "ScenePacketHeader must be 192 bytes");
-static_assert(sizeof(Object) == 32, "Object must be 32 bytes");
+static_assert(sizeof(Object) == 48, "Object must be 48 bytes");
+static_assert(sizeof(Quadric) == 64, "Quadric must be 64 bytes");
+static_assert(sizeof(PrimitiveClip) == 32, "PrimitiveClip must be 32 bytes");
 static_assert(sizeof(Material) == 32, "Material must be 32 bytes");
 static_assert(sizeof(PointLight) == 32, "PointLight must be 32 bytes");
 #endif

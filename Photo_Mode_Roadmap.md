@@ -285,6 +285,12 @@ primary-ray horizon from becoming an unintended total path-length cutoff.
 
 ## Milestone F — Quotient and GPU Atlas path tracing
 
+Status: implemented. All atlas specializations use the stochastic Lambertian
+integrator. Diffuse and mirror segments continue through `traceToSurface`, and
+direct lighting deterministically enumerates the existing bounded light-lift
+tree with one portal-aware visibility query per lift. Bounce depth, light-hop,
+light-state, and chart-hop controls remain explicit safety limits.
+
 Extend diffuse and mirror continuation through existing portal transport.
 For direct lighting, enumerate the current bounded set of light lifts, trace a
 visibility ray toward each lift, and retain the existing light-state and

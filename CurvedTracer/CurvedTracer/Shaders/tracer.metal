@@ -194,44 +194,81 @@ static float3 photoDirectLambertian(
 ) {
     const float inversePi = 0.31830988618f;
     float3 direct = 0;
-    ChartGPU chart = charts[chartId];
-    for (int local = 0; local < chart.lightCount; ++local) {
-        LightGPU light = lights[chart.firstLight + local];
-        float distanceToLight = intrinsicDistance(hit.point, light.position);
-        if (!isfinite(distanceToLight) || distanceToLight < EPS)
-            continue;
+    int chartStack[5], nextPortal[5], incoming[5];
+    float4x4 toStart[5];
+    chartStack[0] = chartId;
+    nextPortal[0] = -1;
+    incoming[0] = -1;
+    toStart[0] = float4x4(1);
+    int depth = 0, stateCount = 1;
+    while (depth >= 0) {
+        ChartGPU chart = charts[chartStack[depth]];
+        if (nextPortal[depth] < 0) {
+            for (int local = 0; local < chart.lightCount; ++local) {
+                LightGPU light = lights[chart.firstLight + local];
+                float4 lightPosition = toStart[depth] * light.position;
+                float distanceToLight = intrinsicDistance(
+                    hit.point, lightPosition);
+                if (!isfinite(distanceToLight) || distanceToLight < EPS)
+                    continue;
 
-        float4 lightDirection = directionTo(
-            hit.point, light.position, distanceToLight);
-        float cosine = clamp(mdot(normal, lightDirection), 0.0f, 1.0f);
-        if (cosine <= 0.0f)
-            continue;
+                float4 lightDirection = directionTo(
+                    hit.point, lightPosition, distanceToLight);
+                float cosine = clamp(
+                    mdot(normal, lightDirection), 0.0f, 1.0f);
+                if (cosine <= 0.0f)
+                    continue;
 
-        RayState shadowRay;
-        shadowRay.point = hit.point;
-        shadowRay.tangent = lightDirection;
-        shadowRay.chartId = chartId;
-        VisibilityResult visibility = traceAny(
-            shadowRay, distanceToLight - SELF_EPS,
-            h->controls.maxChartHops, charts, portals, objects, quadrics,
-            clips);
-        result.errorBits |= visibility.errorBits;
-        result.portalHops += visibility.portalHops;
-        result.compoundPortalHops += visibility.compoundPortalHops;
-        result.portalTests += visibility.portalTests;
-        result.hitHopLimit = result.hitHopLimit || visibility.hitHopLimit;
-        if (visibility.blocked)
-            continue;
+                RayState shadowRay;
+                shadowRay.point = hit.point;
+                shadowRay.tangent = lightDirection;
+                shadowRay.chartId = chartId;
+                VisibilityResult visibility = traceAny(
+                    shadowRay, distanceToLight - SELF_EPS,
+                    h->controls.maxChartHops, charts, portals, objects,
+                    quadrics, clips);
+                result.errorBits |= visibility.errorBits;
+                result.portalHops += visibility.portalHops;
+                result.compoundPortalHops += visibility.compoundPortalHops;
+                result.portalTests += visibility.portalTests;
+                result.hitHopLimit =
+                result.hitHopLimit || visibility.hitHopLimit;
+                if (visibility.blocked)
+                    continue;
 
-        float area = max(areaRadius(distanceToLight), 1e-3f);
-        float attenuation =
-        light.intensity / (1.0f + h->controls.falloffK * area * area);
-        direct += float3(light.color) * attenuation * cosine * inversePi;
+                float area = max(areaRadius(distanceToLight), 1e-3f);
+                float attenuation = light.intensity /
+                (1.0f + h->controls.falloffK * area * area);
+                direct +=
+                float3(light.color) * attenuation * cosine * inversePi;
+            }
+            nextPortal[depth] = 0;
+        }
+        if (!ENABLE_PORTALS || depth >= h->controls.maxLightHops ||
+            nextPortal[depth] >= chart.portalCount) {
+            --depth;
+            continue;
+        }
+        int portalIndex = chart.firstPortal + nextPortal[depth]++;
+        if (portalIndex == incoming[depth])
+            continue;
+        if (stateCount++ >= h->controls.maxLightStates) {
+            result.errorBits |= 16u;
+            break;
+        }
+        PortalGPU portal = portals[portalIndex];
+        int child = depth + 1;
+        chartStack[child] = portal.neighborChart;
+        nextPortal[child] = -1;
+        incoming[child] = portal.reversePortal;
+        toStart[child] =
+        toStart[depth] * portals[portal.reversePortal].toNeighbor;
+        depth = child;
     }
     return clamp(material.color.rgb, 0.0f, 1.0f) * direct;
 }
 
-static TraceResult traceFlatLambertianSample(
+static TraceResult traceLambertianSample(
     device const HeaderGPU *h,
     device const ChartGPU *charts,
     device const PortalGPU *portals,
@@ -378,18 +415,10 @@ kernel void photoTrace(
     device const PrimitiveClipGPU *clips = packetClips(packet, h);
     device const MaterialGPU *materials = packetMaterials(packet, h);
     device const LightGPU *lights = packetLights(packet, h);
-    TraceResult result;
-    if (!ENABLE_PORTALS) {
-        result = traceFlatLambertianSample(
-            h, charts, portals, objects, quadrics, clips, materials, lights,
-            float2(pixel) + offset,
-            uint2(output.get_width(), output.get_height()), randomState);
-    } else {
-        result = traceDeterministicSample(
-            h, charts, portals, objects, quadrics, clips, materials, lights,
-            float2(pixel) + offset,
-            uint2(output.get_width(), output.get_height()), true);
-    }
+    TraceResult result = traceLambertianSample(
+        h, charts, portals, objects, quadrics, clips, materials, lights,
+        float2(pixel) + offset,
+        uint2(output.get_width(), output.get_height()), randomState);
 
     float3 sample = result.radiance;
     if (!all(isfinite(sample))) {

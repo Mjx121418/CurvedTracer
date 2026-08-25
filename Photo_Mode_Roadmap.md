@@ -180,6 +180,10 @@ presentation fallback.
 
 ## Milestone C — Reusable secondary visibility
 
+Status: implemented for hard point-light shadows in Photo Mode. The real-time
+integrator remains unshadowed. Photo Mode's portal-hop and portal-test
+diagnostics include both camera and visibility-ray traversal work.
+
 Introduce a portal-aware operation equivalent to:
 
 ```cpp

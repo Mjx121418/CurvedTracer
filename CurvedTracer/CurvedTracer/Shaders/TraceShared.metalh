@@ -95,6 +95,21 @@ struct Event {
     float4 normal;
 };
 
+struct RayState {
+    float4 point;
+    float4 tangent;
+    int chartId;
+};
+
+struct VisibilityResult {
+    bool blocked;
+    uint errorBits;
+    uint portalHops;
+    uint compoundPortalHops;
+    uint portalTests;
+    bool hitHopLimit;
+};
+
 static float kappa() {
     return SPACE_FORM == MODEL_S3 ? 1.0f : SPACE_FORM == MODEL_H3 ? -1.0f : 0.0f;
 }
@@ -527,6 +542,59 @@ static bool advancePortal(Event event, thread float4 &point, thread float4 &tang
     }
 }
 
+static VisibilityResult traceAny(
+    RayState ray,
+    float maximumDistance,
+    int maxPortalHops,
+    device const ChartGPU *charts,
+    device const PortalGPU *portals,
+    device const ObjectGPU *objects,
+    device const QuadricGPU *quadrics,
+    device const PrimitiveClipGPU *clips
+) {
+    VisibilityResult result{};
+    float remaining = max(maximumDistance, 0.0f);
+    int hops = 0;
+
+    if (!canonicalizeRayState(ray.point, ray.tangent)) {
+        result.blocked = true;
+        result.errorBits = 4u;
+        return result;
+    }
+
+    while (remaining > SELF_EPS) {
+        Event event = nearestEvent(
+            ray.point, ray.tangent, ray.chartId, remaining, SELF_EPS,
+            charts, portals, objects, quadrics, clips, result.portalTests,
+            result.errorBits);
+        if (!event.valid) {
+            result.blocked = result.errorBits != 0u;
+            break;
+        }
+
+        remaining -= event.distance;
+        if (!event.portal) {
+            result.blocked = true;
+            break;
+        }
+
+        if (!advancePortal(
+                event, ray.point, ray.tangent, ray.chartId, hops,
+                maxPortalHops, charts, portals, result.errorBits,
+                result.compoundPortalHops, result.portalTests,
+                result.hitHopLimit)) {
+            // Treat an incomplete visibility query as occluded. This prevents
+            // exhausted portal budgets or invalid transformed rays from
+            // leaking direct light into the image.
+            result.blocked = true;
+            break;
+        }
+    }
+
+    result.portalHops = uint(hops);
+    return result;
+}
+
 static void recordTraceStats(device TraceStatsGPU *stats, uint portalHops,
                       uint compoundPortalHops, uint portalTests,
                       bool hitHopLimit, uint laneInSIMDGroup,
@@ -593,9 +661,16 @@ static float4 directionTo(float4 from, float4 to, float d) {
 
 static float3 shade(Event hit, ObjectGPU object, MaterialGPU material, int chartId,
              float4 view, device const ChartGPU *charts,
-             device const PortalGPU *portals, device const LightGPU *lights,
+             device const PortalGPU *portals,
+             device const ObjectGPU *objects,
+             device const QuadricGPU *quadrics,
+             device const PrimitiveClipGPU *clips,
+             device const LightGPU *lights,
              float ambient, float falloff, int maxLightHops, int maxLightStates,
-             thread uint &errorBits) {
+             int maxPortalHops, bool enableShadows,
+             thread uint &errorBits, thread uint &portalHops,
+             thread uint &compoundPortalHops, thread uint &portalTests,
+             thread bool &hitHopLimit) {
     float3 diffuse = float3(ambient), spec = float3(0);
     int chartStack[5], nextPortal[5], incoming[5];
     float4x4 toStart[5];
@@ -614,14 +689,34 @@ static float3 shade(Event hit, ObjectGPU object, MaterialGPU material, int chart
                 if (!isfinite(d) || d < EPS)
                     continue;
                 float4 ld = directionTo(hit.point, lightPosition, d);
-                float nd = max(mdot(hit.normal, ld), 0.0f);
+                float nd = clamp(mdot(hit.normal, ld), 0.0f, 1.0f);
+                if (nd <= 0.0f)
+                    continue;
+                if (enableShadows) {
+                    RayState shadowRay;
+                    shadowRay.point = hit.point;
+                    shadowRay.tangent = ld;
+                    shadowRay.chartId = chartId;
+                    VisibilityResult visibility = traceAny(
+                        shadowRay, d - SELF_EPS, maxPortalHops, charts,
+                        portals, objects, quadrics, clips);
+                    errorBits |= visibility.errorBits;
+                    portalHops += visibility.portalHops;
+                    compoundPortalHops += visibility.compoundPortalHops;
+                    portalTests += visibility.portalTests;
+                    hitHopLimit = hitHopLimit || visibility.hitHopLimit;
+                    if (visibility.blocked)
+                        continue;
+                }
                 float ar = max(areaRadius(d), 1e-3f);
                 float attenuation = l.intensity / (1 + falloff * ar * ar);
                 float3 irradiance = float3(l.color) * attenuation;
                 diffuse += irradiance * nd;
                 float4 halfv = tangentNormalize(ld + view);
+                float specularCosine =
+                clamp(mdot(hit.normal, halfv), 0.0f, 1.0f);
                 spec +=
-                irradiance * pow(max(mdot(hit.normal, halfv), 0.0f), 32.0f) * nd;
+                irradiance * pow(specularCosine, 32.0f) * nd;
             }
             nextPortal[depth] = 0;
         }
@@ -782,7 +877,8 @@ static TraceResult traceDeterministicSample(
     device const MaterialGPU *materials,
     device const LightGPU *lights,
     float2 samplePosition,
-    uint2 renderSize
+    uint2 renderSize,
+    bool enableShadows
 ) {
     TraceResult result{};
 
@@ -804,7 +900,8 @@ static TraceResult traceDeterministicSample(
     float remaining = h->camera.maxTraceDistance, path = 0;
     float3 throughput = 1, radiance = 0;
     int hops = 0;
-    uint error = 0, compoundPortalHops = 0, portalTests = 0;
+    uint error = 0, secondaryPortalHops = 0, compoundPortalHops = 0;
+    uint portalTests = 0;
     bool hitHopLimit = false;
     float pathVisibility = 1;
     int maxBounces = clamp(h->controls.maxBounces, 0, 64);
@@ -854,9 +951,13 @@ static TraceResult traceDeterministicSample(
         if (o.responseKind == RESPONSE_OPAQUE) {
             radiance +=
             throughput * shade(e, o, m, chartId, -e.tangent, charts, portals,
-                               lights, h->controls.ambient, h->controls.falloffK,
+                               objects, quadrics, clips, lights,
+                               h->controls.ambient, h->controls.falloffK,
                                clamp(h->controls.maxLightHops, 0, 4),
-                               clamp(h->controls.maxLightStates, 1, 256), error);
+                               clamp(h->controls.maxLightStates, 1, 256),
+                               h->controls.maxChartHops, enableShadows, error,
+                               secondaryPortalHops, compoundPortalHops,
+                               portalTests, hitHopLimit);
             break;
         }
         if (o.responseKind != RESPONSE_MIRROR)
@@ -873,11 +974,15 @@ static TraceResult traceDeterministicSample(
         throughput *= m.specular.rgb * reflectivity;
         v = tangentNormalize(e.tangent - 2 * mdot(e.tangent, e.normal) * e.normal);
         p = e.point;
+        if (!canonicalizeRayState(p, v)) {
+            error |= 4u;
+            break;
+        }
         ++bounce;
     }
     result.radiance = radiance;
     result.errorBits = error;
-    result.portalHops = uint(hops);
+    result.portalHops = uint(hops) + secondaryPortalHops;
     result.compoundPortalHops = compoundPortalHops;
     result.portalTests = portalTests;
     result.hitHopLimit = hitHopLimit;

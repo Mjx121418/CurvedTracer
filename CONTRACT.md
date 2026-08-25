@@ -126,7 +126,10 @@ Each chart stores its intrinsic radius and tracing parameter:
 The `raytrace` and `photoTrace` kernels have function constants `SPACE_FORM`
 (index 0) and `ENABLE_PORTALS` (index 1). The renderer caches all six pipeline
 states for each kernel and rejects a packet whose `controls.modelKind` differs
-from the specialization.
+from the specialization. Photo Mode also traces point-light visibility rays
+through the same specialized object and portal event machinery; this does not
+add fields to the packet contract. Its trace statistics include primary,
+mirror, and visibility-ray portal work.
 
 Radial calculations use
 `Sκ(u)=2u/(1+κu²)` and `Cκ(u)=(1-κu²)/(1+κu²)`. Distance recovery is

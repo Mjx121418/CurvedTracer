@@ -36,7 +36,8 @@ kernel void raytrace(device const uchar *packet [[buffer(0)]],
         packetMaterials(packet, h),
         packetLights(packet, h),
         float2(pixel) + 0.5f,
-        uint2(output.get_width(), output.get_height()));
+        uint2(output.get_width(), output.get_height()),
+        false);
 
     if (result.errorBits)
         atomic_fetch_or_explicit(
@@ -123,7 +124,8 @@ kernel void photoTrace(
         packetMaterials(packet, h),
         packetLights(packet, h),
         float2(pixel) + offset,
-        uint2(output.get_width(), output.get_height()));
+        uint2(output.get_width(), output.get_height()),
+        true);
 
     float3 sample = result.radiance;
     if (!all(isfinite(sample))) {

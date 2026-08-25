@@ -208,6 +208,13 @@ hitting a surface.
 
 ## Milestone D — Euclidean Lambertian path tracing
 
+Status: implemented for R³ Flat. The stochastic integrator uses a fixed path
+depth, explicit point-light visibility, cosine-weighted diffuse continuation,
+a black environment, and energy-conserving perfect-mirror continuation. The
+selectable Path tracing room scene provides the milestone validation setup.
+Milestone E subsequently generalizes this integrator to Flat S³ and H³; atlas
+specializations remain deterministic pending Milestone F.
+
 Develop the first global-illumination integrator in R³ Flat mode.
 
 At an opaque surface:
@@ -255,6 +262,12 @@ bleeding, corner darkening, and perfect reflection.
 ---
 
 ## Milestone E — Flat S³ and H³ path tracing
+
+Status: implemented. Flat S³ and H³ use metric Gram–Schmidt to build a local
+orthonormal tangent frame for cosine-weighted diffuse continuation. Every
+bounce receives a fresh segment horizon and is re-canonicalized before
+propagation. Curvature-small Path tracing room variants provide direct visual
+comparison with R³.
 
 At a hit point, construct an orthonormal basis in the local tangent space and
 cosine-sample about the surface normal. The BSDF remains locally Euclidean;

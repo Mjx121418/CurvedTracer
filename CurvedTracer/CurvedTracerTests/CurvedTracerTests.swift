@@ -115,20 +115,24 @@ struct CurvedTracerTests {
     @Test func allSpaceTraversalScenesBuildV11Packets() {
         #expect(AmbientSpace.allCases.count == 3)
         #expect(TraversalMode.allCases.count == 2)
-        #expect(SphericalFlatSceneVariant.allCases.count == 5)
-        #expect(HyperbolicFlatSceneVariant.allCases.count == 3)
+        #expect(EuclideanFlatSceneVariant.allCases.count == 2)
+        #expect(SphericalFlatSceneVariant.allCases.count == 6)
+        #expect(HyperbolicFlatSceneVariant.allCases.count == 4)
         #expect(HyperbolicAtlasVariant.allCases.count == 2)
         var atlas = geo.Atlas()
         let builders: [(inout geo.Atlas) -> Int32] = [
             SphericalScene.cell600, SphericalScene.objectDemo,
+            SphericalScene.pathTracingRoom,
             SphericalScene.primitiveGallery, SphericalScene.hopfFibration,
             SphericalScene.cliffordTorusConstruction,
             SphericalScene.lensSpaceL52,
             HyperbolicScene.honeycombCell, HyperbolicScene.poincareBallDemo,
+            HyperbolicScene.pathTracingRoom,
             HyperbolicScene.primitiveGallery,
             HyperbolicScene.seifertWeberAtlas,
             HyperbolicScene.seifertWeberMultiChartAtlas,
-            EuclideanScene.finite, EuclideanScene.torus,
+            EuclideanScene.finite, EuclideanScene.pathTracingRoom,
+            EuclideanScene.torus,
         ]
         for build in builders {
             _ = build(&atlas)

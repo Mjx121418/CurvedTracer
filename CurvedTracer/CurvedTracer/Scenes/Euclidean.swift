@@ -27,6 +27,45 @@ enum EuclideanScene {
         if r != 0 { fatalError("R³ flat build failed: \(r)") }
         return c
     }
+
+    @discardableResult static func pathTracingRoom(_ atlas: inout geo.Atlas) -> Int32 {
+        atlas.start(2)
+        _ = atlas.seed(3.0)
+        let white = atlas.addMaterial(
+            geo.vec4(0.78, 0.78, 0.78, 1), geo.vec4(0, 0, 0, 0))
+        let red = atlas.addMaterial(
+            geo.vec4(0.78, 0.08, 0.05, 1), geo.vec4(0, 0, 0, 0))
+        let green = atlas.addMaterial(
+            geo.vec4(0.08, 0.68, 0.12, 1), geo.vec4(0, 0, 0, 0))
+        let blue = atlas.addMaterial(
+            geo.vec4(0.08, 0.28, 0.82, 1), geo.vec4(0, 0, 0, 0))
+        let mirror = atlas.addMaterial(
+            geo.vec4(0, 0, 0, 1), geo.vec4(0.92, 0.95, 1, 1))
+
+        // A closed diffuse room makes the black Photo Mode environment
+        // explicit and provides colored walls for validating indirect light.
+        _ = atlas.addPlane(0, geo.vec3(1, 0, 0), -1.0, red, 0)
+        _ = atlas.addPlane(0, geo.vec3(-1, 0, 0), -1.0, green, 0)
+        _ = atlas.addPlane(0, geo.vec3(0, 1, 0), -1.0, white, 0)
+        _ = atlas.addPlane(0, geo.vec3(0, -1, 0), -1.0, white, 0)
+        _ = atlas.addPlane(0, geo.vec3(0, 0, -1), -1.5, white, 0)
+        _ = atlas.addPlane(0, geo.vec3(0, 0, 1), -1.5, white, 0)
+        _ = atlas.addBall(0, geo.vec4(-0.38, -0.62, 0.2, 1), 0.3, blue)
+        _ = atlas.addBallSurface(
+            0, geo.vec4(0.4, -0.64, 0.45, 1), 0.28, mirror, 1)
+        _ = atlas.addLight(
+            0, geo.vec4(0, 0.72, -0.25, 1), geo.vec3(1, 0.92, 0.78), 18)
+
+        atlas.setCamera(
+            0.62, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0),
+            geo.vec3(0, -0.08, 1))
+        atlas.setControls(6, 0.35, 0.05, 0.95, 0, 0, 0)
+        let camera = atlas.cameraChartAt(0, geo.vec4(0, 0, -1.15, 1), 10)
+        let result = atlas.build(camera, 64)
+        if result != 0 { fatalError("R³ path tracing room build failed: \(result)") }
+        return camera
+    }
+
     @discardableResult static func torus(_ atlas: inout geo.Atlas) -> Int32 {
         configure(&atlas)
         // Use the previous exponential-fog strength for the multi-cell horizon.

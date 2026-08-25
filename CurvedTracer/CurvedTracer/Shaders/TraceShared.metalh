@@ -110,6 +110,18 @@ struct VisibilityResult {
     bool hitHopLimit;
 };
 
+struct SurfaceTraceResult {
+    bool hit;
+    Event event;
+    int chartId;
+    float distance;
+    uint errorBits;
+    uint portalHops;
+    uint compoundPortalHops;
+    uint portalTests;
+    bool hitHopLimit;
+};
+
 static float kappa() {
     return SPACE_FORM == MODEL_S3 ? 1.0f : SPACE_FORM == MODEL_H3 ? -1.0f : 0.0f;
 }
@@ -542,6 +554,55 @@ static bool advancePortal(Event event, thread float4 &point, thread float4 &tang
     }
 }
 
+static SurfaceTraceResult traceToSurface(
+    RayState ray,
+    float maximumDistance,
+    int maxPortalHops,
+    device const ChartGPU *charts,
+    device const PortalGPU *portals,
+    device const ObjectGPU *objects,
+    device const QuadricGPU *quadrics,
+    device const PrimitiveClipGPU *clips
+) {
+    SurfaceTraceResult result{};
+    float remaining = max(maximumDistance, 0.0f);
+    int hops = 0;
+    result.chartId = ray.chartId;
+
+    if (!canonicalizeRayState(ray.point, ray.tangent)) {
+        result.errorBits = 4u;
+        return result;
+    }
+
+    while (remaining > SELF_EPS) {
+        Event event = nearestEvent(
+            ray.point, ray.tangent, ray.chartId, remaining, SELF_EPS,
+            charts, portals, objects, quadrics, clips, result.portalTests,
+            result.errorBits);
+        if (!event.valid)
+            break;
+
+        remaining -= event.distance;
+        result.distance += event.distance;
+        if (!event.portal) {
+            result.hit = true;
+            result.event = event;
+            break;
+        }
+
+        if (!advancePortal(
+                event, ray.point, ray.tangent, ray.chartId, hops,
+                maxPortalHops, charts, portals, result.errorBits,
+                result.compoundPortalHops, result.portalTests,
+                result.hitHopLimit))
+            break;
+    }
+
+    result.chartId = ray.chartId;
+    result.portalHops = uint(hops);
+    return result;
+}
+
 static VisibilityResult traceAny(
     RayState ray,
     float maximumDistance,
@@ -552,46 +613,18 @@ static VisibilityResult traceAny(
     device const QuadricGPU *quadrics,
     device const PrimitiveClipGPU *clips
 ) {
+    SurfaceTraceResult surface = traceToSurface(
+        ray, maximumDistance, maxPortalHops, charts, portals, objects,
+        quadrics, clips);
     VisibilityResult result{};
-    float remaining = max(maximumDistance, 0.0f);
-    int hops = 0;
-
-    if (!canonicalizeRayState(ray.point, ray.tangent)) {
-        result.blocked = true;
-        result.errorBits = 4u;
-        return result;
-    }
-
-    while (remaining > SELF_EPS) {
-        Event event = nearestEvent(
-            ray.point, ray.tangent, ray.chartId, remaining, SELF_EPS,
-            charts, portals, objects, quadrics, clips, result.portalTests,
-            result.errorBits);
-        if (!event.valid) {
-            result.blocked = result.errorBits != 0u;
-            break;
-        }
-
-        remaining -= event.distance;
-        if (!event.portal) {
-            result.blocked = true;
-            break;
-        }
-
-        if (!advancePortal(
-                event, ray.point, ray.tangent, ray.chartId, hops,
-                maxPortalHops, charts, portals, result.errorBits,
-                result.compoundPortalHops, result.portalTests,
-                result.hitHopLimit)) {
-            // Treat an incomplete visibility query as occluded. This prevents
-            // exhausted portal budgets or invalid transformed rays from
-            // leaking direct light into the image.
-            result.blocked = true;
-            break;
-        }
-    }
-
-    result.portalHops = uint(hops);
+    // Incomplete visibility queries are conservatively occluded so exhausted
+    // portal budgets or invalid rays cannot leak direct light into the image.
+    result.blocked = surface.hit || surface.errorBits != 0u;
+    result.errorBits = surface.errorBits;
+    result.portalHops = surface.portalHops;
+    result.compoundPortalHops = surface.compoundPortalHops;
+    result.portalTests = surface.portalTests;
+    result.hitHopLimit = surface.hitHopLimit;
     return result;
 }
 
@@ -867,6 +900,25 @@ struct TraceResult {
     bool hitHopLimit;
 };
 
+static bool makeCameraRay(
+    device const HeaderGPU *h,
+    float2 samplePosition,
+    uint2 renderSize,
+    thread RayState &ray
+) {
+    float2 uv = samplePosition / float2(renderSize);
+    float2 screen = 2 * uv - 1;
+    screen.y = -screen.y;
+    float renderAspect = float(renderSize.x) / float(renderSize.y);
+    ray.point = h->camera.position;
+    ray.tangent = tangentNormalize(
+        h->camera.fwd +
+        screen.x * renderAspect * h->camera.fovTan * h->camera.right +
+        screen.y * h->camera.fovTan * h->camera.up);
+    ray.chartId = h->camera.chartId;
+    return canonicalizeRayState(ray.point, ray.tangent);
+}
+
 static TraceResult traceDeterministicSample(
     device const HeaderGPU *h,
     device const ChartGPU *charts,
@@ -882,21 +934,15 @@ static TraceResult traceDeterministicSample(
 ) {
     TraceResult result{};
 
-    float2 uv = samplePosition / float2(renderSize);
-    float2 screen = 2 * uv - 1;
-    screen.y = -screen.y;
-    float renderAspect = float(renderSize.x) / float(renderSize.y);
-    float4 p = h->camera.position;
-    float4 v = tangentNormalize(h->camera.fwd +
-                                screen.x * renderAspect * h->camera.fovTan *
-                                h->camera.right +
-                                screen.y * h->camera.fovTan * h->camera.up);
-    if (!canonicalizeRayState(p, v)) {
+    RayState cameraRay;
+    if (!makeCameraRay(h, samplePosition, renderSize, cameraRay)) {
         result.errorBits = 4;
         result.radiance = float3(1, 0, 1);
         return result;
     }
-    int chartId = h->camera.chartId;
+    float4 p = cameraRay.point;
+    float4 v = cameraRay.tangent;
+    int chartId = cameraRay.chartId;
     float remaining = h->camera.maxTraceDistance, path = 0;
     float3 throughput = 1, radiance = 0;
     int hops = 0;

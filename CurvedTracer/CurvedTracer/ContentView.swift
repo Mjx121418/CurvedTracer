@@ -10,6 +10,7 @@ struct ContentView: View {
   @Binding var showsPerformanceOverlay: Bool
   @State private var ambienSpace: AmbientSpace = .sphere
   @State private var traversalMode: TraversalMode = .flat
+  @State private var euclideanFlatSceneVariant: EuclideanFlatSceneVariant = .objectDemo
   @State private var sphericalFlatSceneVariant: SphericalFlatSceneVariant = .cell600
   @State private var hyperbolicFlatSceneVariant: HyperbolicFlatSceneVariant = .honeycombCell
   @State private var hyperbolicAtlasVariant: HyperbolicAtlasVariant = .oneChart
@@ -22,6 +23,7 @@ struct ContentView: View {
       MetalView(
         ambientSpace: $ambienSpace,
         traversalMode: $traversalMode,
+        euclideanFlatSceneVariant: $euclideanFlatSceneVariant,
         sphericalFlatSceneVariant: $sphericalFlatSceneVariant,
         hyperbolicFlatSceneVariant: $hyperbolicFlatSceneVariant,
         hyperbolicAtlasVariant: $hyperbolicAtlasVariant,
@@ -46,6 +48,13 @@ struct ContentView: View {
           }
           Picker("Ambient Space", selection: $ambienSpace) {
             ForEach(AmbientSpace.allCases) { space in Text(space.rawValue).tag(space) }
+          }
+          if traversalMode == .flat && ambienSpace == .euclidean {
+            Picker("R³ Scene", selection: $euclideanFlatSceneVariant) {
+              ForEach(EuclideanFlatSceneVariant.allCases) { variant in
+                Text(variant.rawValue).tag(variant)
+              }
+            }
           }
           if traversalMode == .flat && ambienSpace == .sphere {
             Picker("S³ Scene", selection: $sphericalFlatSceneVariant) {

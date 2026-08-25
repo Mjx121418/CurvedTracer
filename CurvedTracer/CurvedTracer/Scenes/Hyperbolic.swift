@@ -150,6 +150,48 @@ enum HyperbolicScene {
         return camera
     }
 
+    /// A curvature-small counterpart of the R³ path tracing room.
+    @discardableResult static func pathTracingRoom(_ atlas: inout geo.Atlas) -> Int32 {
+        atlas.start(0)
+        _ = atlas.seed(1.0)
+        let white = atlas.addMaterial(
+            geo.vec4(0.78, 0.78, 0.78, 1), geo.vec4(0, 0, 0, 0))
+        let red = atlas.addMaterial(
+            geo.vec4(0.78, 0.08, 0.05, 1), geo.vec4(0, 0, 0, 0))
+        let green = atlas.addMaterial(
+            geo.vec4(0.08, 0.68, 0.12, 1), geo.vec4(0, 0, 0, 0))
+        let blue = atlas.addMaterial(
+            geo.vec4(0.08, 0.28, 0.82, 1), geo.vec4(0, 0, 0, 0))
+        let mirror = atlas.addMaterial(
+            geo.vec4(0, 0, 0, 1), geo.vec4(0.92, 0.95, 1, 1))
+
+        _ = atlas.addPlane(0, geo.vec3(1, 0, 0), -0.3, red, 0)
+        _ = atlas.addPlane(0, geo.vec3(-1, 0, 0), -0.3, green, 0)
+        _ = atlas.addPlane(0, geo.vec3(0, 1, 0), -0.3, white, 0)
+        _ = atlas.addPlane(0, geo.vec3(0, -1, 0), -0.3, white, 0)
+        _ = atlas.addPlane(0, geo.vec3(0, 0, -1), -0.45, white, 0)
+        _ = atlas.addPlane(0, geo.vec3(0, 0, 1), -0.45, white, 0)
+        _ = atlas.addBall(
+            0, atlas.pointFromOriginTangent(geo.vec3(-0.114, -0.186, 0.06)),
+            0.09, blue)
+        _ = atlas.addBallSurface(
+            0, atlas.pointFromOriginTangent(geo.vec3(0.12, -0.192, 0.135)),
+            0.084, mirror, 1)
+        _ = atlas.addLight(
+            0, atlas.pointFromOriginTangent(geo.vec3(0, 0.216, -0.075)),
+            geo.vec3(1, 0.92, 0.78), 18)
+
+        atlas.setCamera(
+            0.62, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0),
+            geo.vec3(0, -0.08, 1))
+        atlas.setControls(6, 3.9, 0.05, 0.95, 0, 0, 0)
+        let camera = atlas.cameraChartAt(
+            0, atlas.pointFromOriginTangent(geo.vec3(0, 0, -0.345)), 1.8)
+        let result = atlas.build(camera, 64)
+        if result != 0 { fatalError("H³ path tracing room build failed: \(result)") }
+        return camera
+    }
+
     /// Demonstrates clipped linear and quadratic surfaces in H³.
     @discardableResult static func primitiveGallery(_ atlas: inout geo.Atlas) -> Int32 {
         atlas.start(0)

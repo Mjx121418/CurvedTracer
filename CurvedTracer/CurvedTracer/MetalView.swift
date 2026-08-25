@@ -57,9 +57,17 @@ enum HyperbolicAtlasVariant: String, CaseIterable, Identifiable {
     var id: Self { self }
 }
 
+enum EuclideanFlatSceneVariant: String, CaseIterable, Identifiable {
+    case objectDemo = "Object and mirror demo"
+    case pathTracingRoom = "Path tracing room"
+
+    var id: Self { self }
+}
+
 enum SphericalFlatSceneVariant: String, CaseIterable, Identifiable {
     case cell600 = "600-cell (24 charts)"
     case objectDemo = "Object and mirror demo"
+    case pathTracingRoom = "Path tracing room"
     case primitiveGallery = "Primitive gallery"
     case hopfFibration = "Hopf fibration"
     case cliffordTorusConstruction = "Clifford torus construction"
@@ -70,6 +78,7 @@ enum SphericalFlatSceneVariant: String, CaseIterable, Identifiable {
 enum HyperbolicFlatSceneVariant: String, CaseIterable, Identifiable {
     case honeycombCell = "{4,3,5} honeycomb cell"
     case poincareBallDemo = "Poincaré-ball demo"
+    case pathTracingRoom = "Path tracing room"
     case primitiveGallery = "Primitive gallery"
 
     var id: Self { self }
@@ -192,6 +201,7 @@ struct RenderResolution: Equatable {
 struct MetalView: NSViewRepresentable {
     @Binding var ambientSpace: AmbientSpace
     @Binding var traversalMode: TraversalMode
+    @Binding var euclideanFlatSceneVariant: EuclideanFlatSceneVariant
     @Binding var sphericalFlatSceneVariant: SphericalFlatSceneVariant
     @Binding var hyperbolicFlatSceneVariant: HyperbolicFlatSceneVariant
     @Binding var hyperbolicAtlasVariant: HyperbolicAtlasVariant
@@ -236,6 +246,7 @@ struct MetalView: NSViewRepresentable {
             renderResolution: renderResolution)
         context.coordinator.ambientSpace = ambientSpace
         context.coordinator.traversalMode = traversalMode
+        context.coordinator.euclideanFlatSceneVariant = euclideanFlatSceneVariant
         context.coordinator.sphericalFlatSceneVariant = sphericalFlatSceneVariant
         context.coordinator.hyperbolicFlatSceneVariant = hyperbolicFlatSceneVariant
         context.coordinator.hyperbolicAtlasVariant = hyperbolicAtlasVariant
@@ -258,12 +269,14 @@ struct MetalView: NSViewRepresentable {
     func updateNSView(_ view: MTKView, context: Context) {
         if context.coordinator.ambientSpace != ambientSpace
             || context.coordinator.traversalMode != traversalMode
+            || context.coordinator.euclideanFlatSceneVariant != euclideanFlatSceneVariant
             || context.coordinator.sphericalFlatSceneVariant != sphericalFlatSceneVariant
             || context.coordinator.hyperbolicFlatSceneVariant != hyperbolicFlatSceneVariant
             || context.coordinator.hyperbolicAtlasVariant != hyperbolicAtlasVariant
         {
             context.coordinator.ambientSpace = ambientSpace
             context.coordinator.traversalMode = traversalMode
+            context.coordinator.euclideanFlatSceneVariant = euclideanFlatSceneVariant
             context.coordinator.sphericalFlatSceneVariant = sphericalFlatSceneVariant
             context.coordinator.hyperbolicFlatSceneVariant = hyperbolicFlatSceneVariant
             context.coordinator.hyperbolicAtlasVariant = hyperbolicAtlasVariant
@@ -349,6 +362,7 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     var ambientSpace: AmbientSpace = .sphere
     var traversalMode: TraversalMode = .flat
+    var euclideanFlatSceneVariant: EuclideanFlatSceneVariant = .objectDemo
     var sphericalFlatSceneVariant: SphericalFlatSceneVariant = .cell600
     var hyperbolicFlatSceneVariant: HyperbolicFlatSceneVariant = .honeycombCell
     var hyperbolicAtlasVariant: HyperbolicAtlasVariant = .oneChart
@@ -666,6 +680,8 @@ final class Renderer: NSObject, MTKViewDelegate {
             switch sphericalFlatSceneVariant {
             case .cell600: cameraChart = SphericalScene.cell600(&atlas)
             case .objectDemo: cameraChart = SphericalScene.objectDemo(&atlas)
+            case .pathTracingRoom:
+                cameraChart = SphericalScene.pathTracingRoom(&atlas)
             case .primitiveGallery: cameraChart = SphericalScene.primitiveGallery(&atlas)
             case .hopfFibration: cameraChart = SphericalScene.hopfFibration(&atlas)
             case .cliffordTorusConstruction:
@@ -675,9 +691,16 @@ final class Renderer: NSObject, MTKViewDelegate {
             switch hyperbolicFlatSceneVariant {
             case .honeycombCell: cameraChart = HyperbolicScene.honeycombCell(&atlas)
             case .poincareBallDemo: cameraChart = HyperbolicScene.poincareBallDemo(&atlas)
+            case .pathTracingRoom:
+                cameraChart = HyperbolicScene.pathTracingRoom(&atlas)
             case .primitiveGallery: cameraChart = HyperbolicScene.primitiveGallery(&atlas)
             }
-        case (.flat, .euclidean): cameraChart = EuclideanScene.finite(&atlas)
+        case (.flat, .euclidean):
+            switch euclideanFlatSceneVariant {
+            case .objectDemo: cameraChart = EuclideanScene.finite(&atlas)
+            case .pathTracingRoom:
+                cameraChart = EuclideanScene.pathTracingRoom(&atlas)
+            }
         case (.atlas, .sphere): cameraChart = SphericalScene.lensSpaceL52(&atlas)
         case (.atlas, .hyperbolic):
             switch hyperbolicAtlasVariant {

@@ -129,7 +129,13 @@ states for each kernel and rejects a packet whose `controls.modelKind` differs
 from the specialization. Photo Mode also traces point-light visibility rays
 through the same specialized object and portal event machinery; this does not
 add fields to the packet contract. Its trace statistics include primary,
-mirror, and visibility-ray portal work.
+mirror, diffuse, and visibility-ray portal work. The R³ Flat `photoTrace`
+specialization and both curved-space Flat specializations use a cosine-weighted
+Lambertian path integrator with a black environment and physical perfect-mirror
+continuation. S³ and H³ construct the sampling frame with their induced tangent
+metrics and re-canonicalize every continued ray. Atlas Photo Mode
+specializations retain deterministic direct lighting until portal-aware path
+integration is enabled.
 
 Radial calculations use
 `Sκ(u)=2u/(1+κu²)` and `Cκ(u)=(1-κu²)/(1+κu²)`. Distance recovery is

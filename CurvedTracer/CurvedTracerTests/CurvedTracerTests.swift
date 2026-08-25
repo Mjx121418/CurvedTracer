@@ -51,6 +51,42 @@ struct CurvedTracerTests {
         #expect(RenderResolution.isValid(width: 1, height: 1))
         #expect(!RenderResolution.isValid(width: 0, height: 720))
         #expect(!RenderResolution.isValid(width: 1280, height: -1))
+        #expect(
+            RenderResolution.hd720.isSpatialUpscaleTarget(
+                width: 1920, height: 1080))
+        #expect(
+            RenderResolution.hd720.isSpatialUpscaleTarget(
+                width: 2560, height: 1440))
+        #expect(
+            !RenderResolution.hd720.isSpatialUpscaleTarget(
+                width: 1280, height: 720))
+        #expect(
+            !RenderResolution.hd720.isSpatialUpscaleTarget(
+                width: 1600, height: 1000))
+    }
+
+    @Test func photoModeStateStartsStopsAndResetsProgress() {
+        var state = PhotoModeState()
+        #expect(state.renderingMode == .realtime)
+        #expect(state.sampleIndex == 0)
+
+        state.recordSubmittedSample()
+        #expect(state.sampleIndex == 0)
+
+        state.enter()
+        #expect(state.renderingMode == .photo)
+        #expect(state.sampleIndex == 0)
+        state.recordSubmittedSample()
+        state.recordSubmittedSample()
+        #expect(state.sampleIndex == 2)
+
+        state.exit()
+        #expect(state.renderingMode == .realtime)
+        #expect(state.sampleIndex == 0)
+
+        state.enter()
+        #expect(state.renderingMode == .photo)
+        #expect(state.sampleIndex == 0)
     }
 
     @Test func performanceStatisticsNormalizeAndPublishSamples() {

@@ -21,14 +21,19 @@ final class CurvedTracerUITests: XCTestCase {
     }
 
     @MainActor
-    func testExample() throws {
-        // UI tests must launch the application that they test.
+    func testPhotoModeToggleStartsAndStopsProgressiveRendering() throws {
         let app = XCUIApplication()
         app.launch()
 
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
-        // XCUIAutomation Documentation
-        // https://developer.apple.com/documentation/xcuiautomation
+        let toggle = app.buttons["photo-mode-toggle"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        XCTAssertEqual(toggle.label, "Start Photo Mode")
+
+        toggle.click()
+        XCTAssertEqual(toggle.label, "Stop Photo Mode")
+
+        toggle.click()
+        XCTAssertEqual(toggle.label, "Start Photo Mode")
     }
 
     @MainActor

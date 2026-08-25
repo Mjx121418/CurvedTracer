@@ -123,9 +123,10 @@ Each chart stores its intrinsic radius and tracing parameter:
 
 ## Shader specialization
 
-The single `raytrace` kernel has function constants `SPACE_FORM` (index 0) and
-`ENABLE_PORTALS` (index 1). The renderer caches all six pipeline states and
-rejects a packet whose `controls.modelKind` differs from the specialization.
+The `raytrace` and `photoTrace` kernels have function constants `SPACE_FORM`
+(index 0) and `ENABLE_PORTALS` (index 1). The renderer caches all six pipeline
+states for each kernel and rejects a packet whose `controls.modelKind` differs
+from the specialization.
 
 Radial calculations use
 `Sκ(u)=2u/(1+κu²)` and `Cκ(u)=(1-κu²)/(1+κu²)`. Distance recovery is

@@ -13,6 +13,7 @@ struct ContentView: View {
   @State private var sphericalFlatSceneVariant: SphericalFlatSceneVariant = .cell600
   @State private var hyperbolicFlatSceneVariant: HyperbolicFlatSceneVariant = .honeycombCell
   @State private var hyperbolicAtlasVariant: HyperbolicAtlasVariant = .oneChart
+  @State private var renderingMode: RenderingMode = .realtime
   @StateObject private var performanceStats = PerformanceStats()
   private let renderResolution: RenderResolution = .hd720
 
@@ -24,6 +25,7 @@ struct ContentView: View {
         sphericalFlatSceneVariant: $sphericalFlatSceneVariant,
         hyperbolicFlatSceneVariant: $hyperbolicFlatSceneVariant,
         hyperbolicAtlasVariant: $hyperbolicAtlasVariant,
+        renderingMode: $renderingMode,
         performanceStats: performanceStats,
         renderResolution: renderResolution
       )
@@ -38,33 +40,43 @@ struct ContentView: View {
       }
 
       VStack(alignment: .trailing) {
-        Picker("Traversal", selection: $traversalMode) {
-          ForEach(TraversalMode.allCases) { mode in Text(mode.rawValue).tag(mode) }
-        }
-        Picker("Ambient Space", selection: $ambienSpace) {
-          ForEach(AmbientSpace.allCases) { space in Text(space.rawValue).tag(space) }
-        }
-        if traversalMode == .flat && ambienSpace == .sphere {
-          Picker("S³ Scene", selection: $sphericalFlatSceneVariant) {
-            ForEach(SphericalFlatSceneVariant.allCases) { variant in
-              Text(variant.rawValue).tag(variant)
+        Group {
+          Picker("Traversal", selection: $traversalMode) {
+            ForEach(TraversalMode.allCases) { mode in Text(mode.rawValue).tag(mode) }
+          }
+          Picker("Ambient Space", selection: $ambienSpace) {
+            ForEach(AmbientSpace.allCases) { space in Text(space.rawValue).tag(space) }
+          }
+          if traversalMode == .flat && ambienSpace == .sphere {
+            Picker("S³ Scene", selection: $sphericalFlatSceneVariant) {
+              ForEach(SphericalFlatSceneVariant.allCases) { variant in
+                Text(variant.rawValue).tag(variant)
+              }
+            }
+          }
+          if traversalMode == .flat && ambienSpace == .hyperbolic {
+            Picker("H³ Scene", selection: $hyperbolicFlatSceneVariant) {
+              ForEach(HyperbolicFlatSceneVariant.allCases) { variant in
+                Text(variant.rawValue).tag(variant)
+              }
+            }
+          }
+          if traversalMode == .atlas && ambienSpace == .hyperbolic {
+            Picker("H^3 Atlas", selection: $hyperbolicAtlasVariant) {
+              ForEach(HyperbolicAtlasVariant.allCases) { variant in
+                Text(variant.rawValue).tag(variant)
+              }
             }
           }
         }
-        if traversalMode == .flat && ambienSpace == .hyperbolic {
-          Picker("H³ Scene", selection: $hyperbolicFlatSceneVariant) {
-            ForEach(HyperbolicFlatSceneVariant.allCases) { variant in
-              Text(variant.rawValue).tag(variant)
-            }
-          }
+        .disabled(renderingMode == .photo)
+
+        Button(
+          renderingMode == .photo ? "Stop Photo Mode" : "Start Photo Mode"
+        ) {
+          renderingMode = renderingMode == .photo ? .realtime : .photo
         }
-        if traversalMode == .atlas && ambienSpace == .hyperbolic {
-          Picker("H^3 Atlas", selection: $hyperbolicAtlasVariant) {
-            ForEach(HyperbolicAtlasVariant.allCases) { variant in
-              Text(variant.rawValue).tag(variant)
-            }
-          }
-        }
+        .accessibilityIdentifier("photo-mode-toggle")
       }
       .pickerStyle(.menu)
       .fixedSize()

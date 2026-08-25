@@ -18,7 +18,7 @@
 
 namespace geo {
 
-inline std::string geometryCoreName() { return "Geometry Core v11"; }
+inline std::string geometryCoreName() { return "Geometry Core v12"; }
 
 struct ChartObject {
   int chartId = -1;
@@ -42,6 +42,8 @@ struct ChartLight {
   vec4 position;
   vec3 color;
   float intensity = 1.0f;
+  float radius = 0.0f;
+  int kind = GEO_LIGHT_POINT;
 };
 
 struct CameraPlacement {
@@ -111,6 +113,9 @@ public:
                          float signedDistance);
   int addLight(int chart, const vec4 &position, const vec3 &color,
                float intensity);
+  int addSphericalAreaLight(int chart, const vec4 &center,
+                            float intrinsicRadius, const vec3 &color,
+                            float emittedRadiance);
   int addPortalPair(int chartA, const vec3 &outwardA, float faceDistanceA,
                     int chartB, const vec3 &outwardB, float faceDistanceB,
                     const float pairingAB[16]);

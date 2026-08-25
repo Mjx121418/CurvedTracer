@@ -50,14 +50,29 @@ static PrimitiveClip flatClip(const Atlas &a, int index) {
               sizeof(clip));
   return clip;
 }
+static PointLight flatLight(const Atlas &a, int index) {
+  ScenePacketHeader h = header(a);
+  PointLight light{};
+  std::memcpy(
+      &light,
+      a.packet().data() + sizeof(ScenePacketHeader) + sizeof(GPUChart) +
+          h.counts.objectCount * sizeof(Object) +
+          h.counts.quadricCount * sizeof(Quadric) +
+          h.counts.clipCount * sizeof(PrimitiveClip) +
+          h.counts.materialCount * sizeof(Material) +
+          index * sizeof(PointLight),
+      sizeof(light));
+  return light;
+}
 
 void test_atlas() {
-  CHECK(GEO_CONTRACT_VERSION == 11);
+  CHECK(GEO_CONTRACT_VERSION == 12);
   CHECK(sizeof(ScenePacketHeader) == 192);
   CHECK(sizeof(Object) == 48);
   CHECK(sizeof(Quadric) == 64);
   CHECK(sizeof(PrimitiveClip) == 32);
   CHECK(sizeof(GPUPortal) == 96);
+  CHECK(sizeof(PointLight) == 48);
   for (int model = 0; model <= 2; ++model) {
     Atlas a;
     a.start(model);
@@ -74,17 +89,28 @@ void test_atlas() {
     CHECK(a.addMirrorPlane(0, vec3(0, 2, 0), .8f, 0) == 1);
     CHECK(a.addLight(0, a.pointFromOriginTangent(vec3(-.2f, 0, 0)),
                      vec3(1, 1, 1), 1) == 0);
+    CHECK(a.addSphericalAreaLight(
+              0, a.pointFromOriginTangent(vec3(.1f, .1f, 0)), .1f,
+              vec3(.8f, .7f, .6f), 4) == 1);
     a.setCamera(.8f, 1.6f, vec3(1, 0, 0), vec3(0, 1, 0), vec3(0, 0, 1));
     CHECK(a.cameraChartAt(0, vec4(0, 0, 0, 1), 2.5f) == 0);
     CHECK(a.build(0, 64) == 0);
     auto h = header(a);
     CHECK(h.meta.magic == GEO_PACKET_MAGIC);
-    CHECK(h.meta.contractVersion == 11);
+    CHECK(h.meta.contractVersion == 12);
     CHECK(h.meta.packetHeaderSize == 192);
     CHECK(h.controls.modelKind == model);
     CHECK(h.counts.chartCount == 1);
     CHECK(h.counts.portalCount == 0);
     CHECK(h.counts.objectCount == 2);
+    CHECK(h.counts.lightCount == 2);
+    PointLight pointLight = flatLight(a, 0);
+    PointLight areaLight = flatLight(a, 1);
+    CHECK(pointLight.kind == GEO_LIGHT_POINT);
+    CHECK_NEAR(pointLight.radius, 0, 1e-6);
+    CHECK(areaLight.kind == GEO_LIGHT_SPHERE);
+    CHECK_NEAR(areaLight.radius, .1f, 1e-6);
+    CHECK_NEAR(areaLight.intensity, 4, 1e-6);
     Object ball = flatObject(a, 0), plane = flatObject(a, 1);
     CHECK(ball.responseKind == GEO_RESPONSE_OPAQUE);
     CHECK(plane.responseKind == GEO_RESPONSE_MIRROR);

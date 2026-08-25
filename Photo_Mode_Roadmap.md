@@ -327,6 +327,13 @@ These are optimizations rather than correctness prerequisites.
 
 ## Milestone H — Finite area lights and radiometry
 
+Status: geodesic spherical emitter sampling and soft shadows are implemented
+with the version-12 light packet. Samples are uniform in emitter area and use
+the curvature-aware area-to-solid-angle Jacobian below. Direct lighting uses
+both emitter-area samples and the diffuse continuation direction, combined by
+the power heuristic. Emitter intersections are evaluated as light events for
+MIS without making the light records ordinary scene geometry.
+
 Before implementing finite emitters, validate the curved-space Jacobians used
 to convert between surface-area and directional probability densities.
 

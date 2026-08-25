@@ -1,7 +1,8 @@
-# GeometryCore contract, version 11
+# GeometryCore contract, version 12
 
-Version 11 adds oriented ambient linear sections, clipped surface patches, and
-homogeneous quadratic surfaces to the native-model contract.
+Version 12 adds finite geodesic spherical emitters and explicit light-kind and
+intrinsic-radius fields. Version 11 introduced oriented ambient linear
+sections, clipped surface patches, and homogeneous quadratic surfaces.
 
 ## Models and points
 
@@ -53,6 +54,8 @@ addCliffordTorus(chart, material, response)
 addObjectClip(object, normal, offset)
 addObjectClipPlane(object, outwardDirection, signedDistance)
 addLight(chart, vec4 position, color, intensity)
+addSphericalAreaLight(chart, vec4 center, intrinsicRadius,
+                      color, emittedRadiance)
 cameraChartAt(chart, vec4 position, float intrinsicTraceRadius)
 addPortalPair(chartA, outwardA, distanceA,
               chartB, outwardB, distanceB, pairingAB)
@@ -92,7 +95,7 @@ compound portal reduction.
 
 ## Packet
 
-`GEO_CONTRACT_VERSION` is 11 and `GEO_PACKET_MAGIC` is `0x41545243`. Both
+`GEO_CONTRACT_VERSION` is 12 and `GEO_PACKET_MAGIC` is `0x41545243`. Both
 `build()` and `buildAtlas()` emit:
 
 ```text
@@ -103,11 +106,18 @@ Object[objectCount] (48 each)
 Quadric[quadricCount] (64 each)
 PrimitiveClip[clipCount] (32 each)
 Material[materialCount] (32 each)
-PointLight[lightCount] (32 each)
+PointLight[lightCount] (48 each)
 ```
 
 `build()` emits one flattened chart and zero portals. `buildAtlas()` preserves
 authored charts and quotient portals.
+
+Despite its source-compatible name, `PointLight` is the common light record.
+It stores position, color, intensity, intrinsic radius, and light kind. A point
+light has kind `GEO_LIGHT_POINT`, radius zero, and retains the legacy empirical
+falloff control. A spherical emitter has kind `GEO_LIGHT_SPHERE`, positive
+intrinsic radius, and interprets `color * intensity` as emitted radiance. The
+emitter must fit inside its authored chart.
 
 An object descriptor stores its equation kind, response, material, inline
 linear/sphere coefficients, optional quadric index, and clip range. The three
@@ -126,10 +136,10 @@ Each chart stores its intrinsic radius and tracing parameter:
 The `raytrace` and `photoTrace` kernels have function constants `SPACE_FORM`
 (index 0) and `ENABLE_PORTALS` (index 1). The renderer caches all six pipeline
 states for each kernel and rejects a packet whose `controls.modelKind` differs
-from the specialization. Photo Mode also traces point-light visibility rays
-through the same specialized object and portal event machinery; this does not
-add fields to the packet contract. Its trace statistics include primary,
-mirror, diffuse, and visibility-ray portal work. The R³ Flat `photoTrace`
+from the specialization. Photo Mode traces light visibility rays through the
+same specialized object and portal event machinery. Its trace statistics
+include primary, mirror, diffuse, and visibility-ray portal work. The R³ Flat
+`photoTrace`
 specialization and both curved-space Flat specializations use a cosine-weighted
 Lambertian path integrator with a black environment and physical perfect-mirror
 continuation. S³ and H³ construct the sampling frame with their induced tangent
@@ -137,11 +147,18 @@ metrics and re-canonicalize every continued ray. Atlas Photo Mode continues
 diffuse and mirror paths through the same portal transport as primary rays.
 Its direct-light estimator deterministically enumerates the packet's bounded
 light-lift tree and traces a portal-aware visibility ray toward every lift.
+Finite spherical emitters are sampled uniformly in surface area. For intrinsic
+radius `a`, their area is `4π Sκ(a)²`; a sample at distance `r` contributes the
+Jacobian `abs(cos(thetaLight)) / Sκ(r)²`. This produces curvature-aware soft
+shadows without applying the legacy point-light falloff. The direct estimator
+also tests the cosine-weighted diffuse continuation direction against finite
+emitters. Emitter-area and BSDF samples use their corresponding solid-angle
+PDFs and the power heuristic for multiple importance sampling.
 
 Radial calculations use
 `Sκ(u)=2u/(1+κu²)` and `Cκ(u)=(1-κu²)/(1+κu²)`. Distance recovery is
 `2 atan(u)`, `2 atanh(u)`, or `2u`. Linear sections retain the existing
 half-angle root calculation. R³ quadrics use a line quadratic; S³ quadrics use
 a double-angle sinusoid; H³ quadrics use a quadratic in `exp(2d)`. Candidate
-roots are tested in distance order against every clip. Light attenuation uses
+roots are tested in distance order against every clip. Light propagation uses
 the natural area radius `sin(d)`, `sinh(d)`, or `d`.

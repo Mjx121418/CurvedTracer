@@ -112,7 +112,7 @@ struct CurvedTracerTests {
         #expect(stats.snapshot.hopLimitRays == 1)
     }
 
-    @Test func allSpaceTraversalScenesBuildV11Packets() {
+    @Test func allSpaceTraversalScenesBuildV12Packets() {
         #expect(AmbientSpace.allCases.count == 3)
         #expect(TraversalMode.allCases.count == 2)
         #expect(EuclideanFlatSceneVariant.allCases.count == 2)
@@ -137,7 +137,7 @@ struct CurvedTracerTests {
         for build in builders {
             _ = build(&atlas)
             #expect(atlas.packetSize() >= 192)
-            #expect(int32([UInt8](atlas.packetBytes()), at: 4) == 11)
+            #expect(int32([UInt8](atlas.packetBytes()), at: 4) == 12)
         }
     }
 

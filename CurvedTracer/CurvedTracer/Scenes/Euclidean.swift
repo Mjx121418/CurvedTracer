@@ -53,8 +53,9 @@ enum EuclideanScene {
         _ = atlas.addBall(0, geo.vec4(-0.38, -0.62, 0.2, 1), 0.3, blue)
         _ = atlas.addBallSurface(
             0, geo.vec4(0.4, -0.64, 0.45, 1), 0.28, mirror, 1)
-        _ = atlas.addLight(
-            0, geo.vec4(0, 0.72, -0.25, 1), geo.vec3(1, 0.92, 0.78), 18)
+        _ = atlas.addSphericalAreaLight(
+            0, geo.vec4(0, 0.72, -0.25, 1), 0.12,
+            geo.vec3(1, 0.92, 0.78), 100)
 
         atlas.setCamera(
             0.62, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0),

@@ -158,6 +158,110 @@ static bool photoTangentFrame(
     mdot(first, first) > 0.5f && mdot(second, second) > 0.5f;
 }
 
+static bool photoTangentBasis(
+    float4 point,
+    thread float4 &first,
+    thread float4 &second,
+    thread float4 &third
+) {
+    float bestNorm = 0.0f;
+    third = float4(0);
+    int candidateCount = SPACE_FORM == MODEL_R3 ? 3 : 4;
+    for (int axis = 0; axis < candidateCount; ++axis) {
+        float4 candidate = photoProjectToTangent(
+            photoAmbientAxis(axis), point);
+        float candidateNorm = mdot(candidate, candidate);
+        if (isfinite(candidateNorm) && candidateNorm > bestNorm) {
+            bestNorm = candidateNorm;
+            third = candidate;
+        }
+    }
+    if (bestNorm <= EPS * EPS)
+        return false;
+    third *= rsqrt(bestNorm);
+    return photoTangentFrame(point, third, first, second);
+}
+
+static bool photoCanonicalPoint(thread float4 &point) {
+    if (SPACE_FORM == MODEL_R3) {
+        point.w = 1.0f;
+        return all(isfinite(point));
+    }
+    float pointNorm = mdot(point, point);
+    if (!isfinite(pointNorm) || kappa() * pointNorm <= EPS)
+        return false;
+    point *= rsqrt(kappa() * pointNorm);
+    return all(isfinite(point)) &&
+    (SPACE_FORM != MODEL_H3 || point.w > 0.0f);
+}
+
+static bool photoSampleSphericalEmitter(
+    float4 center,
+    float radius,
+    thread uint &randomState,
+    thread float4 &samplePoint,
+    thread float4 &sampleNormal
+) {
+    if (!photoCanonicalPoint(center))
+        return false;
+    float4 first, second, third;
+    if (!photoTangentBasis(center, first, second, third))
+        return false;
+    float z = 1.0f - 2.0f * photoRandom(randomState);
+    float azimuth = TWO_PI * photoRandom(randomState);
+    float radialPart = sqrt(max(1.0f - z * z, 0.0f));
+    float4 radialDirection =
+    radialPart * cos(azimuth) * first +
+    radialPart * sin(azimuth) * second + z * third;
+    float C, S;
+    radial(radius, C, S);
+    samplePoint = C * center + S * radialDirection;
+    sampleNormal = -kappa() * S * center + C * radialDirection;
+    return canonicalizeRayState(samplePoint, sampleNormal);
+}
+
+static float photoSphericalEmitterRoot(
+    float4 center,
+    float radius,
+    float4 point,
+    float4 tangent,
+    float maximum,
+    device const QuadricGPU *quadrics,
+    device const PrimitiveClipGPU *clips,
+    thread uint &errorBits
+) {
+    ObjectGPU emitter{};
+    emitter.clipCount = 0;
+    if (SPACE_FORM == MODEL_R3) {
+        emitter.equationKind = EQUATION_R3_SPHERE;
+        emitter.geometry = center;
+        emitter.parameter = radius;
+    } else {
+        emitter.equationKind = EQUATION_LINEAR;
+        emitter.geometry = -center;
+        emitter.parameter = SPACE_FORM == MODEL_S3
+        ? -cos(radius)
+        : cosh(radius);
+    }
+    return objectRoot(
+        emitter, point, tangent, SELF_EPS, maximum, quadrics, clips,
+        errorBits);
+}
+
+static float photoPowerHeuristic(float firstPDF, float secondPDF) {
+    if (!isfinite(firstPDF) || !isfinite(secondPDF) ||
+        firstPDF < 0.0f || secondPDF < 0.0f)
+        return 0.0f;
+    float scale = max(firstPDF, secondPDF);
+    if (scale <= 0.0f)
+        return 0.0f;
+    float first = firstPDF / scale;
+    float second = secondPDF / scale;
+    float firstSquared = first * first;
+    float secondSquared = second * second;
+    return firstSquared / max(firstSquared + secondSquared, EPS * EPS);
+}
+
 static bool photoCosineHemisphere(
     float4 point,
     float4 normal,
@@ -190,7 +294,10 @@ static float3 photoDirectLambertian(
     device const QuadricGPU *quadrics,
     device const PrimitiveClipGPU *clips,
     device const LightGPU *lights,
-    thread TraceResult &result
+    thread TraceResult &result,
+    thread uint &randomState,
+    bool hasBSDFSample,
+    float4 bsdfDirection
 ) {
     const float inversePi = 0.31830988618f;
     float3 direct = 0;
@@ -201,12 +308,47 @@ static float3 photoDirectLambertian(
     incoming[0] = -1;
     toStart[0] = float4x4(1);
     int depth = 0, stateCount = 1;
+    float nearestBSDFDistance = INF;
+    LightGPU nearestBSDFLight{};
+    float4 nearestBSDFCenter = float4(0);
     while (depth >= 0) {
         ChartGPU chart = charts[chartStack[depth]];
         if (nextPortal[depth] < 0) {
             for (int local = 0; local < chart.lightCount; ++local) {
                 LightGPU light = lights[chart.firstLight + local];
-                float4 lightPosition = toStart[depth] * light.position;
+                float4 lightCenter = toStart[depth] * light.position;
+                float4 lightPosition = lightCenter;
+                float4 lightNormal = float4(0);
+                if (light.kind == LIGHT_SPHERE) {
+                    if (light.radius <= 0.0f ||
+                        !photoCanonicalPoint(lightCenter) ||
+                        !photoSampleSphericalEmitter(
+                            lightCenter, light.radius, randomState,
+                            lightPosition, lightNormal)) {
+                        result.errorBits |= 4u;
+                        continue;
+                    }
+                    if (hasBSDFSample) {
+                        float centerDistance = intrinsicDistance(
+                            hit.point, lightCenter);
+                        if (isfinite(centerDistance)) {
+                            float maximum =
+                            centerDistance + light.radius + SELF_EPS;
+                            float emitterDistance = photoSphericalEmitterRoot(
+                                lightCenter, light.radius, hit.point,
+                                bsdfDirection, maximum, quadrics, clips,
+                                result.errorBits);
+                            if (emitterDistance < nearestBSDFDistance) {
+                                nearestBSDFDistance = emitterDistance;
+                                nearestBSDFLight = light;
+                                nearestBSDFCenter = lightCenter;
+                            }
+                        }
+                    }
+                } else if (light.kind != LIGHT_POINT) {
+                    result.errorBits |= 1u;
+                    continue;
+                }
                 float distanceToLight = intrinsicDistance(
                     hit.point, lightPosition);
                 if (!isfinite(distanceToLight) || distanceToLight < EPS)
@@ -236,9 +378,34 @@ static float3 photoDirectLambertian(
                 if (visibility.blocked)
                     continue;
 
-                float area = max(areaRadius(distanceToLight), 1e-3f);
-                float attenuation = light.intensity /
-                (1.0f + h->controls.falloffK * area * area);
+                float propagationRadius =
+                max(areaRadius(distanceToLight), 1e-3f);
+                float attenuation;
+                if (light.kind == LIGHT_POINT) {
+                    attenuation = light.intensity /
+                    (1.0f + h->controls.falloffK *
+                     propagationRadius * propagationRadius);
+                } else {
+                    float4 directionFromLight = directionTo(
+                        lightPosition, hit.point, distanceToLight);
+                    float emitterCosine = clamp(
+                        mdot(lightNormal, directionFromLight), 0.0f, 1.0f);
+                    if (emitterCosine <= 0.0f)
+                        continue;
+                    float emitterRadius = areaRadius(light.radius);
+                    float emitterArea =
+                    2.0f * TWO_PI * emitterRadius * emitterRadius;
+                    float lightPDF =
+                    propagationRadius * propagationRadius /
+                    max(emitterArea * emitterCosine, EPS);
+                    float bsdfPDF = cosine * inversePi;
+                    float misWeight = hasBSDFSample
+                    ? photoPowerHeuristic(lightPDF, bsdfPDF)
+                    : 1.0f;
+                    attenuation = light.intensity * emitterCosine *
+                    emitterArea * misWeight /
+                    (propagationRadius * propagationRadius);
+                }
                 direct +=
                 float3(light.color) * attenuation * cosine * inversePi;
             }
@@ -264,6 +431,49 @@ static float3 photoDirectLambertian(
         toStart[child] =
         toStart[depth] * portals[portal.reversePortal].toNeighbor;
         depth = child;
+    }
+    if (hasBSDFSample && nearestBSDFDistance < INF) {
+        float4 emitterPoint = rayPoint(
+            hit.point, bsdfDirection, nearestBSDFDistance);
+        float4 emitterNormal = directionTo(
+            nearestBSDFCenter, emitterPoint, nearestBSDFLight.radius);
+        float4 directionFromLight = directionTo(
+            emitterPoint, hit.point, nearestBSDFDistance);
+        float emitterCosine = clamp(
+            mdot(emitterNormal, directionFromLight), 0.0f, 1.0f);
+        float surfaceCosine = clamp(
+            mdot(normal, bsdfDirection), 0.0f, 1.0f);
+        if (emitterCosine > 0.0f && surfaceCosine > 0.0f) {
+            RayState shadowRay;
+            shadowRay.point = hit.point;
+            shadowRay.tangent = bsdfDirection;
+            shadowRay.chartId = chartId;
+            VisibilityResult visibility = traceAny(
+                shadowRay, nearestBSDFDistance - SELF_EPS,
+                h->controls.maxChartHops, charts, portals, objects,
+                quadrics, clips);
+            result.errorBits |= visibility.errorBits;
+            result.portalHops += visibility.portalHops;
+            result.compoundPortalHops += visibility.compoundPortalHops;
+            result.portalTests += visibility.portalTests;
+            result.hitHopLimit =
+            result.hitHopLimit || visibility.hitHopLimit;
+            if (!visibility.blocked) {
+                float propagationRadius =
+                max(areaRadius(nearestBSDFDistance), 1e-3f);
+                float emitterRadius = areaRadius(nearestBSDFLight.radius);
+                float emitterArea =
+                2.0f * TWO_PI * emitterRadius * emitterRadius;
+                float lightPDF =
+                propagationRadius * propagationRadius /
+                max(emitterArea * emitterCosine, EPS);
+                float bsdfPDF = surfaceCosine * inversePi;
+                float misWeight =
+                photoPowerHeuristic(bsdfPDF, lightPDF);
+                direct += float3(nearestBSDFLight.color) *
+                nearestBSDFLight.intensity * misWeight;
+            }
+        }
     }
     return clamp(material.color.rgb, 0.0f, 1.0f) * direct;
 }
@@ -343,18 +553,22 @@ static TraceResult traceLambertianSample(
                 hit.tangent - 2.0f * mdot(hit.tangent, normal) * normal);
             ray.chartId = surface.chartId;
         } else if (object.responseKind == RESPONSE_OPAQUE) {
-            radiance += throughput * photoDirectLambertian(
-                hit, normal, material, surface.chartId, h, charts, portals,
-                objects, quadrics, clips, lights, result);
-            if (depth == maxBounces)
-                break;
-            throughput *= clamp(material.color.rgb, 0.0f, 1.0f);
-            ray.point = hit.point;
-            if (!photoCosineHemisphere(
-                    hit.point, normal, randomState, ray.tangent)) {
+            bool hasBSDFSample = depth < maxBounces;
+            float4 bsdfDirection = float4(0);
+            if (hasBSDFSample && !photoCosineHemisphere(
+                    hit.point, normal, randomState, bsdfDirection)) {
                 result.errorBits |= 4u;
                 break;
             }
+            radiance += throughput * photoDirectLambertian(
+                hit, normal, material, surface.chartId, h, charts, portals,
+                objects, quadrics, clips, lights, result, randomState,
+                hasBSDFSample, bsdfDirection);
+            if (!hasBSDFSample)
+                break;
+            throughput *= clamp(material.color.rgb, 0.0f, 1.0f);
+            ray.point = hit.point;
+            ray.tangent = bsdfDirection;
             ray.chartId = surface.chartId;
         } else {
             break;

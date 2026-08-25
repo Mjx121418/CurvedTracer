@@ -7,11 +7,12 @@ using namespace metal;
 constant int SPACE_FORM [[function_constant(0)]]; // 0 H³, 1 S³, 2 R³
 constant bool ENABLE_PORTALS [[function_constant(1)]];
 
-constant int PACKET_MAGIC = 0x41545243, CONTRACT_VERSION = 11,
+constant int PACKET_MAGIC = 0x41545243, CONTRACT_VERSION = 12,
 HEADER_SIZE = 192, OBJECT_SIZE = 48;
 constant int MODEL_H3 = 0, MODEL_S3 = 1, MODEL_R3 = 2;
 constant int EQUATION_LINEAR = 0, EQUATION_R3_SPHERE = 1, EQUATION_QUADRIC = 2;
 constant int RESPONSE_OPAQUE = 0, RESPONSE_MIRROR = 1;
+constant int LIGHT_POINT = 0, LIGHT_SPHERE = 1;
 constant int CLIP_LINEAR = 0, CLIP_BALL = 1;
 constant int FOG_DISABLED = 0, FOG_COMPACT = 1, FOG_EXPONENTIAL = 2;
 constant float EPS = 1e-5f, SELF_EPS = 1e-4f, INF = 1e30f,
@@ -73,6 +74,10 @@ struct LightGPU {
     float4 position;
     packed_float3 color;
     float intensity;
+    float radius;
+    int kind;
+    int pad0;
+    int pad1;
 };
 struct TraceStatsGPU {
     atomic_uint errorBits;
@@ -742,7 +747,18 @@ static float3 shade(Event hit, ObjectGPU object, MaterialGPU material, int chart
                         continue;
                 }
                 float ar = max(areaRadius(d), 1e-3f);
-                float attenuation = l.intensity / (1 + falloff * ar * ar);
+                float attenuation;
+                if (l.kind == LIGHT_POINT) {
+                    attenuation =
+                    l.intensity / (1 + falloff * ar * ar);
+                } else if (l.kind == LIGHT_SPHERE && l.radius > 0.0f) {
+                    float emitterRadius = areaRadius(l.radius);
+                    attenuation = l.intensity * emitterRadius * emitterRadius /
+                    (ar * ar);
+                } else {
+                    errorBits |= 1u;
+                    continue;
+                }
                 float3 irradiance = float3(l.color) * attenuation;
                 diffuse += irradiance * nd;
                 float4 halfv = tangentNormalize(ld + view);

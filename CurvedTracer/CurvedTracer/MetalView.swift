@@ -554,7 +554,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
         self.commandQueue.addResidencySet(self.residencySet)
 
-        // Covers the v11 maxima, including quadric payloads and clip records.
+        // Covers the v12 maxima, including quadric, clip, and area-light records.
         guard let photoSceneBuffer = device.makeBuffer(
             length: Self.maxScenePacketSize,
             options: .storageModeShared)

@@ -521,6 +521,34 @@ int Atlas::addLight(int chart, const vec4 &raw, const vec3 &color,
   l.position = p;
   l.color = color;
   l.intensity = intensity;
+  l.radius = 0.0f;
+  l.kind = GEO_LIGHT_POINT;
+  lights_.push_back(l);
+  charts_[chart].lightIds.push_back(int(lights_.size() - 1));
+  setError(0);
+  return int(lights_.size() - 1);
+}
+
+int Atlas::addSphericalAreaLight(int chart, const vec4 &raw, float radius,
+                                 const vec3 &color, float emittedRadiance) {
+  packet_.clear();
+  vec4 center;
+  if (!validChartId(chart) || !canonicalizePoint(raw, center) ||
+      !validChartRadius(radius) || !finite(color) ||
+      !finite(emittedRadiance) || emittedRadiance < 0 ||
+      originDistance(center) + radius >
+          charts_[chart].radius + CONTAIN_TOL ||
+      lights_.size() >= GEO_MAX_LIGHTS) {
+    setError(3);
+    return -1;
+  }
+  ChartLight l;
+  l.chartId = chart;
+  l.position = center;
+  l.color = color;
+  l.intensity = emittedRadiance;
+  l.radius = radius;
+  l.kind = GEO_LIGHT_SPHERE;
   lights_.push_back(l);
   charts_[chart].lightIds.push_back(int(lights_.size() - 1));
   setError(0);
@@ -1030,7 +1058,8 @@ int Atlas::emit(bool flatten, int cameraChart, int depth, int hops,
     for (const auto &l : lights_) {
       Isometry m = recenter.compose(toCamera[l.chartId]);
       gpuLights.push_back(
-          PointLight{m.applyPoint(l.position), l.color, l.intensity});
+          PointLight{m.applyPoint(l.position), l.color, l.intensity,
+                     l.radius, l.kind, 0, 0});
     }
   } else {
     std::vector<int> portalRemap(portals_.size(), -1);
@@ -1063,7 +1092,8 @@ int Atlas::emit(bool flatten, int cameraChart, int depth, int hops,
       }
       for (int id : c.lightIds) {
         const auto &l = lights_[id];
-        gpuLights.push_back(PointLight{l.position, l.color, l.intensity});
+        gpuLights.push_back(PointLight{l.position, l.color, l.intensity,
+                                       l.radius, l.kind, 0, 0});
       }
       gpuCharts.push_back(g);
     }

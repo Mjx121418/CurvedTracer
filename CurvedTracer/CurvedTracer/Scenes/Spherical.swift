@@ -356,9 +356,9 @@ enum SphericalScene {
         _ = atlas.addBallSurface(
             0, atlas.pointFromOriginTangent(geo.vec3(0.12, -0.192, 0.135)),
             0.084, mirror, 1)
-        _ = atlas.addLight(
+        _ = atlas.addSphericalAreaLight(
             0, atlas.pointFromOriginTangent(geo.vec3(0, 0.216, -0.075)),
-            geo.vec3(1, 0.92, 0.78), 18)
+            0.036, geo.vec3(1, 0.92, 0.78), 100)
 
         atlas.setCamera(
             0.62, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0),

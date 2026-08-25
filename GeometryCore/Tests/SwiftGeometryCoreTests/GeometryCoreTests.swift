@@ -3,7 +3,7 @@ import XCTest
 
 final class GeometryCoreTests: XCTestCase {
   func testPacketLayoutAndNativePoints() {
-    XCTAssertEqual(geo.geometryCoreName(), "Geometry Core v11")
+    XCTAssertEqual(geo.geometryCoreName(), "Geometry Core v12")
     XCTAssertEqual(MemoryLayout<geo.Camera>.size, 96)
     XCTAssertEqual(MemoryLayout<geo.RenderControls>.size, 48)
     XCTAssertEqual(MemoryLayout<geo.Counts>.size, 32)
@@ -13,6 +13,7 @@ final class GeometryCoreTests: XCTestCase {
     XCTAssertEqual(MemoryLayout<geo.PrimitiveClip>.size, 32)
     XCTAssertEqual(MemoryLayout<geo.GPUChart>.size, 32)
     XCTAssertEqual(MemoryLayout<geo.GPUPortal>.size, 96)
+    XCTAssertEqual(MemoryLayout<geo.PointLight>.size, 48)
 
     var atlas = geo.Atlas()
     atlas.start(2)
@@ -33,17 +34,22 @@ final class GeometryCoreTests: XCTestCase {
     XCTAssertEqual(
       atlas.addLight(0, atlas.pointFromOriginTangent(geo.vec3(-0.2, 0, 0)), geo.vec3(1, 1, 1), 1), 0
     )
+    XCTAssertEqual(
+      atlas.addSphericalAreaLight(
+        0, atlas.pointFromOriginTangent(geo.vec3(0.1, 0.1, 0)), 0.1,
+        geo.vec3(0.8, 0.7, 0.6), 4), 1
+    )
     atlas.setCamera(0.8, 1.6, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0), geo.vec3(0, 0, 1))
     XCTAssertEqual(atlas.cameraChartAt(0, geo.vec4(0, 0, 0, 1), 2.5), 0)
 
     XCTAssertEqual(atlas.build(0, 64), 0)
     let flat = [UInt8](atlas.packetBytes())
-    XCTAssertEqual(flat.count, 192 + 32 + 2 * 48 + 32 + 32 + 32)
-    XCTAssertEqual(flat[4], 11)
+    XCTAssertEqual(flat.count, 192 + 32 + 2 * 48 + 32 + 32 + 2 * 48)
+    XCTAssertEqual(flat[4], 12)
 
     XCTAssertEqual(atlas.buildAtlas(0, 64, 1, 32), 0)
     let authored = [UInt8](atlas.packetBytes())
-    XCTAssertEqual(authored.count, 192 + 32 + 2 * 48 + 32 + 32)
+    XCTAssertEqual(authored.count, 192 + 32 + 2 * 48 + 32 + 2 * 48)
     XCTAssertNotNil(atlas.packetData())
   }
 

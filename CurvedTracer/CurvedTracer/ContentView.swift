@@ -7,6 +7,7 @@ import GeometryCore
 import SwiftUI
 
 struct ContentView: View {
+  @Binding var showsPerformanceOverlay: Bool
   @State private var ambienSpace: AmbientSpace = .sphere
   @State private var traversalMode: TraversalMode = .flat
   @State private var sphericalFlatSceneVariant: SphericalFlatSceneVariant = .cell600
@@ -30,9 +31,11 @@ struct ContentView: View {
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
       .ignoresSafeArea()
 
-      PerformanceOverlay(stats: performanceStats)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(12)
+      if showsPerformanceOverlay {
+        PerformanceOverlay(stats: performanceStats)
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+          .padding(12)
+      }
 
       VStack(alignment: .trailing) {
         Picker("Traversal", selection: $traversalMode) {
@@ -101,5 +104,5 @@ private struct PerformanceOverlay: View {
 }
 
 #Preview {
-  ContentView()
+  ContentView(showsPerformanceOverlay: .constant(true))
 }

@@ -2,8 +2,8 @@
 set -e
 
 # Proxy used by dsh / Node and other command-line tools.
-export HTTP_PROXY="http://192.168.64.1:1080"
-export HTTPS_PROXY="http://192.168.64.1:1080"
+export HTTP_PROXY="http://192.168.64.1:7897"
+export HTTPS_PROXY="http://192.168.64.1:7897"
 export http_proxy="$HTTP_PROXY"
 export https_proxy="$HTTPS_PROXY"
 

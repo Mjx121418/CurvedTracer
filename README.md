@@ -19,13 +19,7 @@ chart without introducing an artificial boundary in the represented space.
 the Metal tracer. The renderer therefore uses the same chart representation for
 ordinary curved scenes, multi-chart covers, and quotient spaces.
 
-## Scenes
-
-### Primitive galleries
-
-The selectable S³ and H³ galleries demonstrate truncated spherical surfaces,
-geodesic triangles cut out by three half-spaces, reflective plane patches, and
-homogeneous quadrics.
+## Screenshots
 
 ### Hopf fibration
 

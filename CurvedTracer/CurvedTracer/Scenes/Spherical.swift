@@ -2,6 +2,9 @@ import Foundation
 import GeometryCore
 
 enum SphericalScene {
+    // Preserve the original previews after normalizing point-light shading by 1/π.
+    private static let legacyPointLightScale = Float.pi
+
     private static let lensFaceDistance = Float.pi / 5
     private static let lensChartRadius = Float.pi / 2 + 0.13
     private static let antipodalMatrix: [Float] = [
@@ -312,9 +315,11 @@ enum SphericalScene {
         }
         _ = atlas.addMirrorPlane(0, geo.vec3(0, -1, 0), 1.25, 4)
         _ = atlas.addLight(
-            0, atlas.pointFromOriginTangent(geo.vec3(-0.4, 0.25, -0.15)), geo.vec3(1, 0.92, 0.74), 1)
+            0, atlas.pointFromOriginTangent(geo.vec3(-0.4, 0.25, -0.15)),
+            geo.vec3(1, 0.92, 0.74), legacyPointLightScale)
         _ = atlas.addLight(
-            0, atlas.pointFromOriginTangent(geo.vec3(0.3, -0.1, 0.5)), geo.vec3(0.5, 0.7, 1), 0.55)
+            0, atlas.pointFromOriginTangent(geo.vec3(0.3, -0.1, 0.5)),
+            geo.vec3(0.5, 0.7, 1), 0.55 * legacyPointLightScale)
         atlas.setCamera(0.85, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0), geo.vec3(0, 0, 1))
         atlas.setControls(6, 0.05, 0.18, 0.92, 2, 0, 0.0)
     }
@@ -429,10 +434,10 @@ enum SphericalScene {
 
         _ = atlas.addLight(
             0, atlas.pointFromOriginTangent(geo.vec3(-0.35, 0.25, 0.15)),
-            geo.vec3(1, 0.92, 0.75), 1)
+            geo.vec3(1, 0.92, 0.75), legacyPointLightScale)
         _ = atlas.addLight(
             0, atlas.pointFromOriginTangent(geo.vec3(0.2, -0.15, 0.55)),
-            geo.vec3(0.45, 0.65, 1), 0.65)
+            geo.vec3(0.45, 0.65, 1), 0.65 * legacyPointLightScale)
         atlas.setCamera(
             0.82, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0),
             geo.vec3(0, 0, 1))
@@ -483,10 +488,10 @@ enum SphericalScene {
 
         _ = atlas.addLight(
             0, atlas.pointFromOriginTangent(geo.vec3(-0.45, 0.30, 0.18)),
-            geo.vec3(1, 0.92, 0.75), 1)
+            geo.vec3(1, 0.92, 0.75), legacyPointLightScale)
         _ = atlas.addLight(
             0, atlas.pointFromOriginTangent(geo.vec3(0.32, -0.22, 0.48)),
-            geo.vec3(0.45, 0.68, 1), 0.7)
+            geo.vec3(0.45, 0.68, 1), 0.7 * legacyPointLightScale)
         let cameraPlacement = hopfFibrationCameraPlacement()
         let forward = cameraPlacement.centeredForward
         let right = geo.vec3(0, 0, 1)
@@ -595,10 +600,10 @@ enum SphericalScene {
 
         _ = atlas.addLight(
             0, atlas.pointFromOriginTangent(geo.vec3(-0.42, 0.28, 0.20)),
-            geo.vec3(1, 0.92, 0.74), 1)
+            geo.vec3(1, 0.92, 0.74), legacyPointLightScale)
         _ = atlas.addLight(
             0, atlas.pointFromOriginTangent(geo.vec3(0.30, -0.18, 0.52)),
-            geo.vec3(0.45, 0.68, 1), 0.7)
+            geo.vec3(0.45, 0.68, 1), 0.7 * legacyPointLightScale)
         atlas.setCamera(
             0.82, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0),
             geo.vec3(0, 0, 1))
@@ -698,7 +703,9 @@ enum SphericalScene {
                 || center.z > 0.9
                 || center.w > 0.9
             if axisSum > 0.9, axisSum < 1.1, isPositiveBasis {
-                _ = atlas.addLight(chartIDs[index], lightPosition, lightColor, 1)
+                _ = atlas.addLight(
+                    chartIDs[index], lightPosition, lightColor,
+                    legacyPointLightScale)
             }
         }
 
@@ -745,7 +752,7 @@ enum SphericalScene {
             0,
             atlas.pointFromOriginTangent(geo.vec3(0.05, 0.28, 0.18)),
             geo.vec3(1.0, 0.92, 0.72),
-            0.8)
+            0.8 * legacyPointLightScale)
 
         let portal = atlas.addPortalPair(
             0, geo.vec3(1, 0, 0), lensFaceDistance,

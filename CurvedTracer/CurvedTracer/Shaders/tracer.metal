@@ -1,7 +1,15 @@
 #include "TraceShared.metalh"
 
+struct FrameGPU {
+    uint sampleIndex;
+    float exposure;
+    uint pad1;
+    uint pad2;
+};
+
 kernel void raytrace(device const uchar *packet [[buffer(0)]],
                      device TraceStatsGPU *stats [[buffer(1)]],
+                     constant FrameGPU &frame [[buffer(2)]],
                      texture2d<float, access::write> output [[texture(0)]],
                      uint2 pixel [[thread_position_in_grid]],
                      uint laneInSIMDGroup [[thread_index_in_simdgroup]],
@@ -51,15 +59,9 @@ kernel void raytrace(device const uchar *packet [[buffer(0)]],
         simdGroupIndex, threadIndex, simdGroupCount, rayPartials,
         hopPartials, compoundPartials, maximumPartials, limitedPartials,
         testPartials);
-    output.write(float4(clamp(result.radiance, 0.0f, 1.0f), 1), pixel);
+    output.write(
+        float4(toneMapRadiance(result.radiance, frame.exposure), 1), pixel);
 }
-
-struct PhotoFrameGPU {
-    uint sampleIndex;
-    float exposure;
-    uint pad1;
-    uint pad2;
-};
 
 static uint photoHash(uint input) {
     uint state = input * 747796405u + 2891336453u;
@@ -589,7 +591,7 @@ static TraceResult traceLambertianSample(
 kernel void photoTrace(
     device const uchar *packet [[buffer(0)]],
     device TraceStatsGPU *stats [[buffer(1)]],
-    constant PhotoFrameGPU &frame [[buffer(2)]],
+    constant FrameGPU &frame [[buffer(2)]],
     texture2d<float, access::write> output [[texture(0)]],
     texture2d<float, access::read_write> accumulation [[texture(1)]],
     uint2 pixel [[thread_position_in_grid]],
@@ -646,9 +648,8 @@ kernel void photoTrace(
     accumulation.write(float4(sum, 1), pixel);
 
     float3 average = sum / float(frame.sampleIndex + 1u);
-    float3 exposed = average * max(frame.exposure, 0.0f);
-    float3 mapped = exposed / (1.0f + exposed);
-    output.write(float4(mapped, 1), pixel);
+    output.write(
+        float4(toneMapRadiance(average, frame.exposure), 1), pixel);
 
     if (result.errorBits)
         atomic_fetch_or_explicit(

@@ -206,6 +206,7 @@ struct MetalView: NSViewRepresentable {
     @Binding var hyperbolicFlatSceneVariant: HyperbolicFlatSceneVariant
     @Binding var hyperbolicAtlasVariant: HyperbolicAtlasVariant
     @Binding var renderingMode: RenderingMode
+    @Binding var exposure: Double
     let performanceStats: PerformanceStats
     let renderResolution: RenderResolution
 
@@ -250,6 +251,7 @@ struct MetalView: NSViewRepresentable {
         context.coordinator.sphericalFlatSceneVariant = sphericalFlatSceneVariant
         context.coordinator.hyperbolicFlatSceneVariant = hyperbolicFlatSceneVariant
         context.coordinator.hyperbolicAtlasVariant = hyperbolicAtlasVariant
+        context.coordinator.exposure = Float(max(exposure, 0))
         context.coordinator.setScenePacket()
         if renderingMode == .photo,
            !context.coordinator.setRenderingMode(.photo)
@@ -290,6 +292,7 @@ struct MetalView: NSViewRepresentable {
                 renderingMode = actualMode
             }
         }
+        context.coordinator.exposure = Float(max(exposure, 0))
     }
 }
 
@@ -297,9 +300,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     private static let traceStatsWordCount = 8
     private static let traceStatsByteCount = traceStatsWordCount * MemoryLayout<UInt32>.size
     private static let maxScenePacketSize = 3_000_000
-    private static let photoExposure: Float = 2.0
-
-    private struct PhotoFrameParameters {
+    private struct FrameParameters {
         var sampleIndex: UInt32
         var exposure: Float
         var pad1: UInt32 = 0
@@ -319,7 +320,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var spatialScalerOutputHeight = 0
     private var sceneBuffers: [any MTLBuffer] = []
     private var photoSceneBuffer: (any MTLBuffer)!
-    private var photoParameterBuffers: [any MTLBuffer] = []
+    private var frameParameterBuffers: [any MTLBuffer] = []
     private var statusBuffers: [any MTLBuffer] = []
 
     private var commandQueue: (any MTL4CommandQueue)!
@@ -366,6 +367,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     var sphericalFlatSceneVariant: SphericalFlatSceneVariant = .cell600
     var hyperbolicFlatSceneVariant: HyperbolicFlatSceneVariant = .honeycombCell
     var hyperbolicAtlasVariant: HyperbolicAtlasVariant = .oneChart
+    var exposure: Float = 2.0
     var renderingMode: RenderingMode { photoModeState.renderingMode }
 
     init(performanceStats: PerformanceStats) {
@@ -449,8 +451,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         self.device = device
         self.renderResolution = renderResolution
         precondition(
-            MemoryLayout<PhotoFrameParameters>.stride == 16,
-            "Photo Mode parameter layout must match PhotoFrameGPU")
+            MemoryLayout<FrameParameters>.stride == 16,
+            "frame parameter layout must match FrameGPU")
 
         let library = device.makeDefaultLibrary()!
         for model in Int32(0)...Int32(2) {
@@ -585,17 +587,17 @@ final class Renderer: NSObject, MTKViewDelegate {
             residencySet.addAllocation(status)
 
             guard let parameters = device.makeBuffer(
-                length: MemoryLayout<PhotoFrameParameters>.stride,
+                length: MemoryLayout<FrameParameters>.stride,
                 options: .storageModeShared)
             else {
-                fatalError("Failed to create Photo Mode parameter buffer")
+                fatalError("Failed to create frame parameter buffer")
             }
-            photoParameterBuffers.append(parameters)
+            frameParameterBuffers.append(parameters)
             residencySet.addAllocation(parameters)
         }
 
         let realtimeArgumentDescriptor = MTL4ArgumentTableDescriptor()
-        realtimeArgumentDescriptor.maxBufferBindCount = 2
+        realtimeArgumentDescriptor.maxBufferBindCount = 3
         realtimeArgumentDescriptor.maxTextureBindCount = 1
         let photoArgumentDescriptor = MTL4ArgumentTableDescriptor()
         photoArgumentDescriptor.maxBufferBindCount = 3
@@ -647,6 +649,9 @@ final class Renderer: NSObject, MTKViewDelegate {
             argumentTables[frame].setAddress(
                 statusBuffers[frame].gpuAddress,
                 index: 1)
+            argumentTables[frame].setAddress(
+                frameParameterBuffers[frame].gpuAddress,
+                index: 2)
             argumentTables[frame].setTexture(texture.gpuResourceID, index: 0)
 
             photoArgumentTables[frame].setAddress(
@@ -656,7 +661,7 @@ final class Renderer: NSObject, MTKViewDelegate {
                 statusBuffers[frame].gpuAddress,
                 index: 1)
             photoArgumentTables[frame].setAddress(
-                photoParameterBuffers[frame].gpuAddress,
+                frameParameterBuffers[frame].gpuAddress,
                 index: 2)
             photoArgumentTables[frame].setTexture(
                 texture.gpuResourceID,
@@ -1033,6 +1038,7 @@ final class Renderer: NSObject, MTKViewDelegate {
 
         consumeTraceStats(from: statusBuffers[index])
 
+        let sampleIndex: UInt32
         let argumentTable: any MTL4ArgumentTable
         switch frameRenderingMode {
         case .realtime:
@@ -1043,22 +1049,24 @@ final class Renderer: NSObject, MTKViewDelegate {
                 return
             }
             copyAtlasPacket(to: sceneBuffers[index])
+            sampleIndex = 0
             argumentTable = argumentTables[index]
         case .photo:
             guard photoModeState.sampleIndex < UInt32.max else {
                 NSLog("Photo Mode reached its maximum sample count")
                 return
             }
-            var parameters = PhotoFrameParameters(
-                sampleIndex: photoModeState.sampleIndex,
-                exposure: Self.photoExposure)
-            _ = withUnsafeBytes(of: &parameters) { bytes in
-                memcpy(
-                    photoParameterBuffers[index].contents(),
-                    bytes.baseAddress!,
-                    bytes.count)
-            }
+            sampleIndex = photoModeState.sampleIndex
             argumentTable = photoArgumentTables[index]
+        }
+        var parameters = FrameParameters(
+            sampleIndex: sampleIndex,
+            exposure: max(exposure, 0))
+        _ = withUnsafeBytes(of: &parameters) { bytes in
+            memcpy(
+                frameParameterBuffers[index].contents(),
+                bytes.baseAddress!,
+                bytes.count)
         }
 
         commandAllocator.reset()

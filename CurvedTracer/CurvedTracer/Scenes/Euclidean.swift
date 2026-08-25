@@ -1,6 +1,9 @@
 import GeometryCore
 
 enum EuclideanScene {
+    // Preserve the original previews after normalizing point-light shading by 1/π.
+    private static let legacyPointLightScale = Float.pi
+
     private static func identity() -> [Float] { [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] }
     private static func configure(_ atlas: inout geo.Atlas) {
         atlas.start(2)
@@ -12,7 +15,9 @@ enum EuclideanScene {
         _ = atlas.addBall(0, geo.vec4(0.28, -0.2, 0.12, 1), 0.15, 0)
         _ = atlas.addBall(0, geo.vec4(-0.4, 0.16, -0.24, 1), 0.22, 1)
         _ = atlas.addBall(0, geo.vec4(0.05, 0.32, 0.38, 1), 0.11, 0)
-        _ = atlas.addLight(0, geo.vec4(-0.2, 0.25, 0.3, 1), geo.vec3(1, 0.9, 0.7), 1)
+        _ = atlas.addLight(
+            0, geo.vec4(-0.2, 0.25, 0.3, 1), geo.vec3(1, 0.9, 0.7),
+            legacyPointLightScale)
         atlas.setCamera(0.85, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0), geo.vec3(0, 0, 1))
         atlas.setControls(6, 0.05, 0.16, 0.9, 2, 0, 0.0)
     }

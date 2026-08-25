@@ -115,9 +115,12 @@ authored charts and quotient portals.
 Despite its source-compatible name, `PointLight` is the common light record.
 It stores position, color, intensity, intrinsic radius, and light kind. A point
 light has kind `GEO_LIGHT_POINT`, radius zero, and retains the legacy empirical
-falloff control. A spherical emitter has kind `GEO_LIGHT_SPHERE`, positive
-intrinsic radius, and interprets `color * intensity` as emitted radiance. The
-emitter must fit inside its authored chart.
+falloff control. Both render modes apply the Lambertian `albedo/π` response to
+point-light irradiance. Legacy application scenes multiply their authored
+point-light intensities by π to preserve their original linear illumination.
+A spherical emitter has kind `GEO_LIGHT_SPHERE`, positive intrinsic radius,
+and interprets `color * intensity` as emitted radiance. The emitter must fit
+inside its authored chart.
 
 An object descriptor stores its equation kind, response, material, inline
 linear/sphere coefficients, optional quadric index, and clip range. The three
@@ -154,6 +157,11 @@ shadows without applying the legacy point-light falloff. The direct estimator
 also tests the cosine-weighted diffuse continuation direction against finite
 emitters. Emitter-area and BSDF samples use their corresponding solid-angle
 PDFs and the power heuristic for multiple importance sampling.
+
+Real-time and Photo Mode use the same nonnegative exposure multiplier and
+Reinhard display transform, `display = exposure * radiance /
+(1 + exposure * radiance)`. Exposure changes affect display only; they do not
+alter or reset Photo Mode's accumulated HDR radiance.
 
 Radial calculations use
 `Sκ(u)=2u/(1+κu²)` and `Cκ(u)=(1-κu²)/(1+κu²)`. Distance recovery is

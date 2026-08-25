@@ -26,6 +26,25 @@ struct CurvedTracerTests {
         Float(bitPattern: uint32(bytes, at: offset))
     }
 
+    private func firstLightIntensity(_ bytes: [UInt8]) -> Float {
+        let chartCount = Int(int32(bytes, at: 160))
+        let portalCount = Int(int32(bytes, at: 164))
+        let objectCount = Int(int32(bytes, at: 168))
+        let materialCount = Int(int32(bytes, at: 172))
+        let lightCount = Int(int32(bytes, at: 176))
+        let quadricCount = Int(int32(bytes, at: 180))
+        let clipCount = Int(int32(bytes, at: 184))
+        #expect(lightCount > 0)
+        let lightOffset = 192
+            + chartCount * 32
+            + portalCount * 96
+            + objectCount * 48
+            + quadricCount * 64
+            + clipCount * 32
+            + materialCount * 32
+        return float32(bytes, at: lightOffset + 28)
+    }
+
     private func matrix(_ bytes: [UInt8], at offset: Int) -> [Float] {
         (0..<16).map { float32(bytes, at: offset + $0 * 4) }
     }
@@ -164,6 +183,19 @@ struct CurvedTracerTests {
         #expect(int32(bytes, at: 168) == 4)
         #expect(int32(bytes, at: 180) == 1)
         #expect(int32(bytes, at: 184) == 10)
+    }
+
+    @Test func legacyPointLightsCompensateLambertianNormalization() {
+        var atlas = geo.Atlas()
+        _ = EuclideanScene.finite(&atlas)
+        #expect(
+            abs(firstLightIntensity([UInt8](atlas.packetBytes())) - Float.pi)
+                < 0.0001)
+
+        _ = EuclideanScene.pathTracingRoom(&atlas)
+        #expect(
+            abs(firstLightIntensity([UInt8](atlas.packetBytes())) - 100)
+                < 0.0001)
     }
 
     @Test func hopfFibrationUsesDodecahedralFiberTubes() {

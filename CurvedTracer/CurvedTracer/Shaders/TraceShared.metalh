@@ -18,6 +18,11 @@ constant int FOG_DISABLED = 0, FOG_COMPACT = 1, FOG_EXPONENTIAL = 2;
 constant float EPS = 1e-5f, SELF_EPS = 1e-4f, INF = 1e30f,
 TWO_PI = 6.28318530718f;
 
+static float3 toneMapRadiance(float3 radiance, float exposure) {
+    float3 exposed = max(radiance, 0.0f) * max(exposure, 0.0f);
+    return exposed / (1.0f + exposed);
+}
+
 struct PacketMeta {
     int magic, contractVersion, objectSize, packetHeaderSize;
 };
@@ -709,6 +714,7 @@ static float3 shade(Event hit, ObjectGPU object, MaterialGPU material, int chart
              thread uint &errorBits, thread uint &portalHops,
              thread uint &compoundPortalHops, thread uint &portalTests,
              thread bool &hitHopLimit) {
+    const float inversePi = 0.31830988618f;
     float3 diffuse = float3(ambient), spec = float3(0);
     int chartStack[5], nextPortal[5], incoming[5];
     float4x4 toStart[5];
@@ -760,12 +766,17 @@ static float3 shade(Event hit, ObjectGPU object, MaterialGPU material, int chart
                     continue;
                 }
                 float3 irradiance = float3(l.color) * attenuation;
-                diffuse += irradiance * nd;
+                // Legacy scene intensities are scaled by π. Apply the same
+                // normalization to their preview-only specular lobe so its
+                // ratio to diffuse does not change.
+                float pointLightScale =
+                l.kind == LIGHT_POINT ? inversePi : 1.0f;
+                diffuse += irradiance * nd * pointLightScale;
                 float4 halfv = tangentNormalize(ld + view);
                 float specularCosine =
                 clamp(mdot(hit.normal, halfv), 0.0f, 1.0f);
                 spec +=
-                irradiance * pow(specularCosine, 32.0f) * nd;
+                irradiance * pow(specularCosine, 32.0f) * nd * pointLightScale;
             }
             nextPortal[depth] = 0;
         }

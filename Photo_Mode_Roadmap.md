@@ -334,6 +334,11 @@ both emitter-area samples and the diffuse continuation direction, combined by
 the power heuristic. Emitter intersections are evaluated as light events for
 MIS without making the light records ordinary scene geometry.
 
+Real-time and Photo Mode share an interactive exposure multiplier and the same
+Reinhard display transform. Point-light diffuse response is normalized by
+`1/π`; original preview scenes compensate their legacy light authoring values
+by π.
+
 Before implementing finite emitters, validate the curved-space Jacobians used
 to convert between surface-area and directional probability densities.
 

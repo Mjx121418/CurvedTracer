@@ -15,6 +15,7 @@ struct ContentView: View {
   @State private var hyperbolicFlatSceneVariant: HyperbolicFlatSceneVariant = .honeycombCell
   @State private var hyperbolicAtlasVariant: HyperbolicAtlasVariant = .oneChart
   @State private var renderingMode: RenderingMode = .realtime
+  @State private var exposure = 2.0
   @StateObject private var performanceStats = PerformanceStats()
   private let renderResolution: RenderResolution = .hd720
 
@@ -28,6 +29,7 @@ struct ContentView: View {
         hyperbolicFlatSceneVariant: $hyperbolicFlatSceneVariant,
         hyperbolicAtlasVariant: $hyperbolicAtlasVariant,
         renderingMode: $renderingMode,
+        exposure: $exposure,
         performanceStats: performanceStats,
         renderResolution: renderResolution
       )
@@ -86,6 +88,16 @@ struct ContentView: View {
           renderingMode = renderingMode == .photo ? .realtime : .photo
         }
         .accessibilityIdentifier("photo-mode-toggle")
+
+        HStack {
+          Text("Exposure")
+          Slider(value: $exposure, in: 0.0...8.0, step: 0.1)
+            .frame(width: 120)
+          Text(exposure, format: .number.precision(.fractionLength(1)))
+            .monospacedDigit()
+            .frame(width: 28, alignment: .trailing)
+        }
+        .accessibilityIdentifier("exposure-control")
       }
       .pickerStyle(.menu)
       .fixedSize()

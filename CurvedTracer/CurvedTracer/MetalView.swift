@@ -35,6 +35,7 @@ enum SphericalFlatSceneVariant: String, CaseIterable, Identifiable {
     case cell600 = "600-cell (24 charts)"
     case objectDemo = "Object and mirror demo"
     case primitiveGallery = "Primitive gallery"
+    case hopfFibration = "Hopf fibration"
     case cliffordTorusConstruction = "Clifford torus construction"
 
     var id: Self { self }
@@ -478,6 +479,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             case .cell600: cameraChart = SphericalScene.cell600(&atlas)
             case .objectDemo: cameraChart = SphericalScene.objectDemo(&atlas)
             case .primitiveGallery: cameraChart = SphericalScene.primitiveGallery(&atlas)
+            case .hopfFibration: cameraChart = SphericalScene.hopfFibration(&atlas)
             case .cliffordTorusConstruction:
                 cameraChart = SphericalScene.cliffordTorusConstruction(&atlas)
             }

@@ -79,13 +79,14 @@ struct CurvedTracerTests {
     @Test func allSpaceTraversalScenesBuildV11Packets() {
         #expect(AmbientSpace.allCases.count == 3)
         #expect(TraversalMode.allCases.count == 2)
-        #expect(SphericalFlatSceneVariant.allCases.count == 4)
+        #expect(SphericalFlatSceneVariant.allCases.count == 5)
         #expect(HyperbolicFlatSceneVariant.allCases.count == 3)
         #expect(HyperbolicAtlasVariant.allCases.count == 2)
         var atlas = geo.Atlas()
         let builders: [(inout geo.Atlas) -> Int32] = [
             SphericalScene.cell600, SphericalScene.objectDemo,
-            SphericalScene.primitiveGallery, SphericalScene.cliffordTorusConstruction,
+            SphericalScene.primitiveGallery, SphericalScene.hopfFibration,
+            SphericalScene.cliffordTorusConstruction,
             SphericalScene.lensSpaceL52,
             HyperbolicScene.honeycombCell, HyperbolicScene.poincareBallDemo,
             HyperbolicScene.primitiveGallery,
@@ -104,11 +105,19 @@ struct CurvedTracerTests {
         var atlas = geo.Atlas()
         _ = SphericalScene.primitiveGallery(&atlas)
         var bytes = [UInt8](atlas.packetBytes())
-        #expect(int32(bytes, at: 168) == 3)
-        #expect(int32(bytes, at: 180) == 0)
-        #expect(int32(bytes, at: 184) == 8)
+        #expect(int32(bytes, at: 168) == 5)
+        #expect(int32(bytes, at: 172) == 5)
+        #expect(int32(bytes, at: 180) == 2)
+        #expect(int32(bytes, at: 184) == 10)
         let firstObject = 192 + 32
         #expect(int32(bytes, at: firstObject + 20) == 0)
+        for ring in 0..<2 {
+            let object = firstObject + (3 + ring) * 48
+            #expect(int32(bytes, at: object + 20) == 2)
+            #expect(int32(bytes, at: object + 28) == Int32(3 + ring))
+            #expect(int32(bytes, at: object + 36) == 1)
+            #expect(int32(bytes, at: object + 40) == Int32(ring))
+        }
 
         _ = HyperbolicScene.primitiveGallery(&atlas)
         bytes = [UInt8](atlas.packetBytes())
@@ -117,14 +126,142 @@ struct CurvedTracerTests {
         #expect(int32(bytes, at: 184) == 10)
     }
 
+    @Test func hopfFibrationUsesDodecahedralFiberTubes() {
+        var atlas = geo.Atlas()
+        _ = SphericalScene.hopfFibration(&atlas)
+        var bytes = [UInt8](atlas.packetBytes())
+        #expect(int32(bytes, at: 168) == 40)
+        #expect(int32(bytes, at: 172) == 5)
+        #expect(int32(bytes, at: 180) == 40)
+        #expect(int32(bytes, at: 184) == 80)
+
+        let cameraPlacement = SphericalScene.hopfFibrationCameraPlacement()
+        let point = cameraPlacement.point
+        let hopfImage = SIMD3<Float>(
+            2 * (point.x * point.z + point.y * point.w),
+            2 * (point.x * point.y - point.z * point.w),
+            point.x * point.x + point.w * point.w
+                - point.y * point.y - point.z * point.z)
+        let base = cameraPlacement.base
+        #expect(abs(hopfImage.x - base.x) < 0.0001)
+        #expect(abs(hopfImage.y - base.y) < 0.0001)
+        #expect(abs(hopfImage.z - base.z) < 0.0001)
+        let cameraForward = atlas.cameraFwd()
+        #expect(
+            abs(cameraForward.x - cameraPlacement.centeredForward.x) < 0.0001)
+        #expect(
+            abs(cameraForward.y - cameraPlacement.centeredForward.y) < 0.0001)
+        #expect(
+            abs(cameraForward.z - cameraPlacement.centeredForward.z) < 0.0001)
+
+        let firstObject = 192 + 32
+        var fiberMaterials: [Int32] = []
+        for fiber in 0..<20 {
+            let firstHalf = firstObject + fiber * 2 * 48
+            let secondHalf = firstHalf + 48
+            let material = int32(bytes, at: firstHalf + 28)
+            #expect(material >= 0 && material < 5)
+            #expect(int32(bytes, at: secondHalf + 28) == material)
+            fiberMaterials.append(material)
+
+            for half in 0..<2 {
+                let halfIndex = fiber * 2 + half
+                let object = firstObject + halfIndex * 48
+                #expect(int32(bytes, at: object + 20) == 2)
+                #expect(int32(bytes, at: object + 32) == Int32(halfIndex * 2))
+                #expect(int32(bytes, at: object + 36) == 2)
+                #expect(int32(bytes, at: object + 40) == Int32(halfIndex))
+            }
+        }
+
+        // Inspect un-recentered chart quadrics when recovering their S² base
+        // directions; the rendered packet is expressed in camera coordinates.
+        #expect(atlas.buildAtlas(atlas.cameraChartId(), 64, 1, 32) == 0)
+        bytes = [UInt8](atlas.packetBytes())
+        #expect(int32(bytes, at: 160) == 2)
+        #expect(int32(bytes, at: 168) == 40)
+        #expect(int32(bytes, at: 180) == 40)
+        #expect(int32(bytes, at: 184) == 40)
+        let firstQuadric = 192 + 2 * 32 + 40 * 48
+        let inverseRootThree = 1 / sqrt(Float(3))
+        let phi = (Float(1) + sqrt(5)) / 2
+        let goldenPattern = [Float(0), 1 / phi, phi].map {
+            $0 * inverseRootThree
+        }
+        var directions: [SIMD3<Float>] = []
+        var directionsByMaterial = [[SIMD3<Float>]](repeating: [], count: 5)
+        var cubeVertexCount = 0
+        var goldenVertexCount = 0
+        for fiber in 0..<20 {
+            let quadric = matrix(bytes, at: firstQuadric + fiber * 64)
+            let pairedQuadric = matrix(
+                bytes, at: firstQuadric + (20 + fiber) * 64)
+            for index in 0..<16 {
+                #expect(abs(quadric[index] - pairedQuadric[index]) < 0.0001)
+            }
+
+            let raw = SIMD3<Float>(
+                -(quadric[2] + quadric[8]) / 2,
+                -(quadric[1] + quadric[4]) / 2,
+                (quadric[5] - quadric[0]) / 2)
+            let direction = raw / sqrt(
+                raw.x * raw.x + raw.y * raw.y + raw.z * raw.z)
+            for previous in directions {
+                let delta = direction - previous
+                #expect(
+                    delta.x * delta.x + delta.y * delta.y + delta.z * delta.z
+                        > 0.01)
+            }
+            directions.append(direction)
+            directionsByMaterial[Int(fiberMaterials[fiber])].append(direction)
+
+            let coordinates = [
+                abs(direction.x), abs(direction.y), abs(direction.z),
+            ].sorted()
+            if coordinates[0] > 0.5 {
+                cubeVertexCount += 1
+                for coordinate in coordinates {
+                    #expect(abs(coordinate - inverseRootThree) < 0.0001)
+                }
+            } else {
+                goldenVertexCount += 1
+                for index in 0..<3 {
+                    #expect(abs(coordinates[index] - goldenPattern[index]) < 0.0001)
+                }
+            }
+        }
+        #expect(cubeVertexCount == 8)
+        #expect(goldenVertexCount == 12)
+
+        let faceProducts = directions.map {
+            $0.x * base.x + $0.y * base.y + $0.z * base.z
+        }.sorted(by: >)
+        for index in 1..<5 {
+            #expect(abs(faceProducts[index] - faceProducts[0]) < 0.0001)
+        }
+        #expect(faceProducts[4] - faceProducts[5] > 0.1)
+
+        for tetrahedron in directionsByMaterial {
+            #expect(tetrahedron.count == 4)
+            for first in 0..<tetrahedron.count {
+                for second in (first + 1)..<tetrahedron.count {
+                    let product = tetrahedron[first].x * tetrahedron[second].x
+                        + tetrahedron[first].y * tetrahedron[second].y
+                        + tetrahedron[first].z * tetrahedron[second].z
+                    #expect(abs(product + 1 / Float(3)) < 0.0001)
+                }
+            }
+        }
+    }
+
     @Test func cliffordTorusUsesEightCheckerboardReflectionPatches() {
         var atlas = geo.Atlas()
         _ = SphericalScene.cliffordTorusConstruction(&atlas)
         let bytes = [UInt8](atlas.packetBytes())
-        #expect(int32(bytes, at: 168) == 8)
-        #expect(int32(bytes, at: 172) == 2)
-        #expect(int32(bytes, at: 180) == 8)
-        #expect(int32(bytes, at: 184) == 40)
+        #expect(int32(bytes, at: 168) == 12)
+        #expect(int32(bytes, at: 172) == 4)
+        #expect(int32(bytes, at: 180) == 12)
+        #expect(int32(bytes, at: 184) == 48)
 
         let firstObject = 192 + 32
         var colors: [Int32] = []
@@ -137,6 +274,16 @@ struct CurvedTracerTests {
             #expect(int32(bytes, at: object + 40) == Int32(piece))
         }
         #expect(Set(colors) == Set([Int32(0), Int32(1)]))
+
+        // Each polar-circle tube is split into two chart-local hemispheres.
+        for half in 0..<4 {
+            let object = firstObject + (8 + half) * 48
+            #expect(int32(bytes, at: object + 20) == 2)
+            #expect(int32(bytes, at: object + 28) == Int32(2 + half / 2))
+            #expect(int32(bytes, at: object + 32) == Int32(40 + half * 2))
+            #expect(int32(bytes, at: object + 36) == 2)
+            #expect(int32(bytes, at: object + 40) == Int32(8 + half))
+        }
 
         let signs = [
             [1, 1, 1, 1], [1, 1, -1, -1], [1, -1, 1, -1],

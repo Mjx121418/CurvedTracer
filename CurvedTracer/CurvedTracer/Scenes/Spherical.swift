@@ -4,6 +4,131 @@ import GeometryCore
 enum SphericalScene {
     private static let lensFaceDistance = Float.pi / 5
     private static let lensChartRadius = Float.pi / 2 + 0.13
+    private static let antipodalMatrix: [Float] = [
+        -1, 0, 0, 0,
+        0, -1, 0, 0,
+        0, 0, -1, 0,
+        0, 0, 0, -1,
+    ]
+
+    private static func cliffordTorusQuadric() -> [Float] {
+        var quadric = [Float](repeating: 0, count: 16)
+        quadric[2] = 0.5
+        quadric[8] = 0.5
+        quadric[7] = -0.5
+        quadric[13] = -0.5
+        return quadric
+    }
+
+    private static func orthogonalRingQuadrics(radius: Float) -> [[Float]] {
+        let torus = cliffordTorusQuadric()
+        let level = 0.5 * cos(2 * radius)
+        return [Float(1), Float(-1)].map { circle in
+            var tube = torus.map { -circle * $0 }
+            for diagonal in [0, 5, 10, 15] {
+                tube[diagonal] = level
+            }
+            return tube
+        }
+    }
+
+    private static func dodecahedronVertices() -> [SIMD3<Float>] {
+        let phi = (Float(1) + sqrt(5)) / 2
+        let inversePhi = 1 / phi
+        var vertices: [SIMD3<Float>] = []
+
+        for x in [Float(-1), Float(1)] {
+            for y in [Float(-1), Float(1)] {
+                for z in [Float(-1), Float(1)] {
+                    vertices.append(SIMD3<Float>(x, y, z))
+                }
+            }
+        }
+        for firstSign in [Float(-1), Float(1)] {
+            for secondSign in [Float(-1), Float(1)] {
+                vertices.append(
+                    SIMD3<Float>(0, firstSign * inversePhi, secondSign * phi))
+                vertices.append(
+                    SIMD3<Float>(firstSign * inversePhi, secondSign * phi, 0))
+                vertices.append(
+                    SIMD3<Float>(firstSign * phi, 0, secondSign * inversePhi))
+            }
+        }
+        return vertices.map { $0 / sqrt(3) }
+    }
+
+    // One of the two chiral compounds of five tetrahedra inscribed in the
+    // dodecahedron. Icosahedral rotations permute these five vertex sets.
+    private static let dodecahedronTetrahedra: [[Int]] = [
+        [0, 3, 5, 6],
+        [1, 8, 12, 19],
+        [2, 9, 16, 17],
+        [4, 10, 11, 18],
+        [7, 13, 14, 15],
+    ]
+
+    private static func dodecahedronVertexMaterials() -> [Int32] {
+        var materials = [Int32](repeating: -1, count: 20)
+        for (material, tetrahedron) in dodecahedronTetrahedra.enumerated() {
+            for vertex in tetrahedron {
+                precondition(materials[vertex] < 0, "overlapping tetrahedra")
+                materials[vertex] = Int32(material)
+            }
+        }
+        precondition(
+            materials.allSatisfy { $0 >= 0 },
+            "incomplete tetrahedral compound")
+        return materials
+    }
+
+    static func hopfFibrationCameraPlacement() -> (
+        base: SIMD3<Float>, point: geo.vec4, centeredForward: geo.vec3
+    ) {
+        // (0, φ, 1) is a vertex of the dual icosahedron, hence the center
+        // direction of one dodecahedron face.
+        let phi = (Float(1) + sqrt(5)) / 2
+        let base = SIMD3<Float>(0, phi, 1) / sqrt(phi * phi + 1)
+
+        // Choose the lift with z₁ positive and real. Multiplication of both
+        // complex coordinates by exp(it) traces the Hopf fiber, with ambient
+        // tangent (w, -z, y, -x). At this lift, recentering the camera leaves
+        // the tangent's xyz coordinates unchanged.
+        let z1Real = sqrt((1 + base.z) / 2)
+        let point = geo.vec4(
+            0, base.x / (2 * z1Real), -base.y / (2 * z1Real), z1Real)
+        let centeredForward = geo.vec3(point.w, -point.z, point.y)
+        return (base, point, centeredForward)
+    }
+
+    /// For z₁ = w + ix and z₂ = y + iz, the Hopf map is
+    ///
+    ///   h(x,y,z,w) = (2(xz + yw), 2(xy - zw), x² + w² - y² - z²).
+    ///
+    /// The inverse image of a base point is a great circle. Its radius-r tube
+    /// is the homogeneous quadric base·h(P) = cos(2r)|P|².
+    private static func hopfFiberTubeQuadric(
+        base: SIMD3<Float>, radius: Float
+    ) -> [Float] {
+        let level = cos(2 * radius)
+        var quadric = [Float](repeating: 0, count: 16)
+        for diagonal in [0, 5, 10, 15] {
+            quadric[diagonal] = level
+        }
+
+        quadric[0] -= base.z
+        quadric[5] += base.z
+        quadric[10] += base.z
+        quadric[15] -= base.z
+        quadric[1] = -base.y
+        quadric[4] = -base.y
+        quadric[11] = base.y
+        quadric[14] = base.y
+        quadric[2] = -base.x
+        quadric[8] = -base.x
+        quadric[7] = -base.x
+        quadric[13] = -base.x
+        return quadric
+    }
 
     /// The inverse of the standard L(5, 2) generator
     ///
@@ -214,6 +339,8 @@ enum SphericalScene {
             (geo.vec4(0.95, 0.18, 0.08, 1), geo.vec4(0.3, 0.3, 0.3, 1)),
             (geo.vec4(0.12, 0.72, 1.0, 1), geo.vec4(0.3, 0.3, 0.3, 1)),
             (geo.vec4(0.0, 0.8, 0.9, 1), geo.vec4(0.5, 0.95, 1.0, 0.88)),
+            (geo.vec4(1.0, 0.82, 0.12, 1), geo.vec4(0.45, 0.45, 0.45, 1)),
+            (geo.vec4(0.20, 0.92, 0.42, 1), geo.vec4(0.45, 0.45, 0.45, 1)),
         ] {
             _ = atlas.addMaterial(color, specular)
         }
@@ -249,6 +376,15 @@ enum SphericalScene {
             fatalError("invalid reflective S³ plane patch")
         }
 
+        // Thin tubes around two orthogonal great circles. Both fit wholly in
+        // this chart, so unlike the full-sphere Clifford scene they need no
+        // antipodal split.
+        for (index, tube) in orthogonalRingQuadrics(radius: 0.02).enumerated() {
+            if atlas.addQuadric(0, tube, Int32(3 + index), 0) < 0 {
+                fatalError("invalid S³ orthogonal ring")
+            }
+        }
+
         _ = atlas.addLight(
             0, atlas.pointFromOriginTangent(geo.vec3(-0.35, 0.25, 0.15)),
             geo.vec3(1, 0.92, 0.75), 1)
@@ -260,9 +396,65 @@ enum SphericalScene {
             geo.vec3(0, 0, 1))
         atlas.setControls(5, 0.05, 0.2, 0.92, 2, 0, 0)
         let camera = atlas.cameraChartAt(
-            0, atlas.pointFromOriginTangent(geo.vec3(0, 0, -0.12)), 2.65)
+            0, atlas.pointFromOriginTangent(geo.vec3(0, 0, -0.12)), 3)
         let result = atlas.build(camera, 64)
         if result != 0 { fatalError("S³ primitive gallery build failed: \(result)") }
+        return camera
+    }
+
+    /// Places thin tubes around the 20 Hopf fibers over the vertices of a
+    /// regular dodecahedron in S².
+    @discardableResult static func hopfFibration(_ atlas: inout geo.Atlas) -> Int32 {
+        atlas.start(1)
+        let chartRadius = Float.pi * 0.56
+        _ = atlas.seed(chartRadius)
+        let antipodalChart = atlas.addChart(
+            chartRadius, 0, antipodalMatrix, true)
+        if antipodalChart != 1 { fatalError("invalid antipodal Hopf chart") }
+
+        let colors: [geo.vec4] = [
+            geo.vec4(0.96, 0.20, 0.10, 1),
+            geo.vec4(0.08, 0.62, 1.00, 1),
+            geo.vec4(1.00, 0.78, 0.08, 1),
+            geo.vec4(0.18, 0.90, 0.38, 1),
+            geo.vec4(0.78, 0.22, 0.96, 1),
+        ]
+        for color in colors {
+            _ = atlas.addMaterial(color, geo.vec4(0.42, 0.42, 0.42, 1))
+        }
+
+        let vertices = dodecahedronVertices()
+        let vertexMaterials = dodecahedronVertexMaterials()
+        precondition(vertices.count == 20, "invalid dodecahedron vertex set")
+        for (fiber, vertex) in vertices.enumerated() {
+            let tube = hopfFiberTubeQuadric(base: vertex, radius: 0.02)
+            let material = vertexMaterials[fiber]
+            for chart in [Int32(0), antipodalChart] {
+                let half = atlas.addQuadric(chart, tube, material, 0)
+                if half < 0
+                    || atlas.addObjectClip(half, geo.vec4(0, 0, 0, -1), 0) < 0
+                {
+                    fatalError("invalid Hopf fiber tube")
+                }
+            }
+        }
+
+        _ = atlas.addLight(
+            0, atlas.pointFromOriginTangent(geo.vec3(-0.45, 0.30, 0.18)),
+            geo.vec3(1, 0.92, 0.75), 1)
+        _ = atlas.addLight(
+            0, atlas.pointFromOriginTangent(geo.vec3(0.32, -0.22, 0.48)),
+            geo.vec3(0.45, 0.68, 1), 0.7)
+        let cameraPlacement = hopfFibrationCameraPlacement()
+        let forward = cameraPlacement.centeredForward
+        let right = geo.vec3(0, 0, 1)
+        let up = geo.vec3(forward.y, -forward.x, 0)
+        atlas.setCamera(0.88, 16.0 / 9.0, right, up, forward)
+        atlas.setControls(5, 0.05, 0.2, 0.92, 2, 0, 0)
+        let camera = atlas.cameraChartAt(
+            0, cameraPlacement.point, Float.pi * 0.98)
+        let result = atlas.build(camera, 64)
+        if result != 0 { fatalError("Hopf fibration build failed: \(result)") }
         return camera
     }
 
@@ -283,26 +475,21 @@ enum SphericalScene {
         // without approaching the coordinate singularity at its antipode.
         let chartRadius = Float.pi * 0.56
         _ = atlas.seed(chartRadius)
-        let antipodal: [Float] = [
-            -1, 0, 0, 0,
-            0, -1, 0, 0,
-            0, 0, -1, 0,
-            0, 0, 0, -1,
-        ]
-        let antipodalChart = atlas.addChart(chartRadius, 0, antipodal, true)
+        let antipodalChart = atlas.addChart(
+            chartRadius, 0, antipodalMatrix, true)
         if antipodalChart != 1 { fatalError("invalid antipodal S³ chart") }
         _ = atlas.addMaterial(
             geo.vec4(0.95, 0.24, 0.10, 1), geo.vec4(0.35, 0.35, 0.35, 1))
         _ = atlas.addMaterial(
             geo.vec4(0.08, 0.62, 1.0, 1), geo.vec4(0.35, 0.35, 0.35, 1))
+        _ = atlas.addMaterial(
+            geo.vec4(1.0, 0.82, 0.12, 1), geo.vec4(0.45, 0.45, 0.45, 1))
+        _ = atlas.addMaterial(
+            geo.vec4(0.20, 0.92, 0.42, 1), geo.vec4(0.45, 0.45, 0.45, 1))
 
         // The symmetric matrix represents xz - yw = 0. This is an isometric
         // coordinate form of the usual x² + y² = z² + w² Clifford torus.
-        var quadric = [Float](repeating: 0, count: 16)
-        quadric[2] = 0.5
-        quadric[8] = 0.5
-        quadric[7] = -0.5
-        quadric[13] = -0.5
+        let quadric = cliffordTorusQuadric()
 
         // Each even sign pattern is a diagonal orientation-preserving
         // isometry preserving xz = yw. Applied to the positive patch, these
@@ -342,6 +529,28 @@ enum SphericalScene {
             }
         }
 
+        // In these coordinates the two polar great circles are
+        //
+        //   C₊(t) = (cos t, sin t,  cos t, -sin t) / √2,
+        //   C₋(t) = (cos t, sin t, -cos t,  sin t) / √2.
+        //
+        // They are orthogonal and both remain π/4 from the Clifford torus.
+        // The level sets q = ±cos(2r)/2 are the surfaces at distance r from
+        // C₊ and C₋. Split each thin tube into its two w-hemispheres so every
+        // half remains wholly inside its owning antipodal chart.
+        for (tube, material) in zip(
+            orthogonalRingQuadrics(radius: 0.02), [Int32(2), Int32(3)])
+        {
+            for chart in [Int32(0), antipodalChart] {
+                let half = atlas.addQuadric(chart, tube, material, 0)
+                if half < 0
+                    || atlas.addObjectClip(half, geo.vec4(0, 0, 0, -1), 0) < 0
+                {
+                    fatalError("invalid Clifford polar-circle tube")
+                }
+            }
+        }
+
         _ = atlas.addLight(
             0, atlas.pointFromOriginTangent(geo.vec3(-0.42, 0.28, 0.20)),
             geo.vec3(1, 0.92, 0.74), 1)
@@ -352,10 +561,12 @@ enum SphericalScene {
             0.82, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0),
             geo.vec3(0, 0, 1))
         atlas.setControls(5, 0.05, 0.2, 0.92, 2, 0, 0)
-        let quarterTurn = Float.pi / (2 * sqrt(2))
+        let cameraOffset: Float = 0.28
+        let cameraPosition = geo.vec4(
+            cos(cameraOffset) / sqrt(2), sin(cameraOffset) / sqrt(2),
+            cos(cameraOffset) / sqrt(2), sin(cameraOffset) / sqrt(2))
         let camera = atlas.cameraChartAt(
-            0, atlas.pointFromOriginTangent(geo.vec3(quarterTurn, 0, quarterTurn)),
-            Float.pi * 0.98)
+            0, cameraPosition, Float.pi * 0.98)
         let result = atlas.build(camera, 64)
         if result != 0 {
             fatalError("Clifford torus construction build failed: \(result)")

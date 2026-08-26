@@ -556,7 +556,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
         self.commandQueue.addResidencySet(self.residencySet)
 
-        // Covers the v13 maxima, including 64-byte physical material records.
+        // Covers the v14 packet maxima, including 48-byte material records.
         guard let photoSceneBuffer = device.makeBuffer(
             length: Self.maxScenePacketSize,
             options: .storageModeShared)

@@ -1,8 +1,9 @@
-# GeometryCore contract, version 13
+# GeometryCore contract, version 14
 
-Version 13 adds the physical-material packet and a shared shader BSDF
-interface. Version 12 added finite geodesic spherical emitters and explicit
-light-kind and intrinsic-radius fields.
+Version 14 removes the transitional legacy-material boundary. BSDF selection
+is exclusively material-driven; objects no longer carry opaque/mirror response
+state, and the packet no longer carries compatibility or Blinn–Phong fields.
+Version 13 added the physical-material packet and shared shader BSDF interface.
 
 ## Models and points
 
@@ -45,17 +46,14 @@ The native public operations are:
 
 ```cpp
 addBall(chart, vec4 center, float intrinsicRadius, material)
-addBallSurface(chart, center, radius, material, response)
-addLinearSurface(chart, vec4 normal, offset, material, response)
-addPlane(chart, outwardDirection, signedDistance, material, response)
-addMirrorPlane(chart, vec3 outwardDirection, float intrinsicDistance, material)
-addQuadric(chart, columnMajorSymmetricMatrix, material, response)
-addCliffordTorus(chart, material, response)
+addBallSurface(chart, center, radius, material)
+addLinearSurface(chart, vec4 normal, offset, material)
+addPlane(chart, outwardDirection, signedDistance, material)
+addQuadric(chart, columnMajorSymmetricMatrix, material)
+addCliffordTorus(chart, material)
 addObjectClip(object, normal, offset)
 addObjectClipPlane(object, outwardDirection, signedDistance)
-addMaterial(color, legacySpecular)
-addPhysicalMaterial(baseColor, roughness, metallic, IOR,
-                    transmission, emission)
+addMaterial(baseColor, roughness, metallic, IOR, transmission, emission)
 addLight(chart, vec4 position, color, intensity)
 addSphericalAreaLight(chart, vec4 center, intrinsicRadius,
                       color, emittedRadiance)
@@ -77,14 +75,13 @@ Linear surfaces use `metricDot(n,P) - h = 0`. In S³ and H³ this one equation
 family includes geodesic spheres, totally geodesic planes, equidistant
 hypersurfaces, and (in H³) null-normal horospheres. `addBallSurface` emits an
 outward-oriented linear section in S³/H³ and a Euclidean sphere in R³.
-`addBall` and `addMirrorPlane` remain opaque-ball and mirror-plane convenience
-operations.
+`addBall` remains a convenience operation for `addBallSurface`.
 
 A quadric is the zero set `PᵀQP = 0` of a nonzero symmetric homogeneous 4×4
 matrix. The coefficient scale is normalized during authoring. In R³,
 `P=(x,y,z,1)`, so this includes affine quadratic and linear terms. Surface
-response is independent of equation kind: both linear and quadratic surfaces
-may be opaque or reflective.
+scattering is independent of equation kind: linear and quadratic surfaces both
+obtain their BSDF exclusively from their material.
 
 Each object may carry up to 16 linear clips. A clip retains
 `metricDot(n,P) <= h`; clip surfaces are invisible and do not create caps.
@@ -98,7 +95,7 @@ compound portal reduction.
 
 ## Packet
 
-`GEO_CONTRACT_VERSION` is 13 and `GEO_PACKET_MAGIC` is `0x41545243`. Both
+`GEO_CONTRACT_VERSION` is 14 and `GEO_PACKET_MAGIC` is `0x41545243`. Both
 `build()` and `buildAtlas()` emit:
 
 ```text
@@ -108,30 +105,25 @@ GPUPortal[portalCount] (96 each)
 Object[objectCount] (48 each)
 Quadric[quadricCount] (64 each)
 PrimitiveClip[clipCount] (32 each)
-Material[materialCount] (64 each)
+Material[materialCount] (48 each)
 PointLight[lightCount] (48 each)
 ```
 
 `build()` emits one flattened chart and zero portals. `buildAtlas()` preserves
 authored charts and quotient portals.
 
-A material stores `baseColor`, three-component `emission`, a
-`compatibilityKind`, `legacySpecular`, `roughness`, `metallic`, `IOR`, and
-`transmission`. The emission and compatibility fields occupy the same 16-byte
-block, keeping the version-13 material record at 64 bytes. Materials authored
-by `addMaterial` have `GEO_MATERIAL_LEGACY` compatibility and retain the
-object's opaque/mirror response plus the transitional Blinn–Phong and mirror
-weights. Materials authored by `addPhysicalMaterial` have
-`GEO_MATERIAL_PHYSICAL` compatibility and select their BSDF independently of
-the object's legacy response field. The latter operation validates unit-range
-base color, roughness, metallic, and transmission; finite `IOR >= 1`; and
-nonnegative finite emission. All application-owned scenes use physical
-materials; `addMaterial` and the legacy response behavior remain available only
-as a source- and packet-compatibility boundary for external callers and tests.
+A material stores `baseColor`, three-component `emission`, `roughness`,
+`metallic`, `IOR`, `transmission`, and one reserved float. `addMaterial`
+validates unit-range base color, roughness, metallic, and transmission; finite
+`IOR >= 1`; and nonnegative finite emission. Material records are 48 bytes.
+There is no legacy authoring entry point or compatibility mode.
 
-Despite its source-compatible name, `PointLight` is the common light record.
+The former bounce-attenuation slot in `RenderControls` is reserved in version
+14. `setControls` no longer accepts an empirical bounce multiplier.
+
+`PointLight` is the common light record.
 It stores position, color, intensity, intrinsic radius, and light kind. A point
-light has kind `GEO_LIGHT_POINT`, radius zero, and retains the legacy empirical
+light has kind `GEO_LIGHT_POINT`, radius zero, and uses the empirical
 falloff control. Both render modes apply the Lambertian `albedo/π` response to
 point-light irradiance. Catalog preview scenes retain π-scaled point-light
 intensities to preserve their original linear illumination after this
@@ -140,10 +132,10 @@ A spherical emitter has kind `GEO_LIGHT_SPHERE`, positive intrinsic radius,
 and interprets `color * intensity` as emitted radiance. The emitter must fit
 inside its authored chart.
 
-An object descriptor stores its equation kind, response, material, inline
-linear/sphere coefficients, optional quadric index, and clip range. The three
-former padding counts now contain `quadricCount`, `clipCount`, and one reserved
-word. Flattened unbounded surfaces receive an internal source-chart ball clip;
+An object descriptor stores its equation kind, material index, inline
+linear/sphere coefficients, optional quadric index, clip range, and two
+reserved words. Object records remain 48 bytes. Flattened unbounded surfaces
+receive an internal source-chart ball clip;
 authored-atlas tracing obtains the same bound from the active chart horizon.
 
 Each chart stores its intrinsic radius and tracing parameter:
@@ -171,15 +163,16 @@ light-lift tree and traces a portal-aware visibility ray toward every lift.
 Finite spherical emitters are sampled uniformly in surface area. For intrinsic
 radius `a`, their area is `4π Sκ(a)²`; a sample at distance `r` contributes the
 Jacobian `abs(cos(thetaLight)) / Sκ(r)²`. This produces curvature-aware soft
-shadows without applying the legacy point-light falloff. The direct estimator
+shadows without applying the empirical point-light falloff. The direct estimator
 also tests the cosine-weighted diffuse continuation direction against finite
 emitters. Emitter-area and BSDF samples use their corresponding solid-angle
 PDFs and the power heuristic for multiple importance sampling.
 
-Both kernels use the shared `evaluateBSDF` and `sampleBSDF` interface. An
-evaluation returns the BSDF value and directional PDF. A sample returns the
+Both kernels use the shared `evaluateBSDF` and `sampleBSDF` interface. Neither
+interface accepts object response state. An evaluation returns the BSDF value
+and directional PDF. A sample returns the
 continued direction, throughput weight, PDF, event type, and delta flag. The
-version-13 implementation provides cosine-weighted Lambertian evaluation and
+version-14 implementation provides cosine-weighted Lambertian evaluation and
 sampling, ideal and rough conductor reflection, and ideal and rough dielectric
 reflection/refraction. A physical material with zero transmission, metallic
 zero, and roughness zero is Lambertian. Positive roughness selects an opaque
@@ -212,12 +205,10 @@ nested or overlapping dielectric media do not yet carry an IOR stack. Photo
 Mode stochastically selects the Fresnel lobes. The single-path real-time tracer
 chooses the dominant lobe and applies that lobe's Fresnel coefficient. Partial
 transmission and intermediate metallic values report an unsupported material
-diagnostic until their mixed lobes exist. Legacy materials continue to select
-Lambertian or delta reflection from the object response and remain subject to
-the legacy bounce-attenuation
-control. Physical specular continuations are energy conserving and do not
-apply that empirical attenuation. The interface and tangent-frame construction
-are common to R³, S³, and H³. Physical emission is two-sided and is added as
+diagnostic until their mixed lobes exist. Specular continuations are energy
+conserving and do not apply empirical bounce attenuation. The interface and
+tangent-frame construction are common to R³, S³, and H³. Material emission is
+two-sided and is added as
 outgoing radiance whenever either tracer reaches the surface, after applying
 the current path throughput. Emission does not implicitly create a light
 record or a visibility ray; explicit point and spherical lights remain the

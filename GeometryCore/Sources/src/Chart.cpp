@@ -114,7 +114,6 @@ void Atlas::reset() {
   fovTan_ = aspect_ = 1;
   maxBounces_ = 4;
   falloffK_ = ambient_ = 0;
-  bounceAttenuation_ = 1;
   fogMode_ = fogStartFraction_ = fogDensity_ = 0;
   packet_.clear();
   lastError_ = 0;
@@ -287,23 +286,8 @@ float Atlas::intrinsicDistance(const vec4 &a0, const vec4 &b0) const {
   return length(a.xyz() - b.xyz());
 }
 
-int Atlas::addMaterial(const vec4 &color, const vec4 &spec) {
-  packet_.clear();
-  if (!finite(color) || !finite(spec) ||
-      materials_.size() >= GEO_MAX_MATERIALS) {
-    setError(5);
-    return -1;
-  }
-  materials_.push_back(
-      Material{color, vec3(), GEO_MATERIAL_LEGACY, spec, 0.5f, 0.0f, 1.5f,
-               0.0f});
-  setError(0);
-  return int(materials_.size() - 1);
-}
-
-int Atlas::addPhysicalMaterial(const vec4 &baseColor, float roughness,
-                               float metallic, float ior, float transmission,
-                               const vec3 &emission) {
+int Atlas::addMaterial(const vec4 &baseColor, float roughness, float metallic,
+                       float ior, float transmission, const vec3 &emission) {
   packet_.clear();
   bool validBaseColor =
       baseColor.x >= 0 && baseColor.x <= 1 && baseColor.y >= 0 &&
@@ -318,24 +302,21 @@ int Atlas::addPhysicalMaterial(const vec4 &baseColor, float roughness,
     setError(5);
     return -1;
   }
-  materials_.push_back(Material{
-      baseColor, emission, GEO_MATERIAL_PHYSICAL, vec4(), roughness, metallic,
-      ior, transmission});
+  materials_.push_back(
+      Material{baseColor, emission, roughness, metallic, ior, transmission, 0});
   setError(0);
   return int(materials_.size() - 1);
 }
 
 int Atlas::addBall(int chart, const vec4 &raw, float r, int material) {
-  return addBallSurface(chart, raw, r, material, GEO_RESPONSE_OPAQUE);
+  return addBallSurface(chart, raw, r, material);
 }
 
-int Atlas::addBallSurface(int chart, const vec4 &raw, float r, int material,
-                          int response) {
+int Atlas::addBallSurface(int chart, const vec4 &raw, float r, int material) {
   packet_.clear();
   vec4 center;
   if (!validChartId(chart) || !canonicalizePoint(raw, center) || !finite(r) ||
       r <= 0 || material < 0 || material >= int(materials_.size()) ||
-      (response != GEO_RESPONSE_OPAQUE && response != GEO_RESPONSE_MIRROR) ||
       originDistance(center) + r > charts_[chart].radius + CONTAIN_TOL ||
       objects_.size() >= GEO_MAX_OBJECTS) {
     setError(3);
@@ -343,7 +324,6 @@ int Atlas::addBallSurface(int chart, const vec4 &raw, float r, int material,
   }
   ChartObject o;
   o.chartId = chart;
-  o.responseKind = response;
   if (modelKind_ == GEO_MODEL_R3) {
     o.equationKind = GEO_EQUATION_R3_SPHERE;
     o.geometry = center;
@@ -387,14 +367,13 @@ bool Atlas::normalizedLinearForm(const vec4 &raw, float offset, vec4 &normal,
 }
 
 int Atlas::addLinearSurface(int chart, const vec4 &raw, float offset,
-                            int material, int response) {
+                            int material) {
   packet_.clear();
   vec4 normal;
   float normalizedOffset = 0;
   if (!validChartId(chart) ||
       !normalizedLinearForm(raw, offset, normal, normalizedOffset) ||
       material < 0 || material >= int(materials_.size()) ||
-      (response != GEO_RESPONSE_OPAQUE && response != GEO_RESPONSE_MIRROR) ||
       objects_.size() >= GEO_MAX_OBJECTS) {
     setError(3);
     return -1;
@@ -402,7 +381,6 @@ int Atlas::addLinearSurface(int chart, const vec4 &raw, float offset,
   ChartObject o;
   o.chartId = chart;
   o.equationKind = GEO_EQUATION_LINEAR;
-  o.responseKind = response;
   o.geometry = normal;
   o.parameter = normalizedOffset;
   o.colorIdx = material;
@@ -421,8 +399,7 @@ vec4 Atlas::planeNormal(const vec3 &u, float d) const {
   return vec4(u, 0);
 }
 
-int Atlas::addPlane(int chart, const vec3 &dir, float d, int material,
-                    int response) {
+int Atlas::addPlane(int chart, const vec3 &dir, float d, int material) {
   float l = length(dir);
   if (!validChartId(chart) || !finite(dir) || l < 1e-8f || !finite(d) ||
       std::fabs(d) > charts_[chart].radius + CONTAIN_TOL) {
@@ -431,23 +408,13 @@ int Atlas::addPlane(int chart, const vec3 &dir, float d, int material,
   }
   vec4 normal = planeNormal(dir / l, d);
   float offset = modelKind_ == GEO_MODEL_R3 ? d : 0;
-  return addLinearSurface(chart, normal, offset, material, response);
+  return addLinearSurface(chart, normal, offset, material);
 }
 
-int Atlas::addMirrorPlane(int chart, const vec3 &dir, float d, int material) {
-  if (!finite(d) || d < 0) {
-    setError(3);
-    return -1;
-  }
-  return addPlane(chart, dir, d, material, GEO_RESPONSE_MIRROR);
-}
-
-int Atlas::addQuadric(int chart, const float coefficients[16], int material,
-                      int response) {
+int Atlas::addQuadric(int chart, const float coefficients[16], int material) {
   packet_.clear();
   if (!validChartId(chart) || coefficients == nullptr || material < 0 ||
       material >= int(materials_.size()) ||
-      (response != GEO_RESPONSE_OPAQUE && response != GEO_RESPONSE_MIRROR) ||
       objects_.size() >= GEO_MAX_OBJECTS) {
     setError(3);
     return -1;
@@ -481,7 +448,6 @@ int Atlas::addQuadric(int chart, const float coefficients[16], int material,
   ChartObject o;
   o.chartId = chart;
   o.equationKind = GEO_EQUATION_QUADRIC;
-  o.responseKind = response;
   o.quadric = normalizedMatrix(q);
   o.colorIdx = material;
   o.needsChartBound = true;
@@ -491,7 +457,7 @@ int Atlas::addQuadric(int chart, const float coefficients[16], int material,
   return int(objects_.size() - 1);
 }
 
-int Atlas::addCliffordTorus(int chart, int material, int response) {
+int Atlas::addCliffordTorus(int chart, int material) {
   if (modelKind_ != GEO_MODEL_S3) {
     setError(3);
     return -1;
@@ -499,7 +465,7 @@ int Atlas::addCliffordTorus(int chart, int material, int response) {
   float q[16] = {0};
   q[0] = q[5] = 1;
   q[10] = q[15] = -1;
-  return addQuadric(chart, q, material, response);
+  return addQuadric(chart, q, material);
 }
 
 int Atlas::addObjectClip(int object, const vec4 &raw, float offset) {
@@ -674,15 +640,13 @@ void Atlas::setCamera(float f, float a, const vec3 &r, const vec3 &u,
   aspect_ = a;
   setError(0);
 }
-void Atlas::setControls(int b, float f, float a, float ba) {
-  setControls(b, f, a, ba, 0, 0, 0);
+void Atlas::setControls(int b, float f, float a) {
+  setControls(b, f, a, 0, 0, 0);
 }
-void Atlas::setControls(int b, float f, float a, float ba, float fm, float fs,
-                        float fd) {
+void Atlas::setControls(int b, float f, float a, float fm, float fs, float fd) {
   maxBounces_ = b;
   falloffK_ = f;
   ambient_ = a;
-  bounceAttenuation_ = ba;
   fogMode_ = fm;
   fogStartFraction_ = fs;
   fogDensity_ = fd;
@@ -939,8 +903,6 @@ bool Atlas::validateScene() const {
         (o.equationKind != GEO_EQUATION_LINEAR &&
          o.equationKind != GEO_EQUATION_R3_SPHERE &&
          o.equationKind != GEO_EQUATION_QUADRIC) ||
-        (o.responseKind != GEO_RESPONSE_OPAQUE &&
-         o.responseKind != GEO_RESPONSE_MIRROR) ||
         o.clipIds.size() > GEO_MAX_CLIPS_PER_OBJECT)
       return false;
     for (int clipId : o.clipIds)
@@ -1024,7 +986,6 @@ int Atlas::emit(bool flatten, int cameraChart, int depth, int hops,
                           bool developed) {
     Object x{};
     x.equationKind = o.equationKind;
-    x.responseKind = o.responseKind;
     x.colorIdx = o.colorIdx;
     x.quadricIndex = -1;
     if (o.equationKind == GEO_EQUATION_LINEAR) {
@@ -1153,7 +1114,7 @@ int Atlas::emit(bool flatten, int cameraChart, int depth, int hops,
                 modelKind_,
                 falloffK_,
                 ambient_,
-                bounceAttenuation_,
+                0,
                 fogMode_,
                 fogStartFraction_,
                 fogDensity_,

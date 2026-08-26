@@ -41,7 +41,7 @@ struct CurvedTracerTests {
             + objectCount * 48
             + quadricCount * 64
             + clipCount * 32
-            + materialCount * 64
+            + materialCount * 48
         return float32(bytes, at: lightOffset + 28)
     }
 
@@ -59,7 +59,7 @@ struct CurvedTracerTests {
             + objectCount * 48
             + quadricCount * 64
             + clipCount * 32
-            + index * 64
+            + index * 48
     }
 
     private func objectUsesMaterial(_ bytes: [UInt8], material: Int32) -> Bool {
@@ -68,7 +68,7 @@ struct CurvedTracerTests {
         let objectCount = Int(int32(bytes, at: 168))
         let firstObject = 192 + chartCount * 32 + portalCount * 96
         return (0..<objectCount).contains {
-            int32(bytes, at: firstObject + $0 * 48 + 28) == material
+            int32(bytes, at: firstObject + $0 * 48 + 24) == material
         }
     }
 
@@ -158,7 +158,7 @@ struct CurvedTracerTests {
         #expect(stats.snapshot.hopLimitRays == 1)
     }
 
-    @Test func allSpaceTraversalScenesBuildV13PhysicalMaterialPackets() {
+    @Test func allSpaceTraversalScenesBuildV14MaterialPackets() {
         #expect(AmbientSpace.allCases.count == 3)
         #expect(TraversalMode.allCases.count == 2)
         #expect(EuclideanFlatSceneVariant.allCases.count == 2)
@@ -184,19 +184,9 @@ struct CurvedTracerTests {
             _ = build(&atlas)
             let bytes = [UInt8](atlas.packetBytes())
             #expect(atlas.packetSize() >= 192)
-            #expect(int32(bytes, at: 4) == 13)
-            let chartCount = Int(int32(bytes, at: 160))
-            let portalCount = Int(int32(bytes, at: 164))
-            let objectCount = Int(int32(bytes, at: 168))
-            let firstObject = 192 + chartCount * 32 + portalCount * 96
-            for object in 0..<objectCount {
-                #expect(int32(bytes, at: firstObject + object * 48 + 24) == 0)
-            }
+            #expect(int32(bytes, at: 4) == 14)
             let materialCount = Int(int32(bytes, at: 172))
-            for material in 0..<materialCount {
-                let offset = materialOffset(bytes, index: material)
-                #expect(int32(bytes, at: offset + 28) == 0)
-            }
+            #expect(materialCount > 0)
         }
     }
 
@@ -213,9 +203,9 @@ struct CurvedTracerTests {
         for ring in 0..<2 {
             let object = firstObject + (3 + ring) * 48
             #expect(int32(bytes, at: object + 20) == 2)
-            #expect(int32(bytes, at: object + 28) == Int32(3 + ring))
-            #expect(int32(bytes, at: object + 36) == 1)
-            #expect(int32(bytes, at: object + 40) == Int32(ring))
+            #expect(int32(bytes, at: object + 24) == Int32(3 + ring))
+            #expect(int32(bytes, at: object + 32) == 1)
+            #expect(int32(bytes, at: object + 36) == Int32(ring))
         }
 
         _ = HyperbolicScene.primitiveGallery(&atlas)
@@ -290,18 +280,18 @@ struct CurvedTracerTests {
         for fiber in 0..<20 {
             let firstHalf = firstObject + fiber * 2 * 48
             let secondHalf = firstHalf + 48
-            let material = int32(bytes, at: firstHalf + 28)
+            let material = int32(bytes, at: firstHalf + 24)
             #expect(material >= 0 && material < 5)
-            #expect(int32(bytes, at: secondHalf + 28) == material)
+            #expect(int32(bytes, at: secondHalf + 24) == material)
             fiberMaterials.append(material)
 
             for half in 0..<2 {
                 let halfIndex = fiber * 2 + half
                 let object = firstObject + halfIndex * 48
                 #expect(int32(bytes, at: object + 20) == 2)
-                #expect(int32(bytes, at: object + 32) == Int32(halfIndex * 2))
-                #expect(int32(bytes, at: object + 36) == 2)
-                #expect(int32(bytes, at: object + 40) == Int32(halfIndex))
+                #expect(int32(bytes, at: object + 28) == Int32(halfIndex * 2))
+                #expect(int32(bytes, at: object + 32) == 2)
+                #expect(int32(bytes, at: object + 36) == Int32(halfIndex))
             }
         }
 
@@ -399,10 +389,10 @@ struct CurvedTracerTests {
         for piece in 0..<8 {
             let object = firstObject + piece * 48
             #expect(int32(bytes, at: object + 20) == 2)
-            colors.append(int32(bytes, at: object + 28))
-            #expect(int32(bytes, at: object + 32) == Int32(piece * 5))
-            #expect(int32(bytes, at: object + 36) == 5)
-            #expect(int32(bytes, at: object + 40) == Int32(piece))
+            colors.append(int32(bytes, at: object + 24))
+            #expect(int32(bytes, at: object + 28) == Int32(piece * 5))
+            #expect(int32(bytes, at: object + 32) == 5)
+            #expect(int32(bytes, at: object + 36) == Int32(piece))
         }
         #expect(Set(colors) == Set([Int32(0), Int32(1)]))
 
@@ -410,10 +400,10 @@ struct CurvedTracerTests {
         for half in 0..<4 {
             let object = firstObject + (8 + half) * 48
             #expect(int32(bytes, at: object + 20) == 2)
-            #expect(int32(bytes, at: object + 28) == Int32(2 + half / 2))
-            #expect(int32(bytes, at: object + 32) == Int32(40 + half * 2))
-            #expect(int32(bytes, at: object + 36) == 2)
-            #expect(int32(bytes, at: object + 40) == Int32(8 + half))
+            #expect(int32(bytes, at: object + 24) == Int32(2 + half / 2))
+            #expect(int32(bytes, at: object + 28) == Int32(40 + half * 2))
+            #expect(int32(bytes, at: object + 32) == 2)
+            #expect(int32(bytes, at: object + 36) == Int32(8 + half))
         }
 
         let signs = [
@@ -529,13 +519,12 @@ struct CurvedTracerTests {
         let clipCount = Int(int32(bytes, at: 184))
         let materialOffset = 192 + chartCount * 32 + portalCount * 96
             + objectCount * 48 + quadricCount * 64 + clipCount * 32
-        let mirrorColorOffset = materialOffset + 6 * 64
+        let mirrorColorOffset = materialOffset + 6 * 48
         #expect(abs(float32(bytes, at: mirrorColorOffset) - 0.405) < 0.0001)
         #expect(abs(float32(bytes, at: mirrorColorOffset + 4) - 0.855) < 0.0001)
         #expect(abs(float32(bytes, at: mirrorColorOffset + 8) - 0.9) < 0.0001)
-        #expect(int32(bytes, at: mirrorColorOffset + 28) == 0)
-        #expect(float32(bytes, at: mirrorColorOffset + 48) == 0.0)
-        #expect(float32(bytes, at: mirrorColorOffset + 52) == 1.0)
+        #expect(float32(bytes, at: mirrorColorOffset + 28) == 0.0)
+        #expect(float32(bytes, at: mirrorColorOffset + 32) == 1.0)
 
         _ = HyperbolicScene.seifertWeberAtlas(&atlas)
         bytes = [UInt8](atlas.packetBytes())
@@ -577,55 +566,45 @@ struct CurvedTracerTests {
 
         let objectOffset = 192 + chartCount * 32 + portalCount * 96
         let blueObjectOffset = objectOffset + 6 * 48
-        #expect(int32(bytes, at: blueObjectOffset + 24) == 0)
-        #expect(int32(bytes, at: blueObjectOffset + 28) == 3)
+        #expect(int32(bytes, at: blueObjectOffset + 24) == 3)
         let mirrorObjectOffset = objectOffset + 7 * 48
-        // The object carries the ordinary response value: its physical
-        // material independently selects ideal-conductor reflection.
-        #expect(int32(bytes, at: mirrorObjectOffset + 24) == 0)
-        #expect(int32(bytes, at: mirrorObjectOffset + 28) == 4)
+        #expect(int32(bytes, at: mirrorObjectOffset + 24) == 4)
 
         let materialOffset = objectOffset + objectCount * 48
             + quadricCount * 64 + clipCount * 32
-        let blueMaterialOffset = materialOffset + 3 * 64
-        #expect(int32(bytes, at: blueMaterialOffset + 28) == 0)
-        #expect(abs(float32(bytes, at: blueMaterialOffset + 48) - 0.38) < 0.0001)
-        #expect(float32(bytes, at: blueMaterialOffset + 52) == 0.0)
-        #expect(float32(bytes, at: blueMaterialOffset + 56) == 1.5)
-        #expect(float32(bytes, at: blueMaterialOffset + 60) == 0.0)
-        let mirrorMaterialOffset = materialOffset + 4 * 64
+        let blueMaterialOffset = materialOffset + 3 * 48
+        #expect(abs(float32(bytes, at: blueMaterialOffset + 28) - 0.38) < 0.0001)
+        #expect(float32(bytes, at: blueMaterialOffset + 32) == 0.0)
+        #expect(float32(bytes, at: blueMaterialOffset + 36) == 1.5)
+        #expect(float32(bytes, at: blueMaterialOffset + 40) == 0.0)
+        let mirrorMaterialOffset = materialOffset + 4 * 48
         #expect(abs(float32(bytes, at: mirrorMaterialOffset) - 0.92) < 0.0001)
         #expect(abs(float32(bytes, at: mirrorMaterialOffset + 4) - 0.95) < 0.0001)
         #expect(float32(bytes, at: mirrorMaterialOffset + 8) == 1.0)
-        #expect(int32(bytes, at: mirrorMaterialOffset + 28) == 0)
-        #expect(float32(bytes, at: mirrorMaterialOffset + 48) == 0.0)
-        #expect(float32(bytes, at: mirrorMaterialOffset + 52) == 1.0)
-        #expect(float32(bytes, at: mirrorMaterialOffset + 60) == 0.0)
+        #expect(float32(bytes, at: mirrorMaterialOffset + 28) == 0.0)
+        #expect(float32(bytes, at: mirrorMaterialOffset + 32) == 1.0)
+        #expect(float32(bytes, at: mirrorMaterialOffset + 40) == 0.0)
 
         let glassObjectOffset = objectOffset + 8 * 48
-        #expect(int32(bytes, at: glassObjectOffset + 24) == 0)
-        #expect(int32(bytes, at: glassObjectOffset + 28) == 5)
-        let glassMaterialOffset = materialOffset + 5 * 64
+        #expect(int32(bytes, at: glassObjectOffset + 24) == 5)
+        let glassMaterialOffset = materialOffset + 5 * 48
         #expect(abs(float32(bytes, at: glassMaterialOffset) - 0.98) < 0.0001)
         #expect(abs(float32(bytes, at: glassMaterialOffset + 4) - 0.99) < 0.0001)
         #expect(float32(bytes, at: glassMaterialOffset + 8) == 1.0)
-        #expect(int32(bytes, at: glassMaterialOffset + 28) == 0)
-        #expect(abs(float32(bytes, at: glassMaterialOffset + 48) - 0.18) < 0.0001)
-        #expect(float32(bytes, at: glassMaterialOffset + 52) == 0.0)
-        #expect(float32(bytes, at: glassMaterialOffset + 56) == 1.5)
-        #expect(float32(bytes, at: glassMaterialOffset + 60) == 1.0)
+        #expect(abs(float32(bytes, at: glassMaterialOffset + 28) - 0.18) < 0.0001)
+        #expect(float32(bytes, at: glassMaterialOffset + 32) == 0.0)
+        #expect(float32(bytes, at: glassMaterialOffset + 36) == 1.5)
+        #expect(float32(bytes, at: glassMaterialOffset + 40) == 1.0)
 
         let roughMetalObjectOffset = objectOffset + 9 * 48
-        #expect(int32(bytes, at: roughMetalObjectOffset + 24) == 0)
-        #expect(int32(bytes, at: roughMetalObjectOffset + 28) == 6)
-        let roughMetalMaterialOffset = materialOffset + 6 * 64
+        #expect(int32(bytes, at: roughMetalObjectOffset + 24) == 6)
+        let roughMetalMaterialOffset = materialOffset + 6 * 48
         #expect(abs(float32(bytes, at: roughMetalMaterialOffset) - 0.95) < 0.0001)
         #expect(abs(float32(bytes, at: roughMetalMaterialOffset + 4) - 0.64) < 0.0001)
         #expect(abs(float32(bytes, at: roughMetalMaterialOffset + 8) - 0.2) < 0.0001)
-        #expect(int32(bytes, at: roughMetalMaterialOffset + 28) == 0)
-        #expect(abs(float32(bytes, at: roughMetalMaterialOffset + 48) - 0.32) < 0.0001)
-        #expect(float32(bytes, at: roughMetalMaterialOffset + 52) == 1.0)
-        #expect(float32(bytes, at: roughMetalMaterialOffset + 60) == 0.0)
+        #expect(abs(float32(bytes, at: roughMetalMaterialOffset + 28) - 0.32) < 0.0001)
+        #expect(float32(bytes, at: roughMetalMaterialOffset + 32) == 1.0)
+        #expect(float32(bytes, at: roughMetalMaterialOffset + 40) == 0.0)
     }
 
 }

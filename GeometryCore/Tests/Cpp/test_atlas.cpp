@@ -79,24 +79,26 @@ static PointLight flatLight(const Atlas &a, int index) {
 }
 
 void test_atlas() {
-  CHECK(GEO_CONTRACT_VERSION == 13);
+  CHECK(GEO_CONTRACT_VERSION == 14);
   CHECK(sizeof(ScenePacketHeader) == 192);
   CHECK(sizeof(Object) == 48);
+  CHECK(offsetof(Object, equationKind) == 20);
+  CHECK(offsetof(Object, colorIdx) == 24);
+  CHECK(offsetof(Object, firstClip) == 28);
+  CHECK(offsetof(Object, clipCount) == 32);
+  CHECK(offsetof(Object, quadricIndex) == 36);
   CHECK(sizeof(Quadric) == 64);
   CHECK(sizeof(PrimitiveClip) == 32);
   CHECK(sizeof(GPUPortal) == 96);
-  CHECK(sizeof(Material) == 64);
+  CHECK(sizeof(Material) == 48);
   CHECK(offsetof(Material, baseColor) == 0);
   CHECK(offsetof(Material, emission) == 16);
-  CHECK(offsetof(Material, compatibilityKind) == 28);
-  CHECK(offsetof(Material, legacySpecular) == 32);
-  CHECK(offsetof(Material, roughness) == 48);
-  CHECK(offsetof(Material, metallic) == 52);
-  CHECK(offsetof(Material, ior) == 56);
-  CHECK(offsetof(Material, transmission) == 60);
+  CHECK(offsetof(Material, roughness) == 28);
+  CHECK(offsetof(Material, metallic) == 32);
+  CHECK(offsetof(Material, ior) == 36);
+  CHECK(offsetof(Material, transmission) == 40);
+  CHECK(offsetof(Material, pad0) == 44);
   CHECK(sizeof(PointLight) == 48);
-  CHECK(GEO_MATERIAL_PHYSICAL == 0);
-  CHECK(GEO_MATERIAL_LEGACY == 1);
   for (int model = 0; model <= 2; ++model) {
     Atlas a;
     a.start(model);
@@ -108,14 +110,15 @@ void test_atlas() {
     CHECK(moved.chartId == 0);
     CHECK_NEAR(a.intrinsicDistance(vec4(0, 0, 0, 1), moved.localPosition), .4f,
                2e-4);
-    CHECK(a.addMaterial(vec4(1, 0, 0, 1), vec4(.2f, .2f, .2f, 1)) == 0);
-    CHECK(a.addPhysicalMaterial(
+    CHECK(a.addMaterial(
+              vec4(1, 0, 0, 1), 0, 0, 1.5f, 0, vec3()) == 0);
+    CHECK(a.addMaterial(
               vec4(.8f, .7f, .6f, 1), .35f, .2f, 1.45f, .1f,
               vec3(2, 1, .5f)) == 1);
-    CHECK(a.addPhysicalMaterial(
+    CHECK(a.addMaterial(
               vec4(1, 1, 1, 1), -1, 0, 1.5f, 0, vec3()) == -1);
     CHECK(a.addBall(0, p, .2f, 0) == 0);
-    CHECK(a.addMirrorPlane(0, vec3(0, 2, 0), .8f, 0) == 1);
+    CHECK(a.addPlane(0, vec3(0, 2, 0), .8f, 0) == 1);
     CHECK(a.addLight(0, a.pointFromOriginTangent(vec3(-.2f, 0, 0)),
                      vec3(1, 1, 1), 1) == 0);
     CHECK(a.addSphericalAreaLight(
@@ -126,7 +129,7 @@ void test_atlas() {
     CHECK(a.build(0, 64) == 0);
     auto h = header(a);
     CHECK(h.meta.magic == GEO_PACKET_MAGIC);
-    CHECK(h.meta.contractVersion == 13);
+    CHECK(h.meta.contractVersion == 14);
     CHECK(h.meta.packetHeaderSize == 192);
     CHECK(h.controls.modelKind == model);
     CHECK(h.counts.chartCount == 1);
@@ -134,15 +137,12 @@ void test_atlas() {
     CHECK(h.counts.objectCount == 2);
     CHECK(h.counts.lightCount == 2);
     CHECK(h.counts.materialCount == 2);
-    Material legacyMaterial = flatMaterial(a, 0);
+    Material diffuseMaterial = flatMaterial(a, 0);
     Material physicalMaterial = flatMaterial(a, 1);
-    CHECK_NEAR(legacyMaterial.baseColor.x, 1, 1e-6);
-    CHECK(legacyMaterial.compatibilityKind == GEO_MATERIAL_LEGACY);
-    CHECK_NEAR(legacyMaterial.legacySpecular.x, .2f, 1e-6);
-    CHECK_NEAR(legacyMaterial.roughness, .5f, 1e-6);
-    CHECK_NEAR(legacyMaterial.ior, 1.5f, 1e-6);
+    CHECK_NEAR(diffuseMaterial.baseColor.x, 1, 1e-6);
+    CHECK_NEAR(diffuseMaterial.roughness, 0, 1e-6);
+    CHECK_NEAR(diffuseMaterial.ior, 1.5f, 1e-6);
     CHECK_NEAR(physicalMaterial.baseColor.y, .7f, 1e-6);
-    CHECK(physicalMaterial.compatibilityKind == GEO_MATERIAL_PHYSICAL);
     CHECK_NEAR(physicalMaterial.emission.x, 2, 1e-6);
     CHECK_NEAR(physicalMaterial.roughness, .35f, 1e-6);
     CHECK_NEAR(physicalMaterial.metallic, .2f, 1e-6);
@@ -156,8 +156,6 @@ void test_atlas() {
     CHECK_NEAR(areaLight.radius, .1f, 1e-6);
     CHECK_NEAR(areaLight.intensity, 4, 1e-6);
     Object ball = flatObject(a, 0), plane = flatObject(a, 1);
-    CHECK(ball.responseKind == GEO_RESPONSE_OPAQUE);
-    CHECK(plane.responseKind == GEO_RESPONSE_MIRROR);
     CHECK(ball.equationKind ==
           (model == GEO_MODEL_R3 ? GEO_EQUATION_R3_SPHERE
                                  : GEO_EQUATION_LINEAR));
@@ -182,25 +180,24 @@ void test_atlas() {
     h = header(a);
     CHECK(h.counts.chartCount == 1);
   }
-  // Linear sections, responses, quadrics, and clips are independent packet
+  // Linear sections, quadrics, materials, and clips are independent packet
   // concepts. Curved balls use the same linear equation family as planes.
   for (int model = GEO_MODEL_H3; model <= GEO_MODEL_R3; ++model) {
     Atlas a;
     a.start(model);
     CHECK(a.seed(model == GEO_MODEL_S3 ? 2.7f : 3.0f) == 0);
-    CHECK(a.addMaterial(vec4(1, 1, 1, 1), vec4(.4f, .4f, .4f, 1)) == 0);
+    CHECK(a.addMaterial(vec4(1, 1, 1, 1), 0, 0, 1.5f, 0, vec3()) == 0);
     int ball = a.addBallSurface(
-        0, a.pointFromOriginTangent(vec3(.2f, 0, 0)), .25f, 0,
-        GEO_RESPONSE_MIRROR);
+        0, a.pointFromOriginTangent(vec3(.2f, 0, 0)), .25f, 0);
     CHECK(ball == 0);
     CHECK(a.addObjectClipPlane(ball, vec3(1, 0, 0), .3f) == 0);
-    CHECK(a.addPlane(0, vec3(0, 1, 0), .4f, 0, GEO_RESPONSE_OPAQUE) == 1);
+    CHECK(a.addPlane(0, vec3(0, 1, 0), .4f, 0) == 1);
     float q[16] = {};
     q[0] = 1;
     q[5] = 1.5f;
     q[10] = .75f;
     q[15] = -.2f;
-    CHECK(a.addQuadric(0, q, 0, GEO_RESPONSE_OPAQUE) == 2);
+    CHECK(a.addQuadric(0, q, 0) == 2);
     CHECK(a.cameraChartAt(0, vec4(0, 0, 0, 1), 2.5f) == 0);
     CHECK(a.build(0, 64) == 0);
     auto h = header(a);
@@ -208,7 +205,6 @@ void test_atlas() {
     CHECK(h.counts.quadricCount == 1);
     CHECK(h.counts.clipCount == 3);
     Object encodedBall = flatObject(a, 0);
-    CHECK(encodedBall.responseKind == GEO_RESPONSE_MIRROR);
     CHECK(encodedBall.equationKind ==
           (model == GEO_MODEL_R3 ? GEO_EQUATION_R3_SPHERE
                                  : GEO_EQUATION_LINEAR));
@@ -224,13 +220,12 @@ void test_atlas() {
     Atlas a;
     a.start(GEO_MODEL_S3);
     CHECK(a.seed(2.8f) == 0);
-    CHECK(a.addMaterial(vec4(1, 1, 1, 1), vec4()) == 0);
-    CHECK(a.addCliffordTorus(0, 0, GEO_RESPONSE_OPAQUE) == 0);
+    CHECK(a.addMaterial(vec4(1, 1, 1, 1), 0, 0, 1.5f, 0, vec3()) == 0);
+    CHECK(a.addCliffordTorus(0, 0) == 0);
     float asymmetric[16] = {};
     asymmetric[1] = 1;
-    CHECK(a.addQuadric(0, asymmetric, 0, GEO_RESPONSE_OPAQUE) < 0);
-    int plane = a.addPlane(0, vec3(0, 0, 1), .3f, 0,
-                           GEO_RESPONSE_OPAQUE);
+    CHECK(a.addQuadric(0, asymmetric, 0) < 0);
+    int plane = a.addPlane(0, vec3(0, 0, 1), .3f, 0);
     CHECK(plane == 1);
     for (int i = 0; i < GEO_MAX_CLIPS_PER_OBJECT; ++i)
       CHECK(a.addObjectClipPlane(plane, vec3(1, 0, 0), .5f) >= 0);
@@ -247,11 +242,11 @@ void test_atlas() {
     identity(translation);
     translation[12] = 2;
     CHECK(a.addChart(3, 0, translation, true) == 1);
-    CHECK(a.addMaterial(vec4(1, 1, 1, 1), vec4()) == 0);
+    CHECK(a.addMaterial(vec4(1, 1, 1, 1), 0, 0, 1.5f, 0, vec3()) == 0);
     float sphere[16] = {};
     sphere[0] = sphere[5] = sphere[10] = 1;
     sphere[15] = -1;
-    int object = a.addQuadric(1, sphere, 0, GEO_RESPONSE_OPAQUE);
+    int object = a.addQuadric(1, sphere, 0);
     CHECK(object == 0);
     CHECK(a.addObjectClipPlane(object, vec3(1, 0, 0), .5f) == 0);
     CHECK(a.cameraChartAt(0, vec4(0, 0, 0, 1), 3) == 0);
@@ -272,33 +267,30 @@ void test_atlas() {
     Atlas a;
     a.start(GEO_MODEL_R3);
     CHECK(a.seed(3) == 0);
-    CHECK(a.addMaterial(vec4(1, 1, 1, 1), vec4()) == 0);
+    CHECK(a.addMaterial(vec4(1, 1, 1, 1), 0, 0, 1.5f, 0, vec3()) == 0);
     float q[16] = {};
     q[0] = 1e30f;
     q[1] = 2e24f;
     q[4] = 2.000001e24f;
-    CHECK(a.addQuadric(0, q, 0, GEO_RESPONSE_OPAQUE) == 0);
+    CHECK(a.addQuadric(0, q, 0) == 0);
     float tiny[16] = {};
     tiny[0] = 1e-30f;
-    CHECK(a.addQuadric(0, tiny, 0, GEO_RESPONSE_MIRROR) == 1);
+    CHECK(a.addQuadric(0, tiny, 0) == 1);
     CHECK(a.cameraChartAt(0, vec4(0, 0, 0, 1), 3) == 0);
     CHECK(a.buildAtlas(0, 32, 1, 16) == 0);
     Quadric encoded = flatQuadric(a, 0);
     CHECK_NEAR(encoded.coefficients.m[1], encoded.coefficients.m[4], 1e-7);
     CHECK_NEAR(encoded.coefficients.m[0], 1.0f, 2e-5);
     CHECK_NEAR(flatQuadric(a, 1).coefficients.m[0], 1.0f, 2e-5);
-    CHECK(flatObject(a, 1).responseKind == GEO_RESPONSE_MIRROR);
   }
   {
     Atlas a;
     a.start(GEO_MODEL_H3);
     CHECK(a.seed(3) == 0);
-    CHECK(a.addMaterial(vec4(1, 1, 1, 1), vec4()) == 0);
-    CHECK(a.addLinearSurface(0, vec4(1, 0, 0, 0), sinh(.4f), 0,
-                             GEO_RESPONSE_OPAQUE) == 0);
+    CHECK(a.addMaterial(vec4(1, 1, 1, 1), 0, 0, 1.5f, 0, vec3()) == 0);
+    CHECK(a.addLinearSurface(0, vec4(1, 0, 0, 0), sinh(.4f), 0) == 0);
     // A null Lorentz normal represents a horosphere.
-    CHECK(a.addLinearSurface(0, vec4(1, 0, 0, 1), -.5f, 0,
-                             GEO_RESPONSE_OPAQUE) == 1);
+    CHECK(a.addLinearSurface(0, vec4(1, 0, 0, 1), -.5f, 0) == 1);
     CHECK(a.cameraChartAt(0, vec4(0, 0, 0, 1), 2.5f) == 0);
     CHECK(a.buildAtlas(0, 32, 1, 16) == 0);
     CHECK(header(a).counts.objectCount == 2);
@@ -419,9 +411,9 @@ void test_atlas() {
     Atlas a;
     a.start(GEO_MODEL_R3);
     CHECK(a.seed(2) == 0);
-    CHECK(a.addMaterial(vec4(1, 1, 1, 1), vec4()) == 0);
+    CHECK(a.addMaterial(vec4(1, 1, 1, 1), 0, 0, 1.5f, 0, vec3()) == 0);
     CHECK(a.addBall(0, vec4(1.9f, 0, 0, 1), .2f, 0) < 0);
-    CHECK(a.addMirrorPlane(0, vec3(), 1, 0) < 0);
+    CHECK(a.addPlane(0, vec3(), 1, 0) < 0);
   }
   // One-chart Euclidean torus: six directed portals and translation closure.
   {

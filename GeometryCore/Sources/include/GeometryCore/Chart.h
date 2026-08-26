@@ -18,12 +18,11 @@
 
 namespace geo {
 
-inline std::string geometryCoreName() { return "Geometry Core v13"; }
+inline std::string geometryCoreName() { return "Geometry Core v14"; }
 
 struct ChartObject {
   int chartId = -1;
   int equationKind = GEO_EQUATION_LINEAR;
-  int responseKind = GEO_RESPONSE_OPAQUE;
   vec4 geometry;
   float parameter = 0.0f;
   mat4 quadric;
@@ -98,16 +97,13 @@ public:
   int addBall(int chart, const vec4 &center, float intrinsicRadius,
               int material);
   int addBallSurface(int chart, const vec4 &center, float intrinsicRadius,
-                     int material, int response);
+                     int material);
   int addLinearSurface(int chart, const vec4 &normal, float offset,
-                       int material, int response);
+                       int material);
   int addPlane(int chart, const vec3 &outwardDirection, float signedDistance,
-               int material, int response);
-  int addMirrorPlane(int chart, const vec3 &outwardDirection,
-                     float intrinsicDistance, int material);
-  int addQuadric(int chart, const float coefficients[16], int material,
-                 int response);
-  int addCliffordTorus(int chart, int material, int response);
+               int material);
+  int addQuadric(int chart, const float coefficients[16], int material);
+  int addCliffordTorus(int chart, int material);
   int addObjectClip(int object, const vec4 &normal, float offset);
   int addObjectClipPlane(int object, const vec3 &outwardDirection,
                          float signedDistance);
@@ -123,17 +119,13 @@ public:
       int chartA, const vec3 &outwardA, float faceDistanceA, int chartB,
       const vec3 &outwardB, float faceDistanceB, const float pairingAB[16],
       float triggerCollar);
-  int addMaterial(const vec4 &color, const vec4 &specular);
-  int addPhysicalMaterial(const vec4 &baseColor, float roughness,
-                          float metallic, float ior, float transmission,
-                          const vec3 &emission);
+  int addMaterial(const vec4 &baseColor, float roughness, float metallic,
+                  float ior, float transmission, const vec3 &emission);
 
   void setCamera(float fovTan, float aspect, const vec3 &right, const vec3 &up,
                  const vec3 &fwd);
-  void setControls(int maxBounces, float falloffK, float ambient,
-                   float bounceAttenuation);
-  void setControls(int maxBounces, float falloffK, float ambient,
-                   float bounceAttenuation, float fogMode,
+  void setControls(int maxBounces, float falloffK, float ambient);
+  void setControls(int maxBounces, float falloffK, float ambient, float fogMode,
                    float fogStartFraction, float fogDensity);
   void cameraRotate(const vec3 &axis, float radians);
   void cameraRoll(float radians);
@@ -179,7 +171,6 @@ private:
   int maxBounces_ = 4;
   float falloffK_ = 0.0f;
   float ambient_ = 0.0f;
-  float bounceAttenuation_ = 1.0f;
   float fogMode_ = 0.0f;
   float fogStartFraction_ = 0.0f;
   float fogDensity_ = 0.0f;

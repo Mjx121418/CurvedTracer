@@ -9,7 +9,7 @@ enum SphericalScene {
         _ atlas: inout geo.Atlas,
         _ color: geo.vec4
     ) -> Int32 {
-        atlas.addPhysicalMaterial(
+        atlas.addMaterial(
             color, 0.5, 0, 1.5, 0, geo.vec3(0, 0, 0))
     }
 
@@ -17,7 +17,7 @@ enum SphericalScene {
         _ atlas: inout geo.Atlas,
         _ color: geo.vec4
     ) -> Int32 {
-        atlas.addPhysicalMaterial(
+        atlas.addMaterial(
             color, 0, 0, 1.5, 0, geo.vec3(0, 0, 0))
     }
 
@@ -25,7 +25,7 @@ enum SphericalScene {
         _ atlas: inout geo.Atlas,
         _ color: geo.vec4
     ) -> Int32 {
-        atlas.addPhysicalMaterial(
+        atlas.addMaterial(
             color, 0, 1, 1.5, 0, geo.vec3(0, 0, 0))
     }
 
@@ -336,7 +336,7 @@ enum SphericalScene {
             let p = atlas.pointFromOriginTangent(geo.vec3(d.x, d.y, d.z))
             _ = atlas.addBall(0, p, 0.11 + 0.015 * Float(index % 2), Int32(index % 4))
         }
-        _ = atlas.addPlane(0, geo.vec3(0, -1, 0), 1.25, 4, 0)
+        _ = atlas.addPlane(0, geo.vec3(0, -1, 0), 1.25, 4)
         _ = atlas.addLight(
             0, atlas.pointFromOriginTangent(geo.vec3(-0.4, 0.25, -0.15)),
             geo.vec3(1, 0.92, 0.74), previewPointLightScale)
@@ -344,7 +344,7 @@ enum SphericalScene {
             0, atlas.pointFromOriginTangent(geo.vec3(0.3, -0.1, 0.5)),
             geo.vec3(0.5, 0.7, 1), 0.55 * previewPointLightScale)
         atlas.setCamera(0.85, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0), geo.vec3(0, 0, 1))
-        atlas.setControls(6, 0.05, 0.18, 0.92, 2, 0, 0.0)
+        atlas.setControls(6, 0.05, 0.18, 2, 0, 0.0)
     }
 
     /// Builds the original one-chart object and mirror demonstration.
@@ -367,43 +367,43 @@ enum SphericalScene {
             &atlas, geo.vec4(0.78, 0.08, 0.05, 1))
         let green = addLambertianMaterial(
             &atlas, geo.vec4(0.08, 0.68, 0.12, 1))
-        let blue = atlas.addPhysicalMaterial(
+        let blue = atlas.addMaterial(
             geo.vec4(0.08, 0.28, 0.82, 1), 0.38, 0, 1.5, 0,
             geo.vec3(0, 0, 0))
-        let mirror = atlas.addPhysicalMaterial(
+        let mirror = atlas.addMaterial(
             geo.vec4(0.92, 0.95, 1, 1), 0, 1, 1.5, 0,
             geo.vec3(0, 0, 0))
-        let roughGlass = atlas.addPhysicalMaterial(
+        let roughGlass = atlas.addMaterial(
             geo.vec4(0.98, 0.99, 1, 1), 0.18, 0, 1.5, 1,
             geo.vec3(0, 0, 0))
-        let roughMetal = atlas.addPhysicalMaterial(
+        let roughMetal = atlas.addMaterial(
             geo.vec4(0.95, 0.64, 0.2, 1), 0.32, 1, 1.5, 0,
             geo.vec3(0, 0, 0))
-        let emitter = atlas.addPhysicalMaterial(
+        let emitter = atlas.addMaterial(
             geo.vec4(0, 0, 0, 1), 0, 0, 1.5, 0,
             geo.vec3(8, 2, 0.25))
 
-        _ = atlas.addPlane(0, geo.vec3(1, 0, 0), -0.3, red, 0)
-        _ = atlas.addPlane(0, geo.vec3(-1, 0, 0), -0.3, green, 0)
-        _ = atlas.addPlane(0, geo.vec3(0, 1, 0), -0.3, white, 0)
-        _ = atlas.addPlane(0, geo.vec3(0, -1, 0), -0.3, white, 0)
-        _ = atlas.addPlane(0, geo.vec3(0, 0, -1), -0.45, white, 0)
-        _ = atlas.addPlane(0, geo.vec3(0, 0, 1), -0.45, white, 0)
+        _ = atlas.addPlane(0, geo.vec3(1, 0, 0), -0.3, red)
+        _ = atlas.addPlane(0, geo.vec3(-1, 0, 0), -0.3, green)
+        _ = atlas.addPlane(0, geo.vec3(0, 1, 0), -0.3, white)
+        _ = atlas.addPlane(0, geo.vec3(0, -1, 0), -0.3, white)
+        _ = atlas.addPlane(0, geo.vec3(0, 0, -1), -0.45, white)
+        _ = atlas.addPlane(0, geo.vec3(0, 0, 1), -0.45, white)
         _ = atlas.addBall(
             0, atlas.pointFromOriginTangent(geo.vec3(-0.114, -0.186, 0.06)),
             0.09, blue)
         _ = atlas.addBallSurface(
             0, atlas.pointFromOriginTangent(geo.vec3(0.12, -0.192, 0.135)),
-            0.084, mirror, 0)
+            0.084, mirror)
         _ = atlas.addBallSurface(
             0, atlas.pointFromOriginTangent(geo.vec3(0, -0.204, -0.105)),
-            0.066, roughGlass, 0)
+            0.066, roughGlass)
         _ = atlas.addBallSurface(
             0, atlas.pointFromOriginTangent(geo.vec3(0.186, -0.222, -0.096)),
-            0.054, roughMetal, 0)
+            0.054, roughMetal)
         _ = atlas.addBallSurface(
             0, atlas.pointFromOriginTangent(geo.vec3(-0.174, 0.135, 0.054)),
-            0.03, emitter, 0)
+            0.03, emitter)
         _ = atlas.addSphericalAreaLight(
             0, atlas.pointFromOriginTangent(geo.vec3(0, 0.216, -0.075)),
             0.036, geo.vec3(1, 0.92, 0.78), 100)
@@ -411,7 +411,7 @@ enum SphericalScene {
         atlas.setCamera(
             0.62, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0),
             geo.vec3(0, -0.08, 1))
-        atlas.setControls(6, 3.9, 0.05, 0.95, 0, 0, 0)
+        atlas.setControls(6, 3.9, 0.05, 0, 0, 0)
         let camera = atlas.cameraChartAt(
             0, atlas.pointFromOriginTangent(geo.vec3(0, 0, -0.345)), 1.8)
         let result = atlas.build(camera, 64)
@@ -433,14 +433,14 @@ enum SphericalScene {
 
         let truncatedBall = atlas.addBallSurface(
             0, atlas.pointFromOriginTangent(geo.vec3(0.48, -0.18, 0.22)),
-            0.28, 0, 0)
+            0.28, 0)
         if truncatedBall < 0
             || atlas.addObjectClipPlane(truncatedBall, geo.vec3(-1, 0, 0), -0.35) < 0
         {
             fatalError("invalid clipped S³ ball")
         }
 
-        let triangle = atlas.addPlane(0, geo.vec3(0, 0, 1), 0.72, 1, 0)
+        let triangle = atlas.addPlane(0, geo.vec3(0, 0, 1), 0.72, 1)
         let triangleDirections: [geo.vec3] = [
             geo.vec3(1, 0, 0),
             geo.vec3(-0.5, 0.8660254, 0),
@@ -454,7 +454,7 @@ enum SphericalScene {
             fatalError("invalid clipped S³ triangle")
         }
 
-        let mirrorPatch = atlas.addPlane(0, geo.vec3(0, -1, 0), 1.05, 2, 0)
+        let mirrorPatch = atlas.addPlane(0, geo.vec3(0, -1, 0), 1.05, 2)
         if mirrorPatch < 0
             || atlas.addObjectClipPlane(mirrorPatch, geo.vec3(1, 0, 0), 0.65) < 0
             || atlas.addObjectClipPlane(mirrorPatch, geo.vec3(-1, 0, 0), 0.65) < 0
@@ -466,7 +466,7 @@ enum SphericalScene {
         // this chart, so unlike the full-sphere Clifford scene they need no
         // antipodal split.
         for (index, tube) in orthogonalRingQuadrics(radius: 0.02).enumerated() {
-            if atlas.addQuadric(0, tube, Int32(3 + index), 0) < 0 {
+            if atlas.addQuadric(0, tube, Int32(3 + index)) < 0 {
                 fatalError("invalid S³ orthogonal ring")
             }
         }
@@ -480,7 +480,7 @@ enum SphericalScene {
         atlas.setCamera(
             0.82, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0),
             geo.vec3(0, 0, 1))
-        atlas.setControls(5, 0.05, 0.2, 0.92, 2, 0, 0)
+        atlas.setControls(5, 0.05, 0.2, 2, 0, 0)
         let camera = atlas.cameraChartAt(
             0, atlas.pointFromOriginTangent(geo.vec3(0, 0, -0.12)), 3)
         let result = atlas.build(camera, 64)
@@ -516,7 +516,7 @@ enum SphericalScene {
             let tube = hopfFiberTubeQuadric(base: vertex, radius: 0.02)
             let material = vertexMaterials[fiber]
             for chart in [Int32(0), antipodalChart] {
-                let half = atlas.addQuadric(chart, tube, material, 0)
+                let half = atlas.addQuadric(chart, tube, material)
                 if half < 0
                     || atlas.addObjectClip(half, geo.vec4(0, 0, 0, -1), 0) < 0
                 {
@@ -536,7 +536,7 @@ enum SphericalScene {
         let right = geo.vec3(0, 0, 1)
         let up = geo.vec3(forward.y, -forward.x, 0)
         atlas.setCamera(0.88, 16.0 / 9.0, right, up, forward)
-        atlas.setControls(5, 0.05, 0.2, 0.92, 2, 0, 0)
+        atlas.setControls(5, 0.05, 0.2, 2, 0, 0)
         let camera = atlas.cameraChartAt(
             0, cameraPlacement.point, Float.pi * 0.98)
         let result = atlas.build(camera, 64)
@@ -595,7 +595,7 @@ enum SphericalScene {
             let chart: Int32 = globalSigns[3] > 0 ? 0 : antipodalChart
             // Chart 1 uses y = -x, so all four orthant signs reverse there.
             let localSigns = chart == 0 ? globalSigns : globalSigns.map { -$0 }
-            let patch = atlas.addQuadric(chart, quadric, color, 0)
+            let patch = atlas.addQuadric(chart, quadric, color)
             if patch < 0 { fatalError("invalid Clifford torus patch") }
 
             let coordinates = [
@@ -624,7 +624,7 @@ enum SphericalScene {
             orthogonalRingQuadrics(radius: 0.02), [Int32(2), Int32(3)])
         {
             for chart in [Int32(0), antipodalChart] {
-                let half = atlas.addQuadric(chart, tube, material, 0)
+                let half = atlas.addQuadric(chart, tube, material)
                 if half < 0
                     || atlas.addObjectClip(half, geo.vec4(0, 0, 0, -1), 0) < 0
                 {
@@ -642,7 +642,7 @@ enum SphericalScene {
         atlas.setCamera(
             0.82, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0),
             geo.vec3(0, 0, 1))
-        atlas.setControls(5, 0.05, 0.2, 0.92, 2, 0, 0)
+        atlas.setControls(5, 0.05, 0.2, 2, 0, 0)
         let cameraOffset: Float = 0.28
         let cameraPosition = geo.vec4(
             cos(cameraOffset) / sqrt(2), sin(cameraOffset) / sqrt(2),
@@ -750,7 +750,7 @@ enum SphericalScene {
             geo.vec3(1, 0, 0),
             geo.vec3(0, 1, 0),
             geo.vec3(0, 0, 1))
-        atlas.setControls(6, 0.05, 0.25, 0.95, 2, 0, 0)
+        atlas.setControls(6, 0.05, 0.25, 2, 0, 0)
 
         let cameraPosition = positiveWPoint(lightCoordinates)
         let camera = atlas.cameraChartAt(0, cameraPosition, cameraRadius)
@@ -797,7 +797,7 @@ enum SphericalScene {
             geo.vec3(1, 0, 0),
             geo.vec3(0, 1, 0),
             geo.vec3(0, 0, 1))
-        atlas.setControls(5, 0.04, 0.18, 0.92, 2, 0, 0.18)
+        atlas.setControls(5, 0.04, 0.18, 2, 0, 0.18)
 
         let cameraPosition = atlas.pointFromOriginTangent(geo.vec3(0.06, -0.04, 0.08))
         let camera = atlas.cameraChartAt(0, cameraPosition, 2.8)

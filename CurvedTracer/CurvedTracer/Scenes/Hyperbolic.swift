@@ -98,7 +98,7 @@ enum HyperbolicScene {
     }
 
     private static func addDiffuseMaterial(_ atlas: inout geo.Atlas, _ color: SIMD3<Float>) {
-        _ = atlas.addPhysicalMaterial(
+        _ = atlas.addMaterial(
             geo.vec4(color.x, color.y, color.z, 1), 0.5, 0, 1.5, 0,
             geo.vec3(0, 0, 0))
     }
@@ -107,12 +107,12 @@ enum HyperbolicScene {
         _ atlas: inout geo.Atlas,
         _ color: geo.vec4
     ) -> Int32 {
-        atlas.addPhysicalMaterial(
+        atlas.addMaterial(
             color, 0, 0, 1.5, 0, geo.vec3(0, 0, 0))
     }
 
     private static func addMirrorMaterial(_ atlas: inout geo.Atlas) {
-        _ = atlas.addPhysicalMaterial(
+        _ = atlas.addMaterial(
             geo.vec4(0.405, 0.855, 0.9, 1), 0, 1, 1.5, 0,
             geo.vec3(0, 0, 0))
     }
@@ -145,8 +145,8 @@ enum HyperbolicScene {
         addPoincareBall(&atlas, center: [0, 0, -0.45], radius: 0.18, material: 7)
 
         let mirrorDistance = atanh(Float(0.35))
-        _ = atlas.addPlane(0, geo.vec3(0, -1, 0), mirrorDistance, 6, 0)
-        _ = atlas.addPlane(0, geo.vec3(0, 1, 0), mirrorDistance, 6, 0)
+        _ = atlas.addPlane(0, geo.vec3(0, -1, 0), mirrorDistance, 6)
+        _ = atlas.addPlane(0, geo.vec3(0, 1, 0), mirrorDistance, 6)
 
         _ = atlas.addLight(
             0, pointFromKlein(&atlas, [0.30, 0.20, 0.10]),
@@ -156,7 +156,7 @@ enum HyperbolicScene {
             geo.vec3(0.60, 0.70, 1), 0.5 * previewPointLightScale)
 
         atlas.setCamera(1, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0), geo.vec3(0, 0, 1))
-        atlas.setControls(6, 0.05, 0.25, 0.95, 2, 0, 0)
+        atlas.setControls(6, 0.05, 0.25, 2, 0, 0)
         let cameraPosition = pointFromKlein(&atlas, [0.2668035, 0.2668035, 0.2668035])
         let traceRadius = intrinsicRadius(fromCompactAngle: Float.pi * 0.99 / 2)
         let camera = atlas.cameraChartAt(0, cameraPosition, traceRadius)
@@ -175,43 +175,43 @@ enum HyperbolicScene {
             &atlas, geo.vec4(0.78, 0.08, 0.05, 1))
         let green = addLambertianMaterial(
             &atlas, geo.vec4(0.08, 0.68, 0.12, 1))
-        let blue = atlas.addPhysicalMaterial(
+        let blue = atlas.addMaterial(
             geo.vec4(0.08, 0.28, 0.82, 1), 0.38, 0, 1.5, 0,
             geo.vec3(0, 0, 0))
-        let mirror = atlas.addPhysicalMaterial(
+        let mirror = atlas.addMaterial(
             geo.vec4(0.92, 0.95, 1, 1), 0, 1, 1.5, 0,
             geo.vec3(0, 0, 0))
-        let roughGlass = atlas.addPhysicalMaterial(
+        let roughGlass = atlas.addMaterial(
             geo.vec4(0.98, 0.99, 1, 1), 0.18, 0, 1.5, 1,
             geo.vec3(0, 0, 0))
-        let roughMetal = atlas.addPhysicalMaterial(
+        let roughMetal = atlas.addMaterial(
             geo.vec4(0.95, 0.64, 0.2, 1), 0.32, 1, 1.5, 0,
             geo.vec3(0, 0, 0))
-        let emitter = atlas.addPhysicalMaterial(
+        let emitter = atlas.addMaterial(
             geo.vec4(0, 0, 0, 1), 0, 0, 1.5, 0,
             geo.vec3(8, 2, 0.25))
 
-        _ = atlas.addPlane(0, geo.vec3(1, 0, 0), -0.3, red, 0)
-        _ = atlas.addPlane(0, geo.vec3(-1, 0, 0), -0.3, green, 0)
-        _ = atlas.addPlane(0, geo.vec3(0, 1, 0), -0.3, white, 0)
-        _ = atlas.addPlane(0, geo.vec3(0, -1, 0), -0.3, white, 0)
-        _ = atlas.addPlane(0, geo.vec3(0, 0, -1), -0.45, white, 0)
-        _ = atlas.addPlane(0, geo.vec3(0, 0, 1), -0.45, white, 0)
+        _ = atlas.addPlane(0, geo.vec3(1, 0, 0), -0.3, red)
+        _ = atlas.addPlane(0, geo.vec3(-1, 0, 0), -0.3, green)
+        _ = atlas.addPlane(0, geo.vec3(0, 1, 0), -0.3, white)
+        _ = atlas.addPlane(0, geo.vec3(0, -1, 0), -0.3, white)
+        _ = atlas.addPlane(0, geo.vec3(0, 0, -1), -0.45, white)
+        _ = atlas.addPlane(0, geo.vec3(0, 0, 1), -0.45, white)
         _ = atlas.addBall(
             0, atlas.pointFromOriginTangent(geo.vec3(-0.114, -0.186, 0.06)),
             0.09, blue)
         _ = atlas.addBallSurface(
             0, atlas.pointFromOriginTangent(geo.vec3(0.12, -0.192, 0.135)),
-            0.084, mirror, 0)
+            0.084, mirror)
         _ = atlas.addBallSurface(
             0, atlas.pointFromOriginTangent(geo.vec3(0, -0.204, -0.105)),
-            0.066, roughGlass, 0)
+            0.066, roughGlass)
         _ = atlas.addBallSurface(
             0, atlas.pointFromOriginTangent(geo.vec3(0.186, -0.222, -0.096)),
-            0.054, roughMetal, 0)
+            0.054, roughMetal)
         _ = atlas.addBallSurface(
             0, atlas.pointFromOriginTangent(geo.vec3(-0.174, 0.135, 0.054)),
-            0.03, emitter, 0)
+            0.03, emitter)
         _ = atlas.addSphericalAreaLight(
             0, atlas.pointFromOriginTangent(geo.vec3(0, 0.216, -0.075)),
             0.036, geo.vec3(1, 0.92, 0.78), 100)
@@ -219,7 +219,7 @@ enum HyperbolicScene {
         atlas.setCamera(
             0.62, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0),
             geo.vec3(0, -0.08, 1))
-        atlas.setControls(6, 3.9, 0.05, 0.95, 0, 0, 0)
+        atlas.setControls(6, 3.9, 0.05, 0, 0, 0)
         let camera = atlas.cameraChartAt(
             0, atlas.pointFromOriginTangent(geo.vec3(0, 0, -0.345)), 1.8)
         let result = atlas.build(camera, 64)
@@ -238,14 +238,14 @@ enum HyperbolicScene {
 
         let truncatedBall = atlas.addBallSurface(
             0, atlas.pointFromOriginTangent(geo.vec3(-0.45, -0.12, 0.38)),
-            0.32, 0, 0)
+            0.32, 0)
         if truncatedBall < 0
             || atlas.addObjectClipPlane(truncatedBall, geo.vec3(1, 0, 0), 0.25) < 0
         {
             fatalError("invalid clipped H³ ball")
         }
 
-        let triangle = atlas.addPlane(0, geo.vec3(0, 0, 1), 0.82, 1, 0)
+        let triangle = atlas.addPlane(0, geo.vec3(0, 0, 1), 0.82, 1)
         let triangleDirections: [geo.vec3] = [
             geo.vec3(1, 0, 0),
             geo.vec3(-0.5, 0.8660254, 0),
@@ -264,7 +264,7 @@ enum HyperbolicScene {
         quadric[5] = 1.6
         quadric[10] = 0.7
         quadric[15] = -0.22
-        let quadricPatch = atlas.addQuadric(0, quadric, 2, 0)
+        let quadricPatch = atlas.addQuadric(0, quadric, 2)
         if quadricPatch < 0
             || atlas.addObjectClipPlane(quadricPatch, geo.vec3(-1, 0, 0), 0.7) < 0
         {
@@ -274,7 +274,7 @@ enum HyperbolicScene {
         // A spacelike ambient normal with a nonzero level gives an
         // equidistant hypersurface rather than a totally geodesic plane.
         let mirrorPatch = atlas.addLinearSurface(
-            0, geo.vec4(0, -1, 0, 0), sinh(Float(0.95)), 3, 0)
+            0, geo.vec4(0, -1, 0, 0), sinh(Float(0.95)), 3)
         if mirrorPatch < 0
             || atlas.addObjectClipPlane(mirrorPatch, geo.vec3(1, 0, 0), 0.65) < 0
             || atlas.addObjectClipPlane(mirrorPatch, geo.vec3(-1, 0, 0), 0.65) < 0
@@ -291,7 +291,7 @@ enum HyperbolicScene {
         atlas.setCamera(
             0.82, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0),
             geo.vec3(0, 0, 1))
-        atlas.setControls(5, 0.05, 0.2, 0.92, 2, 0, 0)
+        atlas.setControls(5, 0.05, 0.2, 2, 0, 0)
         let camera = atlas.cameraChartAt(
             0, atlas.pointFromOriginTangent(geo.vec3(0, 0, -0.12)), 2.7)
         let result = atlas.build(camera, 64)
@@ -304,7 +304,7 @@ enum HyperbolicScene {
         _ = atlas.seed(intrinsicRadius(fromCompactAngle: Float.pi * 0.999 / 2))
 
         addDiffuseMaterial(&atlas, [1, 0, 0])
-        _ = atlas.addPhysicalMaterial(
+        _ = atlas.addMaterial(
             geo.vec4(1, 1, 1, 1), 0, 1, 1.5, 0,
             geo.vec3(0, 0, 0))
 
@@ -321,7 +321,7 @@ enum HyperbolicScene {
             geo.vec3(0, 1, 0), geo.vec3(0, -1, 0),
             geo.vec3(0, 0, 1), geo.vec3(0, 0, -1),
         ] {
-            _ = atlas.addPlane(0, direction, faceDistance, 1, 0)
+            _ = atlas.addPlane(0, direction, faceDistance, 1)
         }
 
         let lightOffset: Float = 0.32
@@ -346,7 +346,7 @@ enum HyperbolicScene {
             geo.vec3(-0.7071068, 0.7071068, 0),
             geo.vec3(-0.4082483, -0.4082483, 0.8164966),
             geo.vec3(0.5773503, 0.5773503, 0.5773503))
-        atlas.setControls(10, 0.05, 0.25, 0.95, 2, 0, 0)
+        atlas.setControls(10, 0.05, 0.25, 2, 0, 0)
 
         let cameraPosition = pointFromKlein(&atlas, [0.2668035, 0.2668035, 0.2668035])
         let traceRadius: Float = 20
@@ -388,7 +388,7 @@ enum HyperbolicScene {
         atlas.setCamera(0.9, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0), geo.vec3(0, 0, 1))
         // Match the previous exponential-fog strength across the accumulated
         // intrinsic path, including every portal hop.
-        atlas.setControls(5, 0.04, 0.16, 0.9, 2, 0, 0.0)
+        atlas.setControls(5, 0.04, 0.16, 2, 0, 0.0)
         let camera = atlas.cameraChartAt(0, geo.vec4(0, 0, 0, 1), 3.5)
         let result = atlas.buildAtlas(camera, 64, 1, 32)
         if result != 0 { fatalError("H³ atlas build failed: \(result)") }
@@ -458,7 +458,7 @@ enum HyperbolicScene {
 
         atlas.setCamera(
             0.9, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0), geo.vec3(0, 0, 1))
-        atlas.setControls(5, 0.04, 0.16, 0.9, 2, 0, 0.0)
+        atlas.setControls(5, 0.04, 0.16, 2, 0, 0.0)
         let camera = atlas.cameraChartAt(0, geo.vec4(0, 0, 0, 1), 3.5)
         let result = atlas.buildAtlas(camera, 64, 1, 32)
         if result != 0 { fatalError("H³ multi-chart atlas build failed: \(result)") }

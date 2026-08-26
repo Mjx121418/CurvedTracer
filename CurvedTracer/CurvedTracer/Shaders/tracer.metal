@@ -198,7 +198,6 @@ static float3 photoDirectLighting(
     Event hit,
     float4 normal,
     MaterialGPU material,
-    int responseKind,
     bool frontFace,
     int chartId,
     device const HeaderGPU *h,
@@ -275,8 +274,7 @@ static float3 photoDirectLighting(
                 if (cosine <= 0.0f)
                     continue;
                 BSDFEvaluation evaluation = evaluateBSDF(
-                    material, responseKind, normal, frontFace, -hit.tangent,
-                    lightDirection);
+                    material, normal, frontFace, -hit.tangent, lightDirection);
                 if (!evaluation.valid || evaluation.pdf <= 0.0f)
                     continue;
 
@@ -463,7 +461,7 @@ static TraceResult tracePathSample(
         if (!frontFace)
             normal = -normal;
 
-        int bsdfModel = resolveBSDFModel(material, object.responseKind);
+        int bsdfModel = resolveBSDFModel(material);
         if (!isSupportedBSDFModel(bsdfModel)) {
             result.errorBits |= 1u;
             break;
@@ -484,8 +482,8 @@ static TraceResult tracePathSample(
                     photoRandom(randomState));
             }
             bsdfSample = sampleBSDF(
-                material, object.responseKind, hit.point, hit.tangent,
-                normal, frontFace, randomSample);
+                material, hit.point, hit.tangent, normal, frontFace,
+                randomSample);
             if (!bsdfSample.valid) {
                 result.errorBits |= PHOTO_DIAGNOSTIC_INVALID_BSDF_SAMPLE;
                 break;
@@ -497,9 +495,9 @@ static TraceResult tracePathSample(
             bsdfModel == BSDF_MODEL_GGX_DIELECTRIC ||
             bsdfModel == BSDF_MODEL_GGX_OPAQUE_DIELECTRIC) {
             radiance += throughput * photoDirectLighting(
-                hit, normal, material, object.responseKind, frontFace,
-                surface.chartId, h, charts, portals, objects, quadrics, clips,
-                lights, result, randomState, hasBSDFSample, bsdfSample);
+                hit, normal, material, frontFace, surface.chartId, h, charts,
+                portals, objects, quadrics, clips, lights, result, randomState,
+                hasBSDFSample, bsdfSample);
         }
         if (!hasBSDFSample)
             break;

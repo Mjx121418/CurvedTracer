@@ -452,13 +452,12 @@ air.
 
 ### Legacy material migration
 
-Status: application catalog migrated. Scene-authored diffuse, plastic, mirror,
-glass, conductor, and emissive surfaces now use explicit physical materials;
-mirror geometry carries the ordinary opaque response value because physical
-BSDF dispatch is material-driven. Preserve the legacy GeometryCore entry points
-temporarily as a packet-compatibility boundary for external callers and tests.
-After visual parity is checked, a separate contract revision may reserve or
-remove `compatibilityKind`, `legacySpecular`, and `responseKind`.
+Status: complete in contract version 14. Scene-authored diffuse, plastic,
+mirror, glass, conductor, and emissive surfaces use the unified material
+packet. Geometry no longer carries a response kind, and the authoring API and
+shaders no longer expose legacy materials, Blinn–Phong specular state, mirror
+response flags, or empirical bounce attenuation. Material records are now 48
+bytes and BSDF dispatch is exclusively material-driven.
 
 ---
 

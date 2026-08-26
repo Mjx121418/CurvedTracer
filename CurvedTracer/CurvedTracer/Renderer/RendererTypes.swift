@@ -165,6 +165,7 @@ struct RenderResolution: Equatable {
     let height: Int
 
     static let hd720 = RenderResolution(width: 1280, height: 720)
+    static let qhd540 = RenderResolution(width: 960, height: 540)
 
     init(width: Int, height: Int) {
         precondition(

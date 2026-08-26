@@ -120,11 +120,27 @@ enum SphericalScene {
         // complex coordinates by exp(it) traces the Hopf fiber, with ambient
         // tangent (w, -z, y, -x). At this lift, recentering the camera leaves
         // the tangent's xyz coordinates unchanged.
-        let z1Real = sqrt((1 + base.z) / 2)
-        let point = geo.vec4(
-            0, base.x / (2 * z1Real), -base.y / (2 * z1Real), z1Real)
+        let point = hopfLift(base)
         let centeredForward = geo.vec3(point.w, -point.z, point.y)
         return (base, point, centeredForward)
+    }
+
+    private static func hopfLift(_ base: SIMD3<Float>) -> geo.vec4 {
+        let z1Real = sqrt((1 + base.z) / 2)
+        return geo.vec4(
+            0, base.x / (2 * z1Real), -base.y / (2 * z1Real), z1Real)
+    }
+
+    private static func s3FiberPoint(
+        _ point: geo.vec4, _ tangent: geo.vec4, _ offset: Float
+    ) -> geo.vec4 {
+        let cosine = cos(offset)
+        let sine = sin(offset)
+        return geo.vec4(
+            cosine * point.x + sine * tangent.x,
+            cosine * point.y + sine * tangent.y,
+            cosine * point.z + sine * tangent.z,
+            cosine * point.w + sine * tangent.w)
     }
 
     /// For z₁ = w + ix and z₂ = y + iz, the Hopf map is
@@ -155,6 +171,72 @@ enum SphericalScene {
         quadric[7] = -base.x
         quadric[13] = -base.x
         return quadric
+    }
+
+    // Column-major SO(4) frame that maps a point q to the identity. This
+    // mirrors Atlas::movePointToOrigin while keeping the scene independent of
+    // that private host-side helper.
+    private static func s3MovePointToOrigin(_ point: geo.vec4) -> [Float] {
+        let scale = -1 / max(1 + point.w, 1e-6)
+        let u = SIMD3<Float>(point.x, point.y, point.z)
+        let c0 = SIMD3<Float>(1, 0, 0) + u * (scale * u.x)
+        let c1 = SIMD3<Float>(0, 1, 0) + u * (scale * u.y)
+        let c2 = SIMD3<Float>(0, 0, 1) + u * (scale * u.z)
+        return [
+            c0.x, c0.y, c0.z, u.x,
+            c1.x, c1.y, c1.z, u.y,
+            c2.x, c2.y, c2.z, u.z,
+            -u.x, -u.y, -u.z, point.w,
+        ]
+    }
+
+    private static func matrixTranspose(_ matrix: [Float]) -> [Float] {
+        var result = [Float](repeating: 0, count: 16)
+        for column in 0..<4 {
+            for row in 0..<4 {
+                result[row * 4 + column] = matrix[column * 4 + row]
+            }
+        }
+        return result
+    }
+
+    private static func matrixProduct(
+        _ left: [Float], _ right: [Float]
+    ) -> [Float] {
+        var result = [Float](repeating: 0, count: 16)
+        for column in 0..<4 {
+            for row in 0..<4 {
+                for index in 0..<4 {
+                    result[column * 4 + row] +=
+                        left[index * 4 + row] * right[column * 4 + index]
+                }
+            }
+        }
+        return result
+    }
+
+    private static func matrixApply(
+        _ matrix: [Float], _ point: geo.vec4
+    ) -> geo.vec4 {
+        geo.vec4(
+            matrix[0] * point.x + matrix[4] * point.y
+                + matrix[8] * point.z + matrix[12] * point.w,
+            matrix[1] * point.x + matrix[5] * point.y
+                + matrix[9] * point.z + matrix[13] * point.w,
+            matrix[2] * point.x + matrix[6] * point.y
+                + matrix[10] * point.z + matrix[14] * point.w,
+            matrix[3] * point.x + matrix[7] * point.y
+                + matrix[11] * point.z + matrix[15] * point.w)
+    }
+
+    private static func transformQuadric(
+        _ quadric: [Float], by isometry: [Float]
+    ) -> [Float] {
+        // All Hopf scene frames are orthogonal, so Q' = M Q Mᵀ is the
+        // homogeneous-conic change of coordinates for the active frame M.
+        matrixProduct(
+            isometry,
+            matrixProduct(quadric, matrixTranspose(isometry)))
     }
 
     /// The inverse of the standard L(5, 2) generator
@@ -492,11 +574,27 @@ enum SphericalScene {
     /// regular dodecahedron in S².
     @discardableResult static func hopfFibration(_ atlas: inout geo.Atlas) -> Int32 {
         atlas.start(1)
-        let chartRadius = Float.pi * 0.56
+        // Recenter the construction at the camera. A radius of 2.35 is large
+        // enough for exactly the ten fibers on the opposite side of the
+        // selected dodecahedron face, while remaining comfortably below the
+        // stereographic singularity at π.
+        let chartRadius: Float = 2.35
+        let cameraPlacement = hopfFibrationCameraPlacement()
+        let cameraFrame = s3MovePointToOrigin(cameraPlacement.point)
         _ = atlas.seed(chartRadius)
-        let antipodalChart = atlas.addChart(
-            chartRadius, 0, antipodalMatrix, true)
-        if antipodalChart != 1 { fatalError("invalid antipodal Hopf chart") }
+
+        // The second chart is centered on a lift of the opposite face center.
+        // Its base direction is the negative of the camera's, so it contains
+        // the complementary ten fibers. The frame is parent-to-child; its
+        // inverse therefore maps the child chart origin to this center when
+        // the atlas is flattened for rendering.
+        let oppositeBase = -cameraPlacement.base
+        let oppositeCenter = matrixApply(
+            cameraFrame, hopfLift(oppositeBase))
+        let oppositeChartFrame = s3MovePointToOrigin(oppositeCenter)
+        let oppositeChart = atlas.addChart(
+            chartRadius, 0, oppositeChartFrame, true)
+        if oppositeChart != 1 { fatalError("invalid Hopf chart pair") }
 
         let colors: [geo.vec4] = [
             geo.vec4(0.96, 0.20, 0.10, 1),
@@ -513,32 +611,46 @@ enum SphericalScene {
         let vertexMaterials = dodecahedronVertexMaterials()
         precondition(vertices.count == 20, "invalid dodecahedron vertex set")
         for (fiber, vertex) in vertices.enumerated() {
-            let tube = hopfFiberTubeQuadric(base: vertex, radius: 0.02)
+            let tube = transformQuadric(
+                hopfFiberTubeQuadric(base: vertex, radius: 0.02),
+                by: cameraFrame)
             let material = vertexMaterials[fiber]
-            for chart in [Int32(0), antipodalChart] {
-                let half = atlas.addQuadric(chart, tube, material)
-                if half < 0
-                    || atlas.addObjectClip(half, geo.vec4(0, 0, 0, -1), 0) < 0
-                {
-                    fatalError("invalid Hopf fiber tube")
-                }
+            let baseProduct = vertex.x * cameraPlacement.base.x
+                + vertex.y * cameraPlacement.base.y
+                + vertex.z * cameraPlacement.base.z
+            let chart = baseProduct < 0
+                ? Int32(0) : oppositeChart
+            let localTube = chart == 0
+                ? tube
+                : transformQuadric(tube, by: oppositeChartFrame)
+            if atlas.addQuadric(chart, localTube, material) < 0 {
+                fatalError("invalid Hopf fiber tube")
             }
         }
 
-        _ = atlas.addLight(
-            0, atlas.pointFromOriginTangent(geo.vec3(-0.45, 0.30, 0.18)),
-            geo.vec3(1, 0.92, 0.75), previewPointLightScale)
-        _ = atlas.addLight(
-            0, atlas.pointFromOriginTangent(geo.vec3(0.32, -0.22, 0.48)),
-            geo.vec3(0.45, 0.68, 1), 0.7 * previewPointLightScale)
-        let cameraPlacement = hopfFibrationCameraPlacement()
+        // Put the finite emitters on the camera's Hopf fiber, one on each
+        // side of the camera along its great-circle viewing direction.
+        let fiberTangent = geo.vec4(cameraPlacement.centeredForward, 0)
+        let fiberOffset: Float = 0.55
+        let warmLightCenter = s3FiberPoint(
+            cameraPlacement.point, fiberTangent, fiberOffset)
+        let coolLightCenter = s3FiberPoint(
+            cameraPlacement.point, fiberTangent, -fiberOffset)
+        let areaLightRadius: Float = 0.06
+        let areaLightRadiance: Float = 80
+        _ = atlas.addSphericalAreaLight(
+            0, matrixApply(cameraFrame, warmLightCenter), areaLightRadius,
+            geo.vec3(1, 0.92, 0.75), areaLightRadiance)
+        _ = atlas.addSphericalAreaLight(
+            0, matrixApply(cameraFrame, coolLightCenter), areaLightRadius,
+            geo.vec3(0.45, 0.68, 1), 0.7 * areaLightRadiance)
         let forward = cameraPlacement.centeredForward
         let right = geo.vec3(0, 0, 1)
         let up = geo.vec3(forward.y, -forward.x, 0)
         atlas.setCamera(0.88, 16.0 / 9.0, right, up, forward)
         atlas.setControls(5, 0.05, 0.2, 2, 0, 0)
         let camera = atlas.cameraChartAt(
-            0, cameraPlacement.point, Float.pi * 0.98)
+            0, geo.vec4(0, 0, 0, 1), Float.pi * 0.98)
         let result = atlas.build(camera, 64)
         if result != 0 { fatalError("Hopf fibration build failed: \(result)") }
         return camera

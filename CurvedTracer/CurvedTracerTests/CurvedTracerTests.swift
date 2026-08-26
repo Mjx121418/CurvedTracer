@@ -89,7 +89,34 @@ struct CurvedTracerTests {
         return result
     }
 
+    private func matrixTranspose(_ matrix: [Float]) -> [Float] {
+        var result = [Float](repeating: 0, count: 16)
+        for column in 0..<4 {
+            for row in 0..<4 {
+                result[row * 4 + column] = matrix[column * 4 + row]
+            }
+        }
+        return result
+    }
+
+    private func s3MovePointToOrigin(_ point: geo.vec4) -> [Float] {
+        let scale = -1 / max(1 + point.w, 1e-6)
+        let u = SIMD3<Float>(point.x, point.y, point.z)
+        let c0 = SIMD3<Float>(1, 0, 0) + u * (scale * u.x)
+        let c1 = SIMD3<Float>(0, 1, 0) + u * (scale * u.y)
+        let c2 = SIMD3<Float>(0, 0, 1) + u * (scale * u.z)
+        [
+            c0.x, c0.y, c0.z, u.x,
+            c1.x, c1.y, c1.z, u.y,
+            c2.x, c2.y, c2.z, u.z,
+            -u.x, -u.y, -u.z, point.w,
+        ]
+    }
+
     @Test func renderResolutionDefaultsAndValidation() {
+        #expect(RenderResolution.qhd540.width == 960)
+        #expect(RenderResolution.qhd540.height == 540)
+        #expect(RenderResolution.qhd540.aspectRatio == 16.0 / 9.0)
         #expect(RenderResolution.hd720.width == 1280)
         #expect(RenderResolution.hd720.height == 720)
         #expect(RenderResolution.hd720.aspectRatio == 16.0 / 9.0)
@@ -251,10 +278,13 @@ struct CurvedTracerTests {
         var atlas = geo.Atlas()
         _ = SphericalScene.hopfFibration(&atlas)
         var bytes = [UInt8](atlas.packetBytes())
-        #expect(int32(bytes, at: 168) == 40)
+        #expect(int32(bytes, at: 160) == 1)
+        #expect(int32(bytes, at: 164) == 0)
+        #expect(int32(bytes, at: 168) == 20)
         #expect(int32(bytes, at: 172) == 5)
-        #expect(int32(bytes, at: 180) == 40)
-        #expect(int32(bytes, at: 184) == 80)
+        #expect(int32(bytes, at: 176) == 2)
+        #expect(int32(bytes, at: 180) == 20)
+        #expect(int32(bytes, at: 184) == 20)
 
         let cameraPlacement = SphericalScene.hopfFibrationCameraPlacement()
         let point = cameraPlacement.point
@@ -278,49 +308,35 @@ struct CurvedTracerTests {
         let firstObject = 192 + 32
         var fiberMaterials: [Int32] = []
         for fiber in 0..<20 {
-            let firstHalf = firstObject + fiber * 2 * 48
-            let secondHalf = firstHalf + 48
-            let material = int32(bytes, at: firstHalf + 24)
+            let object = firstObject + fiber * 48
+            let material = int32(bytes, at: object + 24)
             #expect(material >= 0 && material < 5)
-            #expect(int32(bytes, at: secondHalf + 24) == material)
             fiberMaterials.append(material)
-
-            for half in 0..<2 {
-                let halfIndex = fiber * 2 + half
-                let object = firstObject + halfIndex * 48
-                #expect(int32(bytes, at: object + 20) == 2)
-                #expect(int32(bytes, at: object + 28) == Int32(halfIndex * 2))
-                #expect(int32(bytes, at: object + 32) == 2)
-                #expect(int32(bytes, at: object + 36) == Int32(halfIndex))
-            }
+            #expect(int32(bytes, at: object + 20) == 2)
+            #expect(int32(bytes, at: object + 28) == Int32(fiber))
+            #expect(int32(bytes, at: object + 32) == 1)
+            #expect(int32(bytes, at: object + 36) == Int32(fiber))
         }
 
-        // Inspect un-recentered chart quadrics when recovering their S² base
-        // directions; the rendered packet is expressed in camera coordinates.
-        #expect(atlas.buildAtlas(atlas.cameraChartId(), 64, 1, 32) == 0)
-        bytes = [UInt8](atlas.packetBytes())
-        #expect(int32(bytes, at: 160) == 2)
-        #expect(int32(bytes, at: 168) == 40)
-        #expect(int32(bytes, at: 180) == 40)
-        #expect(int32(bytes, at: 184) == 40)
-        let firstQuadric = 192 + 2 * 32 + 40 * 48
-        let inverseRootThree = 1 / sqrt(Float(3))
-        let phi = (Float(1) + sqrt(5)) / 2
-        let goldenPattern = [Float(0), 1 / phi, phi].map {
-            $0 * inverseRootThree
-        }
+        // The flattened packet is expressed in the camera-centered frame.
+        // Undo that frame before recovering each tube's S² base direction.
+        let cameraFrame = s3MovePointToOrigin(cameraPlacement.point)
+        let inverseCameraFrame = matrixTranspose(cameraFrame)
+        let firstQuadric = firstObject + 20 * 48
         var directions: [SIMD3<Float>] = []
         var directionsByMaterial = [[SIMD3<Float>]](repeating: [], count: 5)
         var cubeVertexCount = 0
         var goldenVertexCount = 0
+        let inverseRootThree = 1 / sqrt(Float(3))
+        let phi = (Float(1) + sqrt(5)) / 2
+        let base = cameraPlacement.base
+        let goldenPattern = [Float(0), 1 / phi, phi].map {
+            $0 * inverseRootThree
+        }
         for fiber in 0..<20 {
-            let quadric = matrix(bytes, at: firstQuadric + fiber * 64)
-            let pairedQuadric = matrix(
-                bytes, at: firstQuadric + (20 + fiber) * 64)
-            for index in 0..<16 {
-                #expect(abs(quadric[index] - pairedQuadric[index]) < 0.0001)
-            }
-
+            let flatQuadric = matrix(bytes, at: firstQuadric + fiber * 64)
+            let quadric = matrixProduct(
+                matrixProduct(inverseCameraFrame, flatQuadric), cameraFrame)
             let raw = SIMD3<Float>(
                 -(quadric[2] + quadric[8]) / 2,
                 -(quadric[1] + quadric[4]) / 2,
@@ -373,6 +389,27 @@ struct CurvedTracerTests {
                 }
             }
         }
+
+        // The source atlas has two large, complementary charts. Each chart
+        // owns ten complete tubes; no explicit hemisphere clips are needed.
+        #expect(atlas.buildAtlas(atlas.cameraChartId(), 64, 1, 32) == 0)
+        bytes = [UInt8](atlas.packetBytes())
+        #expect(int32(bytes, at: 160) == 2)
+        #expect(int32(bytes, at: 164) == 0)
+        #expect(int32(bytes, at: 168) == 20)
+        #expect(int32(bytes, at: 176) == 2)
+        #expect(int32(bytes, at: 180) == 20)
+        #expect(int32(bytes, at: 184) == 0)
+        #expect(abs(float32(bytes, at: 192) - 2.35) < 0.0001)
+        #expect(abs(float32(bytes, at: 224) - 2.35) < 0.0001)
+        #expect(int32(bytes, at: 192 + 20) == 10)
+        #expect(int32(bytes, at: 224 + 20) == 10)
+        #expect(int32(bytes, at: 192 + 28) == 2)
+        #expect(int32(bytes, at: 224 + 28) == 0)
+        #expect(abs(float32(bytes, at: 16) - 0) < 0.0001)
+        #expect(abs(float32(bytes, at: 20) - 0) < 0.0001)
+        #expect(abs(float32(bytes, at: 24) - 0) < 0.0001)
+        #expect(abs(float32(bytes, at: 28) - 1) < 0.0001)
     }
 
     @Test func cliffordTorusUsesEightCheckerboardReflectionPatches() {

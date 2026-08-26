@@ -56,7 +56,7 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     var renderTextures: [any MTLTexture] = []
     var photoAccumulationTexture: (any MTLTexture)!
-    var renderResolution: RenderResolution = .hd720
+    var renderResolution: RenderResolution = .qhd540
 
     var cameraChart: Int32 = 0
     var atlas = geo.Atlas()

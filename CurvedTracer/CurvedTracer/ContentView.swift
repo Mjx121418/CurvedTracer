@@ -17,7 +17,7 @@ struct ContentView: View {
   @State private var renderingMode: RenderingMode = .realtime
   @State private var exposure = 2.0
   @StateObject private var performanceStats = PerformanceStats()
-  private let renderResolution: RenderResolution = .hd720
+  private let renderResolution: RenderResolution = .qhd540
 
   var body: some View {
     ZStack {

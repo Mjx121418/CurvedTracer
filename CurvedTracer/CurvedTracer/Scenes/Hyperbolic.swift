@@ -173,6 +173,9 @@ enum HyperbolicScene {
         let glass = atlas.addPhysicalMaterial(
             geo.vec4(0.98, 0.99, 1, 1), 0, 0, 1.5, 1,
             geo.vec3(0, 0, 0))
+        let roughMetal = atlas.addPhysicalMaterial(
+            geo.vec4(0.95, 0.64, 0.2, 1), 0.32, 1, 1.5, 0,
+            geo.vec3(0, 0, 0))
 
         _ = atlas.addPlane(0, geo.vec3(1, 0, 0), -0.3, red, 0)
         _ = atlas.addPlane(0, geo.vec3(-1, 0, 0), -0.3, green, 0)
@@ -189,6 +192,9 @@ enum HyperbolicScene {
         _ = atlas.addBallSurface(
             0, atlas.pointFromOriginTangent(geo.vec3(0, -0.204, -0.105)),
             0.066, glass, 0)
+        _ = atlas.addBallSurface(
+            0, atlas.pointFromOriginTangent(geo.vec3(0.186, -0.222, -0.096)),
+            0.054, roughMetal, 0)
         _ = atlas.addSphericalAreaLight(
             0, atlas.pointFromOriginTangent(geo.vec3(0, 0.216, -0.075)),
             0.036, geo.vec3(1, 0.92, 0.78), 100)

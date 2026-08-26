@@ -501,16 +501,18 @@ struct CurvedTracerTests {
         #expect(abs(float32(bytes, at: 140) - 0.6) < 0.0001)
     }
 
-    @Test func pathRoomUsesPhysicalConductorAndDielectricDispatch() {
+    @Test func pathRoomUsesPhysicalConductorGGXAndDielectricDispatch() {
         var atlas = geo.Atlas()
         _ = EuclideanScene.pathTracingRoom(&atlas)
         let bytes = [UInt8](atlas.packetBytes())
         let chartCount = Int(int32(bytes, at: 160))
         let portalCount = Int(int32(bytes, at: 164))
         let objectCount = Int(int32(bytes, at: 168))
+        let materialCount = Int(int32(bytes, at: 172))
         let quadricCount = Int(int32(bytes, at: 180))
         let clipCount = Int(int32(bytes, at: 184))
-        #expect(objectCount == 9)
+        #expect(objectCount == 10)
+        #expect(materialCount == 7)
 
         let objectOffset = 192 + chartCount * 32 + portalCount * 96
         let mirrorObjectOffset = objectOffset + 7 * 48
@@ -542,6 +544,18 @@ struct CurvedTracerTests {
         #expect(float32(bytes, at: glassMaterialOffset + 52) == 0.0)
         #expect(float32(bytes, at: glassMaterialOffset + 56) == 1.5)
         #expect(float32(bytes, at: glassMaterialOffset + 60) == 1.0)
+
+        let roughMetalObjectOffset = objectOffset + 9 * 48
+        #expect(int32(bytes, at: roughMetalObjectOffset + 24) == 0)
+        #expect(int32(bytes, at: roughMetalObjectOffset + 28) == 6)
+        let roughMetalMaterialOffset = materialOffset + 6 * 64
+        #expect(abs(float32(bytes, at: roughMetalMaterialOffset) - 0.95) < 0.0001)
+        #expect(abs(float32(bytes, at: roughMetalMaterialOffset + 4) - 0.64) < 0.0001)
+        #expect(abs(float32(bytes, at: roughMetalMaterialOffset + 8) - 0.2) < 0.0001)
+        #expect(int32(bytes, at: roughMetalMaterialOffset + 28) == 0)
+        #expect(abs(float32(bytes, at: roughMetalMaterialOffset + 48) - 0.32) < 0.0001)
+        #expect(float32(bytes, at: roughMetalMaterialOffset + 52) == 1.0)
+        #expect(float32(bytes, at: roughMetalMaterialOffset + 60) == 0.0)
     }
 
 }

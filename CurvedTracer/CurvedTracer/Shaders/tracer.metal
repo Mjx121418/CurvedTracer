@@ -464,7 +464,8 @@ static TraceResult tracePathSample(
         int bsdfModel = resolveBSDFModel(material, object.responseKind);
         if (bsdfModel != BSDF_MODEL_LAMBERTIAN &&
             bsdfModel != BSDF_MODEL_DELTA_REFLECTION &&
-            bsdfModel != BSDF_MODEL_DELTA_DIELECTRIC) {
+            bsdfModel != BSDF_MODEL_DELTA_DIELECTRIC &&
+            bsdfModel != BSDF_MODEL_GGX_CONDUCTOR) {
             result.errorBits |= 1u;
             break;
         }
@@ -485,7 +486,8 @@ static TraceResult tracePathSample(
             }
         }
 
-        if (bsdfModel == BSDF_MODEL_LAMBERTIAN) {
+        if (bsdfModel == BSDF_MODEL_LAMBERTIAN ||
+            bsdfModel == BSDF_MODEL_GGX_CONDUCTOR) {
             radiance += throughput * photoDirectLighting(
                 hit, normal, material, object.responseKind, surface.chartId, h,
                 charts, portals, objects, quadrics, clips, lights, result,

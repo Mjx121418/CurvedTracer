@@ -501,7 +501,7 @@ struct CurvedTracerTests {
         #expect(abs(float32(bytes, at: 140) - 0.6) < 0.0001)
     }
 
-    @Test func pathRoomMirrorUsesPhysicalMaterialDispatch() {
+    @Test func pathRoomUsesPhysicalConductorAndDielectricDispatch() {
         var atlas = geo.Atlas()
         _ = EuclideanScene.pathTracingRoom(&atlas)
         let bytes = [UInt8](atlas.packetBytes())
@@ -510,7 +510,7 @@ struct CurvedTracerTests {
         let objectCount = Int(int32(bytes, at: 168))
         let quadricCount = Int(int32(bytes, at: 180))
         let clipCount = Int(int32(bytes, at: 184))
-        #expect(objectCount == 8)
+        #expect(objectCount == 9)
 
         let objectOffset = 192 + chartCount * 32 + portalCount * 96
         let mirrorObjectOffset = objectOffset + 7 * 48
@@ -529,6 +529,19 @@ struct CurvedTracerTests {
         #expect(float32(bytes, at: mirrorMaterialOffset + 48) == 0.0)
         #expect(float32(bytes, at: mirrorMaterialOffset + 52) == 1.0)
         #expect(float32(bytes, at: mirrorMaterialOffset + 60) == 0.0)
+
+        let glassObjectOffset = objectOffset + 8 * 48
+        #expect(int32(bytes, at: glassObjectOffset + 24) == 0)
+        #expect(int32(bytes, at: glassObjectOffset + 28) == 5)
+        let glassMaterialOffset = materialOffset + 5 * 64
+        #expect(abs(float32(bytes, at: glassMaterialOffset) - 0.98) < 0.0001)
+        #expect(abs(float32(bytes, at: glassMaterialOffset + 4) - 0.99) < 0.0001)
+        #expect(float32(bytes, at: glassMaterialOffset + 8) == 1.0)
+        #expect(int32(bytes, at: glassMaterialOffset + 28) == 0)
+        #expect(float32(bytes, at: glassMaterialOffset + 48) == 0.0)
+        #expect(float32(bytes, at: glassMaterialOffset + 52) == 0.0)
+        #expect(float32(bytes, at: glassMaterialOffset + 56) == 1.5)
+        #expect(float32(bytes, at: glassMaterialOffset + 60) == 1.0)
     }
 
 }

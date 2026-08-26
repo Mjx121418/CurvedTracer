@@ -457,12 +457,14 @@ static TraceResult tracePathSample(
             result.errorBits |= 32u;
             break;
         }
-        if (mdot(normal, -hit.tangent) < 0.0f)
+        bool frontFace = mdot(normal, -hit.tangent) >= 0.0f;
+        if (!frontFace)
             normal = -normal;
 
         int bsdfModel = resolveBSDFModel(material, object.responseKind);
         if (bsdfModel != BSDF_MODEL_LAMBERTIAN &&
-            bsdfModel != BSDF_MODEL_DELTA_REFLECTION) {
+            bsdfModel != BSDF_MODEL_DELTA_REFLECTION &&
+            bsdfModel != BSDF_MODEL_DELTA_DIELECTRIC) {
             result.errorBits |= 1u;
             break;
         }
@@ -470,12 +472,13 @@ static TraceResult tracePathSample(
         bool hasBSDFSample = depth < maxBounces;
         BSDFSample bsdfSample{};
         if (hasBSDFSample) {
-            float2 randomSample = bsdfModel == BSDF_MODEL_LAMBERTIAN
-            ? float2(photoRandom(randomState), photoRandom(randomState))
-            : float2(0);
+            float2 randomSample =
+            bsdfModel == BSDF_MODEL_DELTA_REFLECTION
+            ? float2(0)
+            : float2(photoRandom(randomState), photoRandom(randomState));
             bsdfSample = sampleBSDF(
                 material, object.responseKind, hit.point, hit.tangent,
-                normal, randomSample);
+                normal, frontFace, randomSample);
             if (!bsdfSample.valid) {
                 result.errorBits |= 4u;
                 break;

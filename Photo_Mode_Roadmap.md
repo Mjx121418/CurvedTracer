@@ -374,10 +374,15 @@ their BSDF independently of the object's legacy response: metallic one with
 zero roughness is an ideal conductor, while metallic zero with zero
 transmission is Lambertian. The path-tracing-room mirror balls exercise this
 dispatch while authored as opaque objects. Real-time and Photo Mode share the
-selection, Lambertian evaluation/PDF/sampling, and ideal-conductor delta
-sampling. Unsupported mixed-metal, rough-conductor, and transmissive packets
-produce a diagnostic instead of silently rendering as diffuse. Glass, GGX,
-and emissive-surface behavior remain to be implemented.
+selection, Lambertian evaluation/PDF/sampling, ideal-conductor delta sampling,
+and smooth ideal-dielectric sampling. Ideal glass uses exact Fresnel lobe
+probabilities, Snell refraction, total internal reflection, and relative-IOR
+radiance scaling in the local tangent space. A glass ball in each path-tracing
+room exercises entry and exit in R³, S³, and H³. The current dielectric model
+assumes air outside a closed outward-oriented object and does not support
+nested media. Partial transmission, mixed metal, and rough packets produce a
+diagnostic instead of silently rendering as diffuse. Rough dielectric GGX,
+rough conductor GGX, and emissive-surface behavior remain to be implemented.
 
 Once diffuse GI, mirrors, point lights, area lights, and MIS are stable, evolve
 the material contract toward:
@@ -393,7 +398,8 @@ emission
 
 Recommended order:
 
-1. ideal dielectric glass;
+1. ideal dielectric glass (implemented for smooth, fully transmissive closed
+   objects);
 2. rough dielectric GGX;
 3. rough conductor GGX; and
 4. emissive materials.

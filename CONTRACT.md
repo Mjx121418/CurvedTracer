@@ -189,6 +189,12 @@ reports the matching solid-angle PDF for MIS. Real-time mode directly evaluates
 the same lobe under the scene lights and uses the material color as an indirect
 specular ambient approximation.
 
+Opaque dielectric layers are two-sided coatings. After orienting the shading
+normal toward the incident side, both faces evaluate Fresnel as air-to-material
+and therefore have identical reflection properties. Only transmissive
+dielectrics distinguish entering from exiting and swap their incident and
+transmitted IORs.
+
 A material with metallic zero and transmission one is dielectric glass.
 Roughness zero selects the ideal interface; positive roughness selects an
 isotropic GGX microfacet dielectric. Both use exact unpolarized Fresnel, Snell

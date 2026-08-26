@@ -370,14 +370,11 @@ static float dielectricFresnel(
 
 static float opaqueDielectricSpecularProbability(
     MaterialGPU material,
-    float incomingCosine,
-    bool frontFace
+    float incomingCosine
 ) {
-    float incidentIOR = frontFace ? 1.0f : material.ior;
-    float transmittedIOR = frontFace ? material.ior : 1.0f;
     float ignoredTransmittedCosine = 0.0f;
     float fresnel = dielectricFresnel(
-        incomingCosine, incidentIOR, transmittedIOR,
+        incomingCosine, 1.0f, material.ior,
         ignoredTransmittedCosine);
     return clamp(fresnel, 0.05f, 0.95f);
 }
@@ -445,17 +442,15 @@ static BSDFEvaluation evaluateBSDF(
         if (halfCosine <= 0.0f || incomingHalfCosine <= 0.0f)
             return evaluation;
 
-        float incidentIOR = frontFace ? 1.0f : material.ior;
-        float transmittedIOR = frontFace ? material.ior : 1.0f;
         float ignoredTransmittedCosine = 0.0f;
         float microfacetFresnel = dielectricFresnel(
-            incomingHalfCosine, incidentIOR, transmittedIOR,
+            incomingHalfCosine, 1.0f, material.ior,
             ignoredTransmittedCosine);
         float incomingFresnel = dielectricFresnel(
-            incomingCosine, incidentIOR, transmittedIOR,
+            incomingCosine, 1.0f, material.ior,
             ignoredTransmittedCosine);
         float outgoingFresnel = dielectricFresnel(
-            outgoingCosine, incidentIOR, transmittedIOR,
+            outgoingCosine, 1.0f, material.ior,
             ignoredTransmittedCosine);
         float alpha = ggxAlpha(material);
         float distribution = ggxDistribution(halfCosine, alpha);
@@ -472,7 +467,7 @@ static BSDFEvaluation evaluateBSDF(
         evaluation.value = specular + diffuse;
 
         float specularProbability = opaqueDielectricSpecularProbability(
-            material, incomingCosine, frontFace);
+            material, incomingCosine);
         float specularPDF = distribution * incomingMasking /
         max(4.0f * incomingCosine, EPS);
         float diffusePDF = outgoingCosine * inversePi;
@@ -740,7 +735,7 @@ static BSDFSample sampleBSDF(
             return sample;
         }
         float specularProbability = opaqueDielectricSpecularProbability(
-            material, incomingCosine, frontFace);
+            material, incomingCosine);
         if (randomSample.z < specularProbability) {
             float4 microfacetNormal;
             if (!sampleGGXVisibleNormal(

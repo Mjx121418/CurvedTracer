@@ -26,15 +26,14 @@ Keep reusable shader code separate from the two entry points:
 
 ```text
 Shaders/
-    TraceShared.metalh
-        packet records and validation
-        decoded scene view
-        constant-curvature metric helpers
-        primitive intersections
-        nearest-event queries
-        portal traversal
-        camera-ray construction
-        shared diagnostics
+    TraceShared.metal               include hub
+    TraceTypes.metal                packet records and shared diagnostics
+    TraceMath.metal                 constant-curvature ray and frame helpers
+    TraceBSDF.metal                 material evaluation and sampling
+    TraceIntersection.metal         primitive, portal, and visibility queries
+    TraceLighting.metal              direct lighting and fog
+    TracePacket.metal                packet validation and camera rays
+    TracePath.metal                 deterministic path-tracing helpers
 
     tracer.metal
         deterministic real-time integrator and raytrace kernel

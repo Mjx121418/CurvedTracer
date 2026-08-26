@@ -1,4 +1,4 @@
-#include "TraceShared.metalh"
+#include "TraceShared.metal"
 
 struct FrameGPU {
     uint sampleIndex;

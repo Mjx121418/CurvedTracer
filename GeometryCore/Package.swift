@@ -11,7 +11,13 @@ let package = Package(
         .target(
             name: "GeometryCore",
             path: "Sources",
-            sources: ["src/Isometry.cpp", "src/Chart.cpp"],
+            sources: [
+                "src/Isometry.cpp",
+                "src/Chart.cpp",
+                "src/ChartMaterials.cpp",
+                "src/ChartPortals.cpp",
+                "src/ChartPacket.cpp",
+            ],
             publicHeadersPath: "include",
             cxxSettings: [
                 .unsafeFlags(["-std=c++17"])

@@ -1,0 +1,199 @@
+//
+//  RendererTypes.swift
+//  CurvedTracer
+//
+
+import AppKit
+import Combine
+import Darwin
+import GeometryCore
+import MetalFX
+import MetalKit
+import SwiftUI
+
+enum AmbientSpace: String, CaseIterable, Identifiable {
+    case sphere = "S^3"
+    case hyperbolic = "H^3"
+    case euclidean = "R^3"
+
+    var id: Self { self }
+}
+
+enum TraversalMode: String, CaseIterable, Identifiable {
+    case flat = "Flat CPU"
+    case atlas = "GPU Atlas"
+    var id: Self { self }
+}
+
+enum RenderingMode: Equatable {
+    case realtime
+    case photo
+}
+
+struct PhotoModeState: Equatable {
+    private(set) var renderingMode: RenderingMode = .realtime
+    private(set) var sampleIndex: UInt32 = 0
+
+    mutating func enter() {
+        renderingMode = .photo
+        sampleIndex = 0
+    }
+
+    mutating func exit() {
+        renderingMode = .realtime
+        sampleIndex = 0
+    }
+
+    mutating func recordSubmittedSample() {
+        guard renderingMode == .photo, sampleIndex < UInt32.max else { return }
+        sampleIndex += 1
+    }
+}
+
+enum HyperbolicAtlasVariant: String, CaseIterable, Identifiable {
+    case oneChart = "Seifert-Weber (1 chart)"
+    case multiChart = "Seifert-Weber (14-state atlas)"
+
+    var id: Self { self }
+}
+
+enum EuclideanFlatSceneVariant: String, CaseIterable, Identifiable {
+    case objectDemo = "Object and mirror demo"
+    case pathTracingRoom = "Path tracing room"
+
+    var id: Self { self }
+}
+
+enum SphericalFlatSceneVariant: String, CaseIterable, Identifiable {
+    case cell600 = "600-cell (24 charts)"
+    case objectDemo = "Object and mirror demo"
+    case pathTracingRoom = "Path tracing room"
+    case primitiveGallery = "Primitive gallery"
+    case hopfFibration = "Hopf fibration"
+    case cliffordTorusConstruction = "Clifford torus construction"
+
+    var id: Self { self }
+}
+
+enum HyperbolicFlatSceneVariant: String, CaseIterable, Identifiable {
+    case honeycombCell = "{4,3,5} honeycomb cell"
+    case poincareBallDemo = "Poincaré-ball demo"
+    case pathTracingRoom = "Path tracing room"
+    case primitiveGallery = "Primitive gallery"
+
+    var id: Self { self }
+}
+
+struct PerformanceSnapshot {
+    var framesPerSecond: Double = 0
+    var frameMilliseconds: Double = 0
+    var gpuMilliseconds: Double = 0
+    var portalHopsPerRay: Double = 0
+    var compoundHopsPerRay: Double = 0
+    var portalTestsPerRay: Double = 0
+    var maximumPortalHops: UInt32 = 0
+    var hopLimitRays: UInt32 = 0
+}
+
+final class PerformanceStats: ObservableObject {
+    @Published private(set) var snapshot = PerformanceSnapshot()
+
+    private var frameInterval = 0.0
+    private var gpuDuration = 0.0
+    private var portalHopsPerRay = 0.0
+    private var compoundHopsPerRay = 0.0
+    private var portalTestsPerRay = 0.0
+    private var maximumPortalHops: UInt32 = 0
+    private var hopLimitRays: UInt32 = 0
+    private var lastFrameTime = 0.0
+    private var lastPublishTime = 0.0
+    private var hasTraceSample = false
+
+    private func smooth(_ current: Double, _ sample: Double, alpha: Double) -> Double {
+        current == 0 ? sample : current + alpha * (sample - current)
+    }
+
+    func recordFrame(at time: Double) {
+        if lastFrameTime > 0 {
+            frameInterval = smooth(frameInterval, time - lastFrameTime, alpha: 0.1)
+        }
+        lastFrameTime = time
+
+        guard time - lastPublishTime >= 0.25 else { return }
+        lastPublishTime = time
+        snapshot = PerformanceSnapshot(
+            framesPerSecond: frameInterval > 0 ? 1 / frameInterval : 0,
+            frameMilliseconds: frameInterval * 1_000,
+            gpuMilliseconds: gpuDuration * 1_000,
+            portalHopsPerRay: portalHopsPerRay,
+            compoundHopsPerRay: compoundHopsPerRay,
+            portalTestsPerRay: portalTestsPerRay,
+            maximumPortalHops: maximumPortalHops,
+            hopLimitRays: hopLimitRays)
+    }
+
+    func recordGPUTime(seconds: Double) {
+        guard seconds > 0, seconds.isFinite else { return }
+        gpuDuration = smooth(gpuDuration, seconds, alpha: 0.1)
+    }
+
+    func recordTrace(
+        rayCount: UInt32,
+        portalHops: UInt32,
+        compoundHops: UInt32,
+        maximumHops: UInt32,
+        hopLimitRays: UInt32,
+        portalTests: UInt32
+    ) {
+        guard rayCount > 0 else { return }
+        let rays = Double(rayCount)
+        let alpha = hasTraceSample ? 0.15 : 1.0
+        portalHopsPerRay = smooth(
+            portalHopsPerRay, Double(portalHops) / rays, alpha: alpha)
+        compoundHopsPerRay = smooth(
+            compoundHopsPerRay, Double(compoundHops) / rays, alpha: alpha)
+        portalTestsPerRay = smooth(
+            portalTestsPerRay, Double(portalTests) / rays, alpha: alpha)
+        maximumPortalHops = maximumHops
+        self.hopLimitRays = hopLimitRays
+        hasTraceSample = true
+    }
+}
+
+struct RenderResolution: Equatable {
+    let width: Int
+    let height: Int
+
+    static let hd720 = RenderResolution(width: 1280, height: 720)
+
+    init(width: Int, height: Int) {
+        precondition(
+            Self.isValid(width: width, height: height),
+            "render resolution dimensions must be positive")
+        self.width = width
+        self.height = height
+    }
+
+    static func isValid(width: Int, height: Int) -> Bool {
+        width > 0 && height > 0
+    }
+
+    var aspectRatio: CGFloat {
+        CGFloat(width) / CGFloat(height)
+    }
+
+    func isSpatialUpscaleTarget(
+        width outputWidth: Int,
+        height outputHeight: Int
+    ) -> Bool {
+        guard outputWidth >= width, outputHeight >= height,
+              outputWidth > width || outputHeight > height
+        else {
+            return false
+        }
+        // MetalFX spatial scaling does not preserve aspect ratio itself. Allow
+        // at most one pixel of rounding error in an otherwise matching target.
+        let crossProductError = abs(outputWidth * height - outputHeight * width)
+        return crossProductError <= max(width, height)
+    }
+}

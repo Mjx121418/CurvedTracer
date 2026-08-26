@@ -367,14 +367,15 @@ This stage is the first expected GeometryCore packet-contract revision.
 
 ## Milestone I — Physical materials
 
-Status: the version-13 packet now carries base color, emission, roughness,
-metallic, IOR, and transmission. A transitional compatibility marker and
-legacy-specular field preserve existing scenes. Physical materials now select
-their BSDF independently of the object's legacy response: metallic one with
-zero roughness is an ideal conductor, while metallic zero with zero
-transmission is Lambertian. The path-tracing-room mirror balls exercise this
-dispatch while authored as opaque objects. Real-time and Photo Mode share the
-selection, Lambertian evaluation/PDF/sampling, ideal-conductor delta sampling,
+Status: complete for the supported endpoint materials. The version-13 packet
+now carries base color, emission, roughness, metallic, IOR, and transmission. A
+transitional compatibility marker and legacy-specular field preserve existing
+scenes. Physical materials now select their BSDF independently of the object's
+legacy response: metallic one with zero roughness is an ideal conductor, while
+metallic zero with zero transmission is Lambertian. The path-tracing-room
+mirror balls exercise this dispatch while authored as opaque objects.
+Real-time and Photo Mode share the selection, Lambertian
+evaluation/PDF/sampling, ideal-conductor delta sampling,
 smooth ideal-dielectric sampling, isotropic rough-conductor GGX, and isotropic
 rough-dielectric GGX. The GGX lobes use Trowbridge–Reitz normals, separable
 Smith masking-shadowing, visible-normal sampling, and matching MIS PDFs.
@@ -390,7 +391,11 @@ space. A glass ball in each path-tracing room exercises entry and exit. The
 current dielectric model assumes air outside a closed outward-oriented object
 and does not support nested media. Partial transmission and intermediate
 metallicity produce a diagnostic instead of silently rendering as diffuse.
-Emissive-surface behavior remains to be implemented.
+Two-sided physical emission contributes whenever a path reaches a surface;
+small orange emitters in all three path-tracing rooms validate direct camera
+hits and reflected hits. Arbitrary emissive surfaces are not automatically
+registered for next-event sampling, so explicit light records remain the
+efficient way to illuminate other objects.
 
 Once diffuse GI, mirrors, point lights, area lights, and MIS are stable, evolve
 the material contract toward:
@@ -411,7 +416,7 @@ Recommended order:
 2. rough conductor GGX (implemented for fully metallic reflection);
 3. rough dielectric GGX (implemented for transmissive glass and opaque
    dielectric layering); and
-4. emissive materials.
+4. emissive materials (implemented as emission-on-hit).
 
 Local BSDF evaluation remains in the Euclidean tangent space for all three
 ambient geometries.

@@ -93,6 +93,13 @@ struct MaterialGPU {
     float ior;
     float transmission;
 };
+
+static float3 materialEmission(MaterialGPU material) {
+    if (material.compatibilityKind != MATERIAL_PHYSICAL)
+        return float3(0);
+    return max(float3(material.emission), 0.0f);
+}
+
 struct LightGPU {
     float4 position;
     packed_float3 color;
@@ -327,6 +334,15 @@ static int resolveBSDFModel(MaterialGPU material, int responseKind) {
         return material.roughness <= EPS
         ? BSDF_MODEL_LAMBERTIAN : BSDF_MODEL_GGX_OPAQUE_DIELECTRIC;
     return BSDF_MODEL_UNSUPPORTED;
+}
+
+static bool isSupportedBSDFModel(int model) {
+    return model == BSDF_MODEL_LAMBERTIAN ||
+    model == BSDF_MODEL_DELTA_REFLECTION ||
+    model == BSDF_MODEL_DELTA_DIELECTRIC ||
+    model == BSDF_MODEL_GGX_CONDUCTOR ||
+    model == BSDF_MODEL_GGX_DIELECTRIC ||
+    model == BSDF_MODEL_GGX_OPAQUE_DIELECTRIC;
 }
 
 static float ggxAlpha(MaterialGPU material) {
@@ -1772,6 +1788,11 @@ static TraceResult traceDeterministicSample(
         }
         MaterialGPU m = materials[o.colorIdx];
         int bsdfModel = resolveBSDFModel(m, o.responseKind);
+        if (!isSupportedBSDFModel(bsdfModel)) {
+            error |= 1u;
+            break;
+        }
+        radiance += throughput * materialEmission(m);
         if (bsdfModel == BSDF_MODEL_LAMBERTIAN ||
             bsdfModel == BSDF_MODEL_GGX_CONDUCTOR ||
             bsdfModel == BSDF_MODEL_GGX_OPAQUE_DIELECTRIC) {
@@ -1797,13 +1818,6 @@ static TraceResult traceDeterministicSample(
                                secondaryPortalHops, compoundPortalHops,
                                portalTests, hitHopLimit);
         }
-        if (bsdfModel != BSDF_MODEL_DELTA_REFLECTION &&
-            bsdfModel != BSDF_MODEL_DELTA_DIELECTRIC &&
-            bsdfModel != BSDF_MODEL_GGX_DIELECTRIC) {
-            error |= 1u;
-            break;
-        }
-
         if (bounce == maxBounces) {
             if (m.compatibilityKind == MATERIAL_LEGACY)
                 radiance += throughput * m.baseColor.rgb;

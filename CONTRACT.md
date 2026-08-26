@@ -214,7 +214,11 @@ Lambertian or delta reflection from the object response and remain subject to
 the legacy bounce-attenuation
 control. Physical specular continuations are energy conserving and do not
 apply that empirical attenuation. The interface and tangent-frame construction
-are common to R³, S³, and H³; emission and the remaining rough/mixed cases are
+are common to R³, S³, and H³. Physical emission is two-sided and is added as
+outgoing radiance whenever either tracer reaches the surface, after applying
+the current path throughput. Emission does not implicitly create a light
+record or a visibility ray; explicit point and spherical lights remain the
+efficient direct-light sampling mechanism. The remaining rough/mixed cases are
 reserved for later stages.
 
 Real-time and Photo Mode use the same nonnegative exposure multiplier and

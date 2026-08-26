@@ -45,6 +45,33 @@ struct CurvedTracerTests {
         return float32(bytes, at: lightOffset + 28)
     }
 
+    private func materialOffset(_ bytes: [UInt8], index: Int) -> Int {
+        let chartCount = Int(int32(bytes, at: 160))
+        let portalCount = Int(int32(bytes, at: 164))
+        let objectCount = Int(int32(bytes, at: 168))
+        let materialCount = Int(int32(bytes, at: 172))
+        let quadricCount = Int(int32(bytes, at: 180))
+        let clipCount = Int(int32(bytes, at: 184))
+        #expect(index >= 0 && index < materialCount)
+        return 192
+            + chartCount * 32
+            + portalCount * 96
+            + objectCount * 48
+            + quadricCount * 64
+            + clipCount * 32
+            + index * 64
+    }
+
+    private func objectUsesMaterial(_ bytes: [UInt8], material: Int32) -> Bool {
+        let chartCount = Int(int32(bytes, at: 160))
+        let portalCount = Int(int32(bytes, at: 164))
+        let objectCount = Int(int32(bytes, at: 168))
+        let firstObject = 192 + chartCount * 32 + portalCount * 96
+        return (0..<objectCount).contains {
+            int32(bytes, at: firstObject + $0 * 48 + 28) == material
+        }
+    }
+
     private func matrix(_ bytes: [UInt8], at offset: Int) -> [Float] {
         (0..<16).map { float32(bytes, at: offset + $0 * 4) }
     }
@@ -196,6 +223,25 @@ struct CurvedTracerTests {
         #expect(
             abs(firstLightIntensity([UInt8](atlas.packetBytes())) - 100)
                 < 0.0001)
+    }
+
+    @Test func pathTracingRoomsEncodeEmissiveSurfaceMaterials() {
+        var atlas = geo.Atlas()
+        let builders: [(inout geo.Atlas) -> Int32] = [
+            EuclideanScene.pathTracingRoom,
+            SphericalScene.pathTracingRoom,
+            HyperbolicScene.pathTracingRoom,
+        ]
+        for build in builders {
+            _ = build(&atlas)
+            let bytes = [UInt8](atlas.packetBytes())
+            #expect(int32(bytes, at: 172) == 8)
+            let emitter = materialOffset(bytes, index: 7)
+            #expect(abs(float32(bytes, at: emitter + 16) - 8) < 0.0001)
+            #expect(abs(float32(bytes, at: emitter + 20) - 2) < 0.0001)
+            #expect(abs(float32(bytes, at: emitter + 24) - 0.25) < 0.0001)
+            #expect(objectUsesMaterial(bytes, material: 7))
+        }
     }
 
     @Test func hopfFibrationUsesDodecahedralFiberTubes() {

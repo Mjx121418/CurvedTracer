@@ -54,6 +54,9 @@ enum EuclideanScene {
         let roughMetal = atlas.addPhysicalMaterial(
             geo.vec4(0.95, 0.64, 0.2, 1), 0.32, 1, 1.5, 0,
             geo.vec3(0, 0, 0))
+        let emitter = atlas.addPhysicalMaterial(
+            geo.vec4(0, 0, 0, 1), 0, 0, 1.5, 0,
+            geo.vec3(8, 2, 0.25))
 
         // A closed diffuse room makes the black Photo Mode environment
         // explicit and provides colored walls for validating indirect light.
@@ -70,6 +73,8 @@ enum EuclideanScene {
             0, geo.vec4(0, -0.68, -0.35, 1), 0.22, roughGlass, 0)
         _ = atlas.addBallSurface(
             0, geo.vec4(0.62, -0.74, -0.32, 1), 0.18, roughMetal, 0)
+        _ = atlas.addBallSurface(
+            0, geo.vec4(-0.58, 0.45, 0.18, 1), 0.1, emitter, 0)
         _ = atlas.addSphericalAreaLight(
             0, geo.vec4(0, 0.72, -0.25, 1), 0.12,
             geo.vec3(1, 0.92, 0.78), 100)

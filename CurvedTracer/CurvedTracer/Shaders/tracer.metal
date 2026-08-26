@@ -464,15 +464,11 @@ static TraceResult tracePathSample(
             normal = -normal;
 
         int bsdfModel = resolveBSDFModel(material, object.responseKind);
-        if (bsdfModel != BSDF_MODEL_LAMBERTIAN &&
-            bsdfModel != BSDF_MODEL_DELTA_REFLECTION &&
-            bsdfModel != BSDF_MODEL_DELTA_DIELECTRIC &&
-            bsdfModel != BSDF_MODEL_GGX_CONDUCTOR &&
-            bsdfModel != BSDF_MODEL_GGX_DIELECTRIC &&
-            bsdfModel != BSDF_MODEL_GGX_OPAQUE_DIELECTRIC) {
+        if (!isSupportedBSDFModel(bsdfModel)) {
             result.errorBits |= 1u;
             break;
         }
+        radiance += throughput * materialEmission(material);
 
         bool hasBSDFSample = depth < maxBounces;
         BSDFSample bsdfSample{};

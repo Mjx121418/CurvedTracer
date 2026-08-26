@@ -356,6 +356,9 @@ enum SphericalScene {
         let roughMetal = atlas.addPhysicalMaterial(
             geo.vec4(0.95, 0.64, 0.2, 1), 0.32, 1, 1.5, 0,
             geo.vec3(0, 0, 0))
+        let emitter = atlas.addPhysicalMaterial(
+            geo.vec4(0, 0, 0, 1), 0, 0, 1.5, 0,
+            geo.vec3(8, 2, 0.25))
 
         _ = atlas.addPlane(0, geo.vec3(1, 0, 0), -0.3, red, 0)
         _ = atlas.addPlane(0, geo.vec3(-1, 0, 0), -0.3, green, 0)
@@ -375,6 +378,9 @@ enum SphericalScene {
         _ = atlas.addBallSurface(
             0, atlas.pointFromOriginTangent(geo.vec3(0.186, -0.222, -0.096)),
             0.054, roughMetal, 0)
+        _ = atlas.addBallSurface(
+            0, atlas.pointFromOriginTangent(geo.vec3(-0.174, 0.135, 0.054)),
+            0.03, emitter, 0)
         _ = atlas.addSphericalAreaLight(
             0, atlas.pointFromOriginTangent(geo.vec3(0, 0.216, -0.075)),
             0.036, geo.vec3(1, 0.92, 0.78), 100)

@@ -125,14 +125,17 @@ weights. Materials authored by `addPhysicalMaterial` have
 `GEO_MATERIAL_PHYSICAL` compatibility and select their BSDF independently of
 the object's legacy response field. The latter operation validates unit-range
 base color, roughness, metallic, and transmission; finite `IOR >= 1`; and
-nonnegative finite emission.
+nonnegative finite emission. All application-owned scenes use physical
+materials; `addMaterial` and the legacy response behavior remain available only
+as a source- and packet-compatibility boundary for external callers and tests.
 
 Despite its source-compatible name, `PointLight` is the common light record.
 It stores position, color, intensity, intrinsic radius, and light kind. A point
 light has kind `GEO_LIGHT_POINT`, radius zero, and retains the legacy empirical
 falloff control. Both render modes apply the Lambertian `albedo/π` response to
-point-light irradiance. Legacy application scenes multiply their authored
-point-light intensities by π to preserve their original linear illumination.
+point-light irradiance. Catalog preview scenes retain π-scaled point-light
+intensities to preserve their original linear illumination after this
+normalization.
 A spherical emitter has kind `GEO_LIGHT_SPHERE`, positive intrinsic radius,
 and interprets `color * intensity` as emitted radiance. The emitter must fit
 inside its authored chart.

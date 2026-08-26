@@ -3,7 +3,31 @@ import GeometryCore
 
 enum SphericalScene {
     // Preserve the original previews after normalizing point-light shading by 1/π.
-    private static let legacyPointLightScale = Float.pi
+    private static let previewPointLightScale = Float.pi
+
+    private static func addPreviewMaterial(
+        _ atlas: inout geo.Atlas,
+        _ color: geo.vec4
+    ) -> Int32 {
+        atlas.addPhysicalMaterial(
+            color, 0.5, 0, 1.5, 0, geo.vec3(0, 0, 0))
+    }
+
+    private static func addLambertianMaterial(
+        _ atlas: inout geo.Atlas,
+        _ color: geo.vec4
+    ) -> Int32 {
+        atlas.addPhysicalMaterial(
+            color, 0, 0, 1.5, 0, geo.vec3(0, 0, 0))
+    }
+
+    private static func addMirrorMaterial(
+        _ atlas: inout geo.Atlas,
+        _ color: geo.vec4
+    ) -> Int32 {
+        atlas.addPhysicalMaterial(
+            color, 0, 1, 1.5, 0, geo.vec3(0, 0, 0))
+    }
 
     private static let lensFaceDistance = Float.pi / 5
     private static let lensChartRadius = Float.pi / 2 + 0.13
@@ -296,9 +320,8 @@ enum SphericalScene {
             geo.vec4(0.95, 0.12, 0.08, 1), geo.vec4(0.10, 0.65, 1, 1),
             geo.vec4(0.96, 0.72, 0.10, 1), geo.vec4(0.42, 0.90, 0.32, 1),
         ]
-        for color in colors { _ = atlas.addMaterial(color, geo.vec4(0.3, 0.3, 0.3, 1)) }
-        // Mirrors keep a visible cyan tint while retaining a strong reflection.
-        _ = atlas.addMaterial(geo.vec4(0.0, 0.8, 0.9, 1), geo.vec4(0.45, 0.95, 1.0, 0.9))
+        for color in colors { _ = addPreviewMaterial(&atlas, color) }
+        _ = addMirrorMaterial(&atlas, geo.vec4(0.405, 0.855, 0.9, 1))
 
         // A deterministic, asymmetric sample of the 600-cell directions.
         let phi: Float = (1 + sqrt(5)) / 2
@@ -313,13 +336,13 @@ enum SphericalScene {
             let p = atlas.pointFromOriginTangent(geo.vec3(d.x, d.y, d.z))
             _ = atlas.addBall(0, p, 0.11 + 0.015 * Float(index % 2), Int32(index % 4))
         }
-        _ = atlas.addMirrorPlane(0, geo.vec3(0, -1, 0), 1.25, 4)
+        _ = atlas.addPlane(0, geo.vec3(0, -1, 0), 1.25, 4, 0)
         _ = atlas.addLight(
             0, atlas.pointFromOriginTangent(geo.vec3(-0.4, 0.25, -0.15)),
-            geo.vec3(1, 0.92, 0.74), legacyPointLightScale)
+            geo.vec3(1, 0.92, 0.74), previewPointLightScale)
         _ = atlas.addLight(
             0, atlas.pointFromOriginTangent(geo.vec3(0.3, -0.1, 0.5)),
-            geo.vec3(0.5, 0.7, 1), 0.55 * legacyPointLightScale)
+            geo.vec3(0.5, 0.7, 1), 0.55 * previewPointLightScale)
         atlas.setCamera(0.85, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0), geo.vec3(0, 0, 1))
         atlas.setControls(6, 0.05, 0.18, 0.92, 2, 0, 0.0)
     }
@@ -338,12 +361,12 @@ enum SphericalScene {
     @discardableResult static func pathTracingRoom(_ atlas: inout geo.Atlas) -> Int32 {
         atlas.start(1)
         _ = atlas.seed(1.0)
-        let white = atlas.addMaterial(
-            geo.vec4(0.78, 0.78, 0.78, 1), geo.vec4(0, 0, 0, 0))
-        let red = atlas.addMaterial(
-            geo.vec4(0.78, 0.08, 0.05, 1), geo.vec4(0, 0, 0, 0))
-        let green = atlas.addMaterial(
-            geo.vec4(0.08, 0.68, 0.12, 1), geo.vec4(0, 0, 0, 0))
+        let white = addLambertianMaterial(
+            &atlas, geo.vec4(0.78, 0.78, 0.78, 1))
+        let red = addLambertianMaterial(
+            &atlas, geo.vec4(0.78, 0.08, 0.05, 1))
+        let green = addLambertianMaterial(
+            &atlas, geo.vec4(0.08, 0.68, 0.12, 1))
         let blue = atlas.addPhysicalMaterial(
             geo.vec4(0.08, 0.28, 0.82, 1), 0.38, 0, 1.5, 0,
             geo.vec3(0, 0, 0))
@@ -402,15 +425,11 @@ enum SphericalScene {
         atlas.start(1)
         _ = atlas.seed(Float.pi * 0.94)
 
-        for (color, specular) in [
-            (geo.vec4(0.95, 0.18, 0.08, 1), geo.vec4(0.3, 0.3, 0.3, 1)),
-            (geo.vec4(0.12, 0.72, 1.0, 1), geo.vec4(0.3, 0.3, 0.3, 1)),
-            (geo.vec4(0.0, 0.8, 0.9, 1), geo.vec4(0.5, 0.95, 1.0, 0.88)),
-            (geo.vec4(1.0, 0.82, 0.12, 1), geo.vec4(0.45, 0.45, 0.45, 1)),
-            (geo.vec4(0.20, 0.92, 0.42, 1), geo.vec4(0.45, 0.45, 0.45, 1)),
-        ] {
-            _ = atlas.addMaterial(color, specular)
-        }
+        _ = addPreviewMaterial(&atlas, geo.vec4(0.95, 0.18, 0.08, 1))
+        _ = addPreviewMaterial(&atlas, geo.vec4(0.12, 0.72, 1.0, 1))
+        _ = addMirrorMaterial(&atlas, geo.vec4(0.44, 0.836, 0.88, 1))
+        _ = addPreviewMaterial(&atlas, geo.vec4(1.0, 0.82, 0.12, 1))
+        _ = addPreviewMaterial(&atlas, geo.vec4(0.20, 0.92, 0.42, 1))
 
         let truncatedBall = atlas.addBallSurface(
             0, atlas.pointFromOriginTangent(geo.vec3(0.48, -0.18, 0.22)),
@@ -435,7 +454,7 @@ enum SphericalScene {
             fatalError("invalid clipped S³ triangle")
         }
 
-        let mirrorPatch = atlas.addPlane(0, geo.vec3(0, -1, 0), 1.05, 2, 1)
+        let mirrorPatch = atlas.addPlane(0, geo.vec3(0, -1, 0), 1.05, 2, 0)
         if mirrorPatch < 0
             || atlas.addObjectClipPlane(mirrorPatch, geo.vec3(1, 0, 0), 0.65) < 0
             || atlas.addObjectClipPlane(mirrorPatch, geo.vec3(-1, 0, 0), 0.65) < 0
@@ -454,10 +473,10 @@ enum SphericalScene {
 
         _ = atlas.addLight(
             0, atlas.pointFromOriginTangent(geo.vec3(-0.35, 0.25, 0.15)),
-            geo.vec3(1, 0.92, 0.75), legacyPointLightScale)
+            geo.vec3(1, 0.92, 0.75), previewPointLightScale)
         _ = atlas.addLight(
             0, atlas.pointFromOriginTangent(geo.vec3(0.2, -0.15, 0.55)),
-            geo.vec3(0.45, 0.65, 1), 0.65 * legacyPointLightScale)
+            geo.vec3(0.45, 0.65, 1), 0.65 * previewPointLightScale)
         atlas.setCamera(
             0.82, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0),
             geo.vec3(0, 0, 1))
@@ -487,7 +506,7 @@ enum SphericalScene {
             geo.vec4(0.78, 0.22, 0.96, 1),
         ]
         for color in colors {
-            _ = atlas.addMaterial(color, geo.vec4(0.42, 0.42, 0.42, 1))
+            _ = addPreviewMaterial(&atlas, color)
         }
 
         let vertices = dodecahedronVertices()
@@ -508,10 +527,10 @@ enum SphericalScene {
 
         _ = atlas.addLight(
             0, atlas.pointFromOriginTangent(geo.vec3(-0.45, 0.30, 0.18)),
-            geo.vec3(1, 0.92, 0.75), legacyPointLightScale)
+            geo.vec3(1, 0.92, 0.75), previewPointLightScale)
         _ = atlas.addLight(
             0, atlas.pointFromOriginTangent(geo.vec3(0.32, -0.22, 0.48)),
-            geo.vec3(0.45, 0.68, 1), 0.7 * legacyPointLightScale)
+            geo.vec3(0.45, 0.68, 1), 0.7 * previewPointLightScale)
         let cameraPlacement = hopfFibrationCameraPlacement()
         let forward = cameraPlacement.centeredForward
         let right = geo.vec3(0, 0, 1)
@@ -545,14 +564,10 @@ enum SphericalScene {
         let antipodalChart = atlas.addChart(
             chartRadius, 0, antipodalMatrix, true)
         if antipodalChart != 1 { fatalError("invalid antipodal S³ chart") }
-        _ = atlas.addMaterial(
-            geo.vec4(0.95, 0.24, 0.10, 1), geo.vec4(0.35, 0.35, 0.35, 1))
-        _ = atlas.addMaterial(
-            geo.vec4(0.08, 0.62, 1.0, 1), geo.vec4(0.35, 0.35, 0.35, 1))
-        _ = atlas.addMaterial(
-            geo.vec4(1.0, 0.82, 0.12, 1), geo.vec4(0.45, 0.45, 0.45, 1))
-        _ = atlas.addMaterial(
-            geo.vec4(0.20, 0.92, 0.42, 1), geo.vec4(0.45, 0.45, 0.45, 1))
+        _ = addPreviewMaterial(&atlas, geo.vec4(0.95, 0.24, 0.10, 1))
+        _ = addPreviewMaterial(&atlas, geo.vec4(0.08, 0.62, 1.0, 1))
+        _ = addPreviewMaterial(&atlas, geo.vec4(1.0, 0.82, 0.12, 1))
+        _ = addPreviewMaterial(&atlas, geo.vec4(0.20, 0.92, 0.42, 1))
 
         // The symmetric matrix represents xz - yw = 0. This is an isometric
         // coordinate form of the usual x² + y² = z² + w² Clifford torus.
@@ -620,10 +635,10 @@ enum SphericalScene {
 
         _ = atlas.addLight(
             0, atlas.pointFromOriginTangent(geo.vec3(-0.42, 0.28, 0.20)),
-            geo.vec3(1, 0.92, 0.74), legacyPointLightScale)
+            geo.vec3(1, 0.92, 0.74), previewPointLightScale)
         _ = atlas.addLight(
             0, atlas.pointFromOriginTangent(geo.vec3(0.30, -0.18, 0.52)),
-            geo.vec3(0.45, 0.68, 1), 0.7 * legacyPointLightScale)
+            geo.vec3(0.45, 0.68, 1), 0.7 * previewPointLightScale)
         atlas.setCamera(
             0.82, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0),
             geo.vec3(0, 0, 1))
@@ -659,7 +674,7 @@ enum SphericalScene {
             geo.vec4(0, 1, 1, 1),
         ]
         for color in colors {
-            _ = atlas.addMaterial(color, geo.vec4(0.3, 0.3, 0.3, 1))
+            _ = addPreviewMaterial(&atlas, color)
         }
 
         let centers = make24CellVertices()
@@ -725,7 +740,7 @@ enum SphericalScene {
             if axisSum > 0.9, axisSum < 1.1, isPositiveBasis {
                 _ = atlas.addLight(
                     chartIDs[index], lightPosition, lightColor,
-                    legacyPointLightScale)
+                    previewPointLightScale)
             }
         }
 
@@ -754,12 +769,8 @@ enum SphericalScene {
         // ridge, including the portal collar.
         _ = atlas.seed(lensChartRadius)
 
-        _ = atlas.addMaterial(
-            geo.vec4(0.95, 0.12, 0.08, 1),
-            geo.vec4(0.30, 0.30, 0.30, 1))
-        _ = atlas.addMaterial(
-            geo.vec4(0.10, 0.65, 1.00, 1),
-            geo.vec4(0.30, 0.30, 0.30, 1))
+        _ = addPreviewMaterial(&atlas, geo.vec4(0.95, 0.12, 0.08, 1))
+        _ = addPreviewMaterial(&atlas, geo.vec4(0.10, 0.65, 1.00, 1))
 
         // Keep both balls well inside the lune while separating them enough
         // that their quotient copies make the face identification apparent.
@@ -772,7 +783,7 @@ enum SphericalScene {
             0,
             atlas.pointFromOriginTangent(geo.vec3(0.05, 0.28, 0.18)),
             geo.vec3(1.0, 0.92, 0.72),
-            0.8 * legacyPointLightScale)
+            0.8 * previewPointLightScale)
 
         let portal = atlas.addPortalPair(
             0, geo.vec3(1, 0, 0), lensFaceDistance,

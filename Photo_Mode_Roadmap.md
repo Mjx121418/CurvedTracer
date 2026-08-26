@@ -361,6 +361,16 @@ After this audit, add geodesic spherical area lights, soft shadows, and then
 multiple importance sampling. Do not add area lights first and repair their
 radiometry afterward.
 
+### Deferred emissive-geometry sampling
+
+Emission-on-hit does not make arbitrary geometry an efficient direct-light
+source. A later light-sampling extension should build a distribution over
+emissive objects, sample each supported primitive with its intrinsic area
+measure, convert its area PDF to solid angle, and combine it with BSDF sampling
+through the existing MIS interface. Keep this separate from material emission
+itself: it adds light-selection state and visibility rays, whereas visible
+emission is only a surface-hit term.
+
 This stage is the first expected GeometryCore packet-contract revision.
 
 ---
@@ -369,9 +379,10 @@ This stage is the first expected GeometryCore packet-contract revision.
 
 Status: complete for the supported endpoint materials. The version-13 packet
 now carries base color, emission, roughness, metallic, IOR, and transmission. A
-transitional compatibility marker and legacy-specular field preserve existing
-scenes. Physical materials now select their BSDF independently of the object's
-legacy response: metallic one with zero roughness is an ideal conductor, while
+transitional compatibility marker and legacy-specular field preserve external
+callers and packet tests. The application scene catalog now uses physical
+materials exclusively. Physical materials select their BSDF independently of
+the object's legacy response: metallic one with zero roughness is an ideal conductor, while
 metallic zero with zero transmission is Lambertian. The path-tracing-room
 mirror balls exercise this dispatch while authored as opaque objects.
 Real-time and Photo Mode share the selection, Lambertian
@@ -421,6 +432,34 @@ Recommended order:
 Local BSDF evaluation remains in the Euclidean tangent space for all three
 ambient geometries.
 
+### Deferred mixed materials
+
+Intermediate metallic values and partial transmission require explicit
+mixtures of diffuse, conductor, dielectric-reflection, and dielectric-
+transmission lobes. Add them only with matched evaluation, sampling, and PDFs;
+do not interpolate the existing endpoint results after sampling. The legacy
+scene catalog migration is complete, so this work can proceed later without
+conflating endpoint compatibility with new mixed-lobe behavior.
+
+### Deferred nested dielectric media
+
+Nested and overlapping transmissive objects require each path to carry its
+current medium and IOR history across reflection, refraction, and portal
+transport. Implement a bounded medium stack only after single-boundary glass
+and mixed transmission are stable. The stack must define behavior for malformed
+overlaps and stack overflow rather than assuming every back face returns to
+air.
+
+### Legacy material migration
+
+Status: application catalog migrated. Scene-authored diffuse, plastic, mirror,
+glass, conductor, and emissive surfaces now use explicit physical materials;
+mirror geometry carries the ordinary opaque response value because physical
+BSDF dispatch is material-driven. Preserve the legacy GeometryCore entry points
+temporarily as a packet-compatibility boundary for external callers and tests.
+After visual parity is checked, a separate contract revision may reserve or
+remove `compatibilityKind`, `legacySpecular`, and `responseKind`.
+
 ---
 
 ## Milestone J — Profiling and acceleration
@@ -442,7 +481,7 @@ divergence or intersection cost is demonstrated to be the limiting factor.
 
 Leave these features until the core renderer is correct and stable:
 
-- difficult caustics;
+- difficult specular and dielectric caustics, after nested-media tracking;
 - bidirectional path tracing or photon methods;
 - participating media;
 - spectral transport;

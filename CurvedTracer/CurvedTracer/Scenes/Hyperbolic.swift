@@ -3,7 +3,7 @@ import GeometryCore
 
 enum HyperbolicScene {
     // Preserve the original previews after normalizing point-light shading by 1/π.
-    private static let legacyPointLightScale = Float.pi
+    private static let previewPointLightScale = Float.pi
 
     private static func pointFromKlein(_ atlas: inout geo.Atlas, _ point: SIMD3<Float>) -> geo.vec4 {
         let magnitude = sqrt(point.x * point.x + point.y * point.y + point.z * point.z)
@@ -98,13 +98,23 @@ enum HyperbolicScene {
     }
 
     private static func addDiffuseMaterial(_ atlas: inout geo.Atlas, _ color: SIMD3<Float>) {
-        _ = atlas.addMaterial(
-            geo.vec4(color.x, color.y, color.z, 1), geo.vec4(0.3, 0.3, 0.3, 1))
+        _ = atlas.addPhysicalMaterial(
+            geo.vec4(color.x, color.y, color.z, 1), 0.5, 0, 1.5, 0,
+            geo.vec3(0, 0, 0))
+    }
+
+    private static func addLambertianMaterial(
+        _ atlas: inout geo.Atlas,
+        _ color: geo.vec4
+    ) -> Int32 {
+        atlas.addPhysicalMaterial(
+            color, 0, 0, 1.5, 0, geo.vec3(0, 0, 0))
     }
 
     private static func addMirrorMaterial(_ atlas: inout geo.Atlas) {
-        _ = atlas.addMaterial(
-            geo.vec4(0, 0.8, 0.9, 1), geo.vec4(0.45, 0.95, 1, 0.9))
+        _ = atlas.addPhysicalMaterial(
+            geo.vec4(0.405, 0.855, 0.9, 1), 0, 1, 1.5, 0,
+            geo.vec3(0, 0, 0))
     }
 
     private static func materials(_ atlas: inout geo.Atlas) {
@@ -135,15 +145,15 @@ enum HyperbolicScene {
         addPoincareBall(&atlas, center: [0, 0, -0.45], radius: 0.18, material: 7)
 
         let mirrorDistance = atanh(Float(0.35))
-        _ = atlas.addMirrorPlane(0, geo.vec3(0, -1, 0), mirrorDistance, 6)
-        _ = atlas.addMirrorPlane(0, geo.vec3(0, 1, 0), mirrorDistance, 6)
+        _ = atlas.addPlane(0, geo.vec3(0, -1, 0), mirrorDistance, 6, 0)
+        _ = atlas.addPlane(0, geo.vec3(0, 1, 0), mirrorDistance, 6, 0)
 
         _ = atlas.addLight(
             0, pointFromKlein(&atlas, [0.30, 0.20, 0.10]),
-            geo.vec3(1, 0.95, 0.80), legacyPointLightScale)
+            geo.vec3(1, 0.95, 0.80), previewPointLightScale)
         _ = atlas.addLight(
             0, pointFromKlein(&atlas, [-0.40, -0.20, 0.15]),
-            geo.vec3(0.60, 0.70, 1), 0.5 * legacyPointLightScale)
+            geo.vec3(0.60, 0.70, 1), 0.5 * previewPointLightScale)
 
         atlas.setCamera(1, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0), geo.vec3(0, 0, 1))
         atlas.setControls(6, 0.05, 0.25, 0.95, 2, 0, 0)
@@ -159,12 +169,12 @@ enum HyperbolicScene {
     @discardableResult static func pathTracingRoom(_ atlas: inout geo.Atlas) -> Int32 {
         atlas.start(0)
         _ = atlas.seed(1.0)
-        let white = atlas.addMaterial(
-            geo.vec4(0.78, 0.78, 0.78, 1), geo.vec4(0, 0, 0, 0))
-        let red = atlas.addMaterial(
-            geo.vec4(0.78, 0.08, 0.05, 1), geo.vec4(0, 0, 0, 0))
-        let green = atlas.addMaterial(
-            geo.vec4(0.08, 0.68, 0.12, 1), geo.vec4(0, 0, 0, 0))
+        let white = addLambertianMaterial(
+            &atlas, geo.vec4(0.78, 0.78, 0.78, 1))
+        let red = addLambertianMaterial(
+            &atlas, geo.vec4(0.78, 0.08, 0.05, 1))
+        let green = addLambertianMaterial(
+            &atlas, geo.vec4(0.08, 0.68, 0.12, 1))
         let blue = atlas.addPhysicalMaterial(
             geo.vec4(0.08, 0.28, 0.82, 1), 0.38, 0, 1.5, 0,
             geo.vec3(0, 0, 0))
@@ -264,7 +274,7 @@ enum HyperbolicScene {
         // A spacelike ambient normal with a nonzero level gives an
         // equidistant hypersurface rather than a totally geodesic plane.
         let mirrorPatch = atlas.addLinearSurface(
-            0, geo.vec4(0, -1, 0, 0), sinh(Float(0.95)), 3, 1)
+            0, geo.vec4(0, -1, 0, 0), sinh(Float(0.95)), 3, 0)
         if mirrorPatch < 0
             || atlas.addObjectClipPlane(mirrorPatch, geo.vec3(1, 0, 0), 0.65) < 0
             || atlas.addObjectClipPlane(mirrorPatch, geo.vec3(-1, 0, 0), 0.65) < 0
@@ -274,10 +284,10 @@ enum HyperbolicScene {
 
         _ = atlas.addLight(
             0, pointFromKlein(&atlas, [-0.25, 0.20, 0.12]),
-            geo.vec3(1, 0.92, 0.75), legacyPointLightScale)
+            geo.vec3(1, 0.92, 0.75), previewPointLightScale)
         _ = atlas.addLight(
             0, pointFromKlein(&atlas, [0.22, -0.12, 0.32]),
-            geo.vec3(0.48, 0.66, 1), 0.6 * legacyPointLightScale)
+            geo.vec3(0.48, 0.66, 1), 0.6 * previewPointLightScale)
         atlas.setCamera(
             0.82, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0),
             geo.vec3(0, 0, 1))
@@ -294,7 +304,9 @@ enum HyperbolicScene {
         _ = atlas.seed(intrinsicRadius(fromCompactAngle: Float.pi * 0.999 / 2))
 
         addDiffuseMaterial(&atlas, [1, 0, 0])
-        _ = atlas.addMaterial(geo.vec4(0.1, 0.1, 0.1, 1), geo.vec4(1.0, 1.0, 1.0, 1.0))
+        _ = atlas.addPhysicalMaterial(
+            geo.vec4(1, 1, 1, 1), 0, 1, 1.5, 0,
+            geo.vec3(0, 0, 0))
 
         // The central sphere was encoded by w = 1 / 0.98 in the previous
         // compact-chart scene.
@@ -309,7 +321,7 @@ enum HyperbolicScene {
             geo.vec3(0, 1, 0), geo.vec3(0, -1, 0),
             geo.vec3(0, 0, 1), geo.vec3(0, 0, -1),
         ] {
-            _ = atlas.addMirrorPlane(0, direction, faceDistance, 1)
+            _ = atlas.addPlane(0, direction, faceDistance, 1, 0)
         }
 
         let lightOffset: Float = 0.32
@@ -325,7 +337,7 @@ enum HyperbolicScene {
         ] {
             _ = atlas.addLight(
                 0, pointFromKlein(&atlas, position), color,
-                0.8 * legacyPointLightScale)
+                0.8 * previewPointLightScale)
         }
 
         atlas.setCamera(
@@ -372,7 +384,7 @@ enum HyperbolicScene {
         addPoincareBall(&atlas, center: [-0.20, 0.075, 0.13], radius: 0.10, material: 1)
         _ = atlas.addLight(
             0, pointFromKlein(&atlas, [0.10, -0.12, 0.18]),
-            geo.vec3(1, 0.92, 0.72), 0.75 * legacyPointLightScale)
+            geo.vec3(1, 0.92, 0.72), 0.75 * previewPointLightScale)
         atlas.setCamera(0.9, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0), geo.vec3(0, 0, 1))
         // Match the previous exponential-fog strength across the accumulated
         // intrinsic path, including every portal hop.
@@ -441,7 +453,7 @@ enum HyperbolicScene {
             _ = atlas.addLight(
                 chart, pointFromKlein(&atlas, [0.10, -0.12, 0.18]),
                 geo.vec3(1, 0.92, 0.72),
-                0.75 * legacyPointLightScale)
+                0.75 * previewPointLightScale)
         }
 
         atlas.setCamera(

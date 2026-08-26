@@ -1536,13 +1536,15 @@ static float3 shade(Event hit, ObjectGPU object, MaterialGPU material, int chart
                 // Point-light scenes are authored π brighter, while spherical
                 // preview attenuation above is converted to irradiance by π.
                 // Undo either factor for the legacy preview-only specular lobe.
-                float legacySpecularScale = inversePi;
-                float4 halfv = tangentNormalize(ld + view);
-                float specularCosine =
-                clamp(mdot(normal, halfv), 0.0f, 1.0f);
-                spec +=
-                irradiance * pow(specularCosine, 32.0f) * nd *
-                legacySpecularScale;
+                if (material.compatibilityKind == MATERIAL_LEGACY) {
+                    float legacySpecularScale = inversePi;
+                    float4 halfv = tangentNormalize(ld + view);
+                    float specularCosine =
+                    clamp(mdot(normal, halfv), 0.0f, 1.0f);
+                    spec +=
+                    irradiance * pow(specularCosine, 32.0f) * nd *
+                    legacySpecularScale;
+                }
             }
             nextPortal[depth] = 0;
         }

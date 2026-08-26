@@ -158,7 +158,7 @@ struct CurvedTracerTests {
         #expect(stats.snapshot.hopLimitRays == 1)
     }
 
-    @Test func allSpaceTraversalScenesBuildV13Packets() {
+    @Test func allSpaceTraversalScenesBuildV13PhysicalMaterialPackets() {
         #expect(AmbientSpace.allCases.count == 3)
         #expect(TraversalMode.allCases.count == 2)
         #expect(EuclideanFlatSceneVariant.allCases.count == 2)
@@ -182,8 +182,21 @@ struct CurvedTracerTests {
         ]
         for build in builders {
             _ = build(&atlas)
+            let bytes = [UInt8](atlas.packetBytes())
             #expect(atlas.packetSize() >= 192)
-            #expect(int32([UInt8](atlas.packetBytes()), at: 4) == 13)
+            #expect(int32(bytes, at: 4) == 13)
+            let chartCount = Int(int32(bytes, at: 160))
+            let portalCount = Int(int32(bytes, at: 164))
+            let objectCount = Int(int32(bytes, at: 168))
+            let firstObject = 192 + chartCount * 32 + portalCount * 96
+            for object in 0..<objectCount {
+                #expect(int32(bytes, at: firstObject + object * 48 + 24) == 0)
+            }
+            let materialCount = Int(int32(bytes, at: 172))
+            for material in 0..<materialCount {
+                let offset = materialOffset(bytes, index: material)
+                #expect(int32(bytes, at: offset + 28) == 0)
+            }
         }
     }
 
@@ -212,7 +225,7 @@ struct CurvedTracerTests {
         #expect(int32(bytes, at: 184) == 10)
     }
 
-    @Test func legacyPointLightsCompensateLambertianNormalization() {
+    @Test func catalogPointLightsCompensateLambertianNormalization() {
         var atlas = geo.Atlas()
         _ = EuclideanScene.finite(&atlas)
         #expect(
@@ -501,7 +514,7 @@ struct CurvedTracerTests {
         #expect(abs(float32(bytes, at: 88) - Float.pi * 0.9) < 0.0001)
     }
 
-    @Test func mirrorTintAndAtlasFogAreEncodedInScenePackets() {
+    @Test func physicalMirrorTintAndAtlasFogAreEncodedInScenePackets() {
         var atlas = geo.Atlas()
 
         _ = HyperbolicScene.poincareBallDemo(&atlas)
@@ -517,10 +530,12 @@ struct CurvedTracerTests {
         let materialOffset = 192 + chartCount * 32 + portalCount * 96
             + objectCount * 48 + quadricCount * 64 + clipCount * 32
         let mirrorColorOffset = materialOffset + 6 * 64
-        #expect(float32(bytes, at: mirrorColorOffset) == 0.0)
-        #expect(abs(float32(bytes, at: mirrorColorOffset + 4) - 0.8) < 0.0001)
+        #expect(abs(float32(bytes, at: mirrorColorOffset) - 0.405) < 0.0001)
+        #expect(abs(float32(bytes, at: mirrorColorOffset + 4) - 0.855) < 0.0001)
         #expect(abs(float32(bytes, at: mirrorColorOffset + 8) - 0.9) < 0.0001)
-        #expect(int32(bytes, at: mirrorColorOffset + 28) == 1)
+        #expect(int32(bytes, at: mirrorColorOffset + 28) == 0)
+        #expect(float32(bytes, at: mirrorColorOffset + 48) == 0.0)
+        #expect(float32(bytes, at: mirrorColorOffset + 52) == 1.0)
 
         _ = HyperbolicScene.seifertWeberAtlas(&atlas)
         bytes = [UInt8](atlas.packetBytes())
@@ -557,16 +572,16 @@ struct CurvedTracerTests {
         let materialCount = Int(int32(bytes, at: 172))
         let quadricCount = Int(int32(bytes, at: 180))
         let clipCount = Int(int32(bytes, at: 184))
-        #expect(objectCount == 10)
-        #expect(materialCount == 7)
+        #expect(objectCount == 11)
+        #expect(materialCount == 8)
 
         let objectOffset = 192 + chartCount * 32 + portalCount * 96
         let blueObjectOffset = objectOffset + 6 * 48
         #expect(int32(bytes, at: blueObjectOffset + 24) == 0)
         #expect(int32(bytes, at: blueObjectOffset + 28) == 3)
         let mirrorObjectOffset = objectOffset + 7 * 48
-        // The object is deliberately opaque: its physical material selects
-        // ideal-conductor reflection independently of this legacy field.
+        // The object carries the ordinary response value: its physical
+        // material independently selects ideal-conductor reflection.
         #expect(int32(bytes, at: mirrorObjectOffset + 24) == 0)
         #expect(int32(bytes, at: mirrorObjectOffset + 28) == 4)
 

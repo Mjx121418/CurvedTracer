@@ -2,22 +2,45 @@ import GeometryCore
 
 enum EuclideanScene {
     // Preserve the original previews after normalizing point-light shading by 1/π.
-    private static let legacyPointLightScale = Float.pi
+    private static let previewPointLightScale = Float.pi
+
+    private static func addPreviewMaterial(
+        _ atlas: inout geo.Atlas,
+        _ color: geo.vec4
+    ) -> Int32 {
+        atlas.addPhysicalMaterial(
+            color, 0.5, 0, 1.5, 0, geo.vec3(0, 0, 0))
+    }
+
+    private static func addLambertianMaterial(
+        _ atlas: inout geo.Atlas,
+        _ color: geo.vec4
+    ) -> Int32 {
+        atlas.addPhysicalMaterial(
+            color, 0, 0, 1.5, 0, geo.vec3(0, 0, 0))
+    }
+
+    private static func addMirrorMaterial(
+        _ atlas: inout geo.Atlas,
+        _ color: geo.vec4
+    ) -> Int32 {
+        atlas.addPhysicalMaterial(
+            color, 0, 1, 1.5, 0, geo.vec3(0, 0, 0))
+    }
 
     private static func identity() -> [Float] { [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] }
     private static func configure(_ atlas: inout geo.Atlas) {
         atlas.start(2)
         _ = atlas.seed(2.0)
-        _ = atlas.addMaterial(geo.vec4(0.95, 0.18, 0.08, 1), geo.vec4(0.3, 0.3, 0.3, 1))
-        _ = atlas.addMaterial(geo.vec4(0.08, 0.55, 1, 1), geo.vec4(0.3, 0.3, 0.3, 1))
-        // Mirror material: cyan base tint plus a cyan-white reflected component.
-        _ = atlas.addMaterial(geo.vec4(0.0, 0.8, 0.9, 1), geo.vec4(0.45, 0.95, 1.0, 0.9))
+        _ = addPreviewMaterial(&atlas, geo.vec4(0.95, 0.18, 0.08, 1))
+        _ = addPreviewMaterial(&atlas, geo.vec4(0.08, 0.55, 1, 1))
+        _ = addMirrorMaterial(&atlas, geo.vec4(0.405, 0.855, 0.9, 1))
         _ = atlas.addBall(0, geo.vec4(0.28, -0.2, 0.12, 1), 0.15, 0)
         _ = atlas.addBall(0, geo.vec4(-0.4, 0.16, -0.24, 1), 0.22, 1)
         _ = atlas.addBall(0, geo.vec4(0.05, 0.32, 0.38, 1), 0.11, 0)
         _ = atlas.addLight(
             0, geo.vec4(-0.2, 0.25, 0.3, 1), geo.vec3(1, 0.9, 0.7),
-            legacyPointLightScale)
+            previewPointLightScale)
         atlas.setCamera(0.85, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0), geo.vec3(0, 0, 1))
         atlas.setControls(6, 0.05, 0.16, 0.9, 2, 0, 0.0)
     }
@@ -26,7 +49,7 @@ enum EuclideanScene {
         for u in [
             geo.vec3(1, 0, 0), geo.vec3(-1, 0, 0), geo.vec3(0, 1, 0), geo.vec3(0, -1, 0),
             geo.vec3(0, 0, 1), geo.vec3(0, 0, -1),
-        ] { _ = atlas.addMirrorPlane(0, u, 1.0, 2) }
+        ] { _ = atlas.addPlane(0, u, 1.0, 2, 0) }
         let c = atlas.cameraChartAt(0, geo.vec4(0.05, 0.03, -0.08, 1), 10)
         let r = atlas.build(c, 64)
         if r != 0 { fatalError("R³ flat build failed: \(r)") }
@@ -36,12 +59,12 @@ enum EuclideanScene {
     @discardableResult static func pathTracingRoom(_ atlas: inout geo.Atlas) -> Int32 {
         atlas.start(2)
         _ = atlas.seed(3.0)
-        let white = atlas.addMaterial(
-            geo.vec4(0.78, 0.78, 0.78, 1), geo.vec4(0, 0, 0, 0))
-        let red = atlas.addMaterial(
-            geo.vec4(0.78, 0.08, 0.05, 1), geo.vec4(0, 0, 0, 0))
-        let green = atlas.addMaterial(
-            geo.vec4(0.08, 0.68, 0.12, 1), geo.vec4(0, 0, 0, 0))
+        let white = addLambertianMaterial(
+            &atlas, geo.vec4(0.78, 0.78, 0.78, 1))
+        let red = addLambertianMaterial(
+            &atlas, geo.vec4(0.78, 0.08, 0.05, 1))
+        let green = addLambertianMaterial(
+            &atlas, geo.vec4(0.08, 0.68, 0.12, 1))
         let blue = atlas.addPhysicalMaterial(
             geo.vec4(0.08, 0.28, 0.82, 1), 0.38, 0, 1.5, 0,
             geo.vec3(0, 0, 0))

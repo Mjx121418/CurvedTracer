@@ -294,7 +294,33 @@ int Atlas::addMaterial(const vec4 &color, const vec4 &spec) {
     setError(5);
     return -1;
   }
-  materials_.push_back(Material{color, spec});
+  materials_.push_back(
+      Material{color, vec3(), GEO_MATERIAL_LEGACY, spec, 0.5f, 0.0f, 1.5f,
+               0.0f});
+  setError(0);
+  return int(materials_.size() - 1);
+}
+
+int Atlas::addPhysicalMaterial(const vec4 &baseColor, float roughness,
+                               float metallic, float ior, float transmission,
+                               const vec3 &emission) {
+  packet_.clear();
+  bool validBaseColor =
+      baseColor.x >= 0 && baseColor.x <= 1 && baseColor.y >= 0 &&
+      baseColor.y <= 1 && baseColor.z >= 0 && baseColor.z <= 1 &&
+      baseColor.w >= 0 && baseColor.w <= 1;
+  bool validEmission = emission.x >= 0 && emission.y >= 0 && emission.z >= 0;
+  if (!finite(baseColor) || !validBaseColor || !finite(roughness) ||
+      roughness < 0 || roughness > 1 || !finite(metallic) || metallic < 0 ||
+      metallic > 1 || !finite(ior) || ior < 1 || !finite(transmission) ||
+      transmission < 0 || transmission > 1 || !finite(emission) ||
+      !validEmission || materials_.size() >= GEO_MAX_MATERIALS) {
+    setError(5);
+    return -1;
+  }
+  materials_.push_back(Material{
+      baseColor, emission, GEO_MATERIAL_PHYSICAL, vec4(), roughness, metallic,
+      ior, transmission});
   setError(0);
   return int(materials_.size() - 1);
 }

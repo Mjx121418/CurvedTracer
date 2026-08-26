@@ -328,7 +328,7 @@ These are optimizations rather than correctness prerequisites.
 ## Milestone H — Finite area lights and radiometry
 
 Status: geodesic spherical emitter sampling and soft shadows are implemented
-with the version-12 light packet. Samples are uniform in emitter area and use
+with the light record introduced in version 12. Samples are uniform in emitter area and use
 the curvature-aware area-to-solid-angle Jacobian below. Direct lighting uses
 both emitter-area samples and the diffuse continuation direction, combined by
 the power heuristic. Emitter intersections are evaluated as light events for
@@ -366,6 +366,18 @@ This stage is the first expected GeometryCore packet-contract revision.
 ---
 
 ## Milestone I — Physical materials
+
+Status: the version-13 packet now carries base color, emission, roughness,
+metallic, IOR, and transmission. A transitional compatibility marker and
+legacy-specular field preserve existing scenes. Physical materials now select
+their BSDF independently of the object's legacy response: metallic one with
+zero roughness is an ideal conductor, while metallic zero with zero
+transmission is Lambertian. The path-tracing-room mirror balls exercise this
+dispatch while authored as opaque objects. Real-time and Photo Mode share the
+selection, Lambertian evaluation/PDF/sampling, and ideal-conductor delta
+sampling. Unsupported mixed-metal, rough-conductor, and transmissive packets
+produce a diagnostic instead of silently rendering as diffuse. Glass, GGX,
+and emissive-surface behavior remain to be implemented.
 
 Once diffuse GI, mirrors, point lights, area lights, and MIS are stable, evolve
 the material contract toward:

@@ -1,8 +1,8 @@
-# GeometryCore contract, version 12
+# GeometryCore contract, version 13
 
-Version 12 adds finite geodesic spherical emitters and explicit light-kind and
-intrinsic-radius fields. Version 11 introduced oriented ambient linear
-sections, clipped surface patches, and homogeneous quadratic surfaces.
+Version 13 adds the physical-material packet and a shared shader BSDF
+interface. Version 12 added finite geodesic spherical emitters and explicit
+light-kind and intrinsic-radius fields.
 
 ## Models and points
 
@@ -53,6 +53,9 @@ addQuadric(chart, columnMajorSymmetricMatrix, material, response)
 addCliffordTorus(chart, material, response)
 addObjectClip(object, normal, offset)
 addObjectClipPlane(object, outwardDirection, signedDistance)
+addMaterial(color, legacySpecular)
+addPhysicalMaterial(baseColor, roughness, metallic, IOR,
+                    transmission, emission)
 addLight(chart, vec4 position, color, intensity)
 addSphericalAreaLight(chart, vec4 center, intrinsicRadius,
                       color, emittedRadiance)
@@ -95,7 +98,7 @@ compound portal reduction.
 
 ## Packet
 
-`GEO_CONTRACT_VERSION` is 12 and `GEO_PACKET_MAGIC` is `0x41545243`. Both
+`GEO_CONTRACT_VERSION` is 13 and `GEO_PACKET_MAGIC` is `0x41545243`. Both
 `build()` and `buildAtlas()` emit:
 
 ```text
@@ -105,12 +108,24 @@ GPUPortal[portalCount] (96 each)
 Object[objectCount] (48 each)
 Quadric[quadricCount] (64 each)
 PrimitiveClip[clipCount] (32 each)
-Material[materialCount] (32 each)
+Material[materialCount] (64 each)
 PointLight[lightCount] (48 each)
 ```
 
 `build()` emits one flattened chart and zero portals. `buildAtlas()` preserves
 authored charts and quotient portals.
+
+A material stores `baseColor`, three-component `emission`, a
+`compatibilityKind`, `legacySpecular`, `roughness`, `metallic`, `IOR`, and
+`transmission`. The emission and compatibility fields occupy the same 16-byte
+block, keeping the version-13 material record at 64 bytes. Materials authored
+by `addMaterial` have `GEO_MATERIAL_LEGACY` compatibility and retain the
+object's opaque/mirror response plus the transitional Blinn–Phong and mirror
+weights. Materials authored by `addPhysicalMaterial` have
+`GEO_MATERIAL_PHYSICAL` compatibility and select their BSDF independently of
+the object's legacy response field. The latter operation validates unit-range
+base color, roughness, metallic, and transmission; finite `IOR >= 1`; and
+nonnegative finite emission.
 
 Despite its source-compatible name, `PointLight` is the common light record.
 It stores position, color, intensity, intrinsic radius, and light kind. A point
@@ -157,6 +172,20 @@ shadows without applying the legacy point-light falloff. The direct estimator
 also tests the cosine-weighted diffuse continuation direction against finite
 emitters. Emitter-area and BSDF samples use their corresponding solid-angle
 PDFs and the power heuristic for multiple importance sampling.
+
+Both kernels use the shared `evaluateBSDF` and `sampleBSDF` interface. An
+evaluation returns the BSDF value and directional PDF. A sample returns the
+continued direction, throughput weight, PDF, event type, and delta flag. The
+version-13 implementation provides cosine-weighted Lambertian evaluation and
+sampling plus ideal-conductor delta reflection. A physical material with zero
+transmission and metallic zero is Lambertian; one with metallic one and
+roughness zero is an ideal conductor colored by `baseColor`. Other nonzero
+metallic values, rough conductors, and transmissive materials report an
+unsupported material diagnostic until their GGX or dielectric lobes exist.
+Legacy materials continue to select Lambertian or delta reflection from the
+object response. The interface and tangent-frame construction are common to
+R³, S³, and H³; IOR, emission, and the remaining rough/transmissive cases are
+reserved for the subsequent dielectric, GGX, and emissive-material stages.
 
 Real-time and Photo Mode use the same nonnegative exposure multiplier and
 Reinhard display transform, `display = exposure * radiance /

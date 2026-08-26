@@ -1,8 +1,8 @@
 #pragma once
-// Version-12 scene packet shared verbatim by C++ and Metal.
+// Version-13 scene packet shared verbatim by C++ and Metal.
 #include "GeometryCore/Math.h"
 
-#define GEO_CONTRACT_VERSION 12
+#define GEO_CONTRACT_VERSION 13
 #define GEO_PACKET_MAGIC 0x41545243
 
 #define GEO_MAX_OBJECTS 4096
@@ -24,6 +24,9 @@
 
 #define GEO_RESPONSE_OPAQUE 0
 #define GEO_RESPONSE_MIRROR 1
+
+#define GEO_MATERIAL_PHYSICAL 0
+#define GEO_MATERIAL_LEGACY 1
 
 #define GEO_LIGHT_POINT 0
 #define GEO_LIGHT_SPHERE 1
@@ -122,8 +125,14 @@ struct PrimitiveClip {
 };
 
 struct Material {
-    vec4 color;
-    vec4 specular;
+    vec4 baseColor;
+    vec3 emission;
+    int compatibilityKind;
+    vec4 legacySpecular;
+    float roughness;
+    float metallic;
+    float ior;
+    float transmission;
 };
 
 struct PointLight {
@@ -146,7 +155,7 @@ static_assert(sizeof(ScenePacketHeader) == 192, "ScenePacketHeader must be 192 b
 static_assert(sizeof(Object) == 48, "Object must be 48 bytes");
 static_assert(sizeof(Quadric) == 64, "Quadric must be 64 bytes");
 static_assert(sizeof(PrimitiveClip) == 32, "PrimitiveClip must be 32 bytes");
-static_assert(sizeof(Material) == 32, "Material must be 32 bytes");
+static_assert(sizeof(Material) == 64, "Material must be 64 bytes");
 static_assert(sizeof(PointLight) == 48, "PointLight must be 48 bytes");
 #endif
 

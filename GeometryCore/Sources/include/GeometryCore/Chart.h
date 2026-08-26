@@ -18,7 +18,7 @@
 
 namespace geo {
 
-inline std::string geometryCoreName() { return "Geometry Core v12"; }
+inline std::string geometryCoreName() { return "Geometry Core v13"; }
 
 struct ChartObject {
   int chartId = -1;
@@ -124,6 +124,9 @@ public:
       const vec3 &outwardB, float faceDistanceB, const float pairingAB[16],
       float triggerCollar);
   int addMaterial(const vec4 &color, const vec4 &specular);
+  int addPhysicalMaterial(const vec4 &baseColor, float roughness,
+                          float metallic, float ior, float transmission,
+                          const vec3 &emission);
 
   void setCamera(float fovTan, float aspect, const vec3 &right, const vec3 &up,
                  const vec3 &fwd);

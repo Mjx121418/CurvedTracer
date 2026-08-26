@@ -41,7 +41,7 @@ struct CurvedTracerTests {
             + objectCount * 48
             + quadricCount * 64
             + clipCount * 32
-            + materialCount * 32
+            + materialCount * 64
         return float32(bytes, at: lightOffset + 28)
     }
 
@@ -131,7 +131,7 @@ struct CurvedTracerTests {
         #expect(stats.snapshot.hopLimitRays == 1)
     }
 
-    @Test func allSpaceTraversalScenesBuildV12Packets() {
+    @Test func allSpaceTraversalScenesBuildV13Packets() {
         #expect(AmbientSpace.allCases.count == 3)
         #expect(TraversalMode.allCases.count == 2)
         #expect(EuclideanFlatSceneVariant.allCases.count == 2)
@@ -156,7 +156,7 @@ struct CurvedTracerTests {
         for build in builders {
             _ = build(&atlas)
             #expect(atlas.packetSize() >= 192)
-            #expect(int32([UInt8](atlas.packetBytes()), at: 4) == 12)
+            #expect(int32([UInt8](atlas.packetBytes()), at: 4) == 13)
         }
     }
 
@@ -470,10 +470,11 @@ struct CurvedTracerTests {
         let clipCount = Int(int32(bytes, at: 184))
         let materialOffset = 192 + chartCount * 32 + portalCount * 96
             + objectCount * 48 + quadricCount * 64 + clipCount * 32
-        let mirrorColorOffset = materialOffset + 6 * 32
+        let mirrorColorOffset = materialOffset + 6 * 64
         #expect(float32(bytes, at: mirrorColorOffset) == 0.0)
         #expect(abs(float32(bytes, at: mirrorColorOffset + 4) - 0.8) < 0.0001)
         #expect(abs(float32(bytes, at: mirrorColorOffset + 8) - 0.9) < 0.0001)
+        #expect(int32(bytes, at: mirrorColorOffset + 28) == 1)
 
         _ = HyperbolicScene.seifertWeberAtlas(&atlas)
         bytes = [UInt8](atlas.packetBytes())
@@ -498,6 +499,36 @@ struct CurvedTracerTests {
         _ = EuclideanScene.torus(&atlas)
         bytes = [UInt8](atlas.packetBytes())
         #expect(abs(float32(bytes, at: 140) - 0.6) < 0.0001)
+    }
+
+    @Test func pathRoomMirrorUsesPhysicalMaterialDispatch() {
+        var atlas = geo.Atlas()
+        _ = EuclideanScene.pathTracingRoom(&atlas)
+        let bytes = [UInt8](atlas.packetBytes())
+        let chartCount = Int(int32(bytes, at: 160))
+        let portalCount = Int(int32(bytes, at: 164))
+        let objectCount = Int(int32(bytes, at: 168))
+        let quadricCount = Int(int32(bytes, at: 180))
+        let clipCount = Int(int32(bytes, at: 184))
+        #expect(objectCount == 8)
+
+        let objectOffset = 192 + chartCount * 32 + portalCount * 96
+        let mirrorObjectOffset = objectOffset + 7 * 48
+        // The object is deliberately opaque: its physical material selects
+        // ideal-conductor reflection independently of this legacy field.
+        #expect(int32(bytes, at: mirrorObjectOffset + 24) == 0)
+        #expect(int32(bytes, at: mirrorObjectOffset + 28) == 4)
+
+        let materialOffset = objectOffset + objectCount * 48
+            + quadricCount * 64 + clipCount * 32
+        let mirrorMaterialOffset = materialOffset + 4 * 64
+        #expect(abs(float32(bytes, at: mirrorMaterialOffset) - 0.92) < 0.0001)
+        #expect(abs(float32(bytes, at: mirrorMaterialOffset + 4) - 0.95) < 0.0001)
+        #expect(float32(bytes, at: mirrorMaterialOffset + 8) == 1.0)
+        #expect(int32(bytes, at: mirrorMaterialOffset + 28) == 0)
+        #expect(float32(bytes, at: mirrorMaterialOffset + 48) == 0.0)
+        #expect(float32(bytes, at: mirrorMaterialOffset + 52) == 1.0)
+        #expect(float32(bytes, at: mirrorMaterialOffset + 60) == 0.0)
     }
 
 }

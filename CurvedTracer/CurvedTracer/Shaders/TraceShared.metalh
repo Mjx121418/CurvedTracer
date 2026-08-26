@@ -7,11 +7,16 @@ using namespace metal;
 constant int SPACE_FORM [[function_constant(0)]]; // 0 H³, 1 S³, 2 R³
 constant bool ENABLE_PORTALS [[function_constant(1)]];
 
-constant int PACKET_MAGIC = 0x41545243, CONTRACT_VERSION = 12,
+constant int PACKET_MAGIC = 0x41545243, CONTRACT_VERSION = 13,
 HEADER_SIZE = 192, OBJECT_SIZE = 48;
 constant int MODEL_H3 = 0, MODEL_S3 = 1, MODEL_R3 = 2;
 constant int EQUATION_LINEAR = 0, EQUATION_R3_SPHERE = 1, EQUATION_QUADRIC = 2;
 constant int RESPONSE_OPAQUE = 0, RESPONSE_MIRROR = 1;
+constant int MATERIAL_PHYSICAL = 0, MATERIAL_LEGACY = 1;
+constant int BSDF_EVENT_NONE = 0, BSDF_EVENT_DIFFUSE = 1,
+BSDF_EVENT_SPECULAR_REFLECTION = 2;
+constant int BSDF_MODEL_INVALID = 0, BSDF_MODEL_LAMBERTIAN = 1,
+BSDF_MODEL_DELTA_REFLECTION = 2, BSDF_MODEL_UNSUPPORTED = 3;
 constant int LIGHT_POINT = 0, LIGHT_SPHERE = 1;
 constant int CLIP_LINEAR = 0, CLIP_BALL = 1;
 constant int FOG_DISABLED = 0, FOG_COMPACT = 1, FOG_EXPONENTIAL = 2;
@@ -73,7 +78,14 @@ struct PrimitiveClipGPU {
     int kind, pad0, pad1;
 };
 struct MaterialGPU {
-    float4 color, specular;
+    float4 baseColor;
+    packed_float3 emission;
+    int compatibilityKind;
+    float4 legacySpecular;
+    float roughness;
+    float metallic;
+    float ior;
+    float transmission;
 };
 struct LightGPU {
     float4 position;
@@ -130,6 +142,21 @@ struct SurfaceTraceResult {
     uint compoundPortalHops;
     uint portalTests;
     bool hitHopLimit;
+};
+
+struct BSDFEvaluation {
+    float3 value;
+    float pdf;
+    int valid;
+};
+
+struct BSDFSample {
+    float4 direction;
+    float3 weight;
+    float pdf;
+    int eventType;
+    int delta;
+    int valid;
 };
 
 static float kappa() {
@@ -196,6 +223,180 @@ static bool canonicalizeRayState(thread float4 &point, thread float4 &tangent) {
     tangent = tangentNormalize(tangent);
     return all(isfinite(point)) && all(isfinite(tangent)) &&
     mdot(tangent, tangent) > 0.5f;
+}
+
+static float4 bsdfAmbientAxis(int index) {
+    if (index == 0)
+        return float4(1, 0, 0, 0);
+    if (index == 1)
+        return float4(0, 1, 0, 0);
+    if (index == 2)
+        return float4(0, 0, 1, 0);
+    return float4(0, 0, 0, 1);
+}
+
+static float4 bsdfProjectToTangent(float4 vector, float4 point) {
+    if (SPACE_FORM == MODEL_R3)
+        return float4(vector.xyz, 0);
+    return vector - kappa() * mdot(vector, point) * point;
+}
+
+static bool bsdfCanonicalNormal(
+    float4 point,
+    float4 normal,
+    thread float4 &canonicalNormal
+) {
+    canonicalNormal = tangentNormalize(
+        bsdfProjectToTangent(normal, point));
+    return all(isfinite(canonicalNormal)) &&
+    mdot(canonicalNormal, canonicalNormal) > 0.5f;
+}
+
+static bool bsdfTangentFrame(
+    float4 point,
+    float4 normal,
+    thread float4 &first,
+    thread float4 &second
+) {
+    float bestFirstNorm = 0.0f;
+    first = float4(0);
+    int candidateCount = SPACE_FORM == MODEL_R3 ? 3 : 4;
+    for (int axis = 0; axis < candidateCount; ++axis) {
+        float4 candidate = bsdfProjectToTangent(
+            bsdfAmbientAxis(axis), point);
+        candidate -= mdot(candidate, normal) * normal;
+        float candidateNorm = mdot(candidate, candidate);
+        if (isfinite(candidateNorm) && candidateNorm > bestFirstNorm) {
+            bestFirstNorm = candidateNorm;
+            first = candidate;
+        }
+    }
+    if (bestFirstNorm <= EPS * EPS)
+        return false;
+    first *= rsqrt(bestFirstNorm);
+
+    float bestSecondNorm = 0.0f;
+    second = float4(0);
+    for (int axis = 0; axis < candidateCount; ++axis) {
+        float4 candidate = bsdfProjectToTangent(
+            bsdfAmbientAxis(axis), point);
+        candidate -= mdot(candidate, normal) * normal;
+        candidate -= mdot(candidate, first) * first;
+        float candidateNorm = mdot(candidate, candidate);
+        if (isfinite(candidateNorm) && candidateNorm > bestSecondNorm) {
+            bestSecondNorm = candidateNorm;
+            second = candidate;
+        }
+    }
+    if (bestSecondNorm <= EPS * EPS)
+        return false;
+    second *= rsqrt(bestSecondNorm);
+    return all(isfinite(first)) && all(isfinite(second)) &&
+    mdot(first, first) > 0.5f && mdot(second, second) > 0.5f;
+}
+
+static int resolveBSDFModel(MaterialGPU material, int responseKind) {
+    if (material.compatibilityKind == MATERIAL_LEGACY) {
+        if (responseKind == RESPONSE_OPAQUE)
+            return BSDF_MODEL_LAMBERTIAN;
+        if (responseKind == RESPONSE_MIRROR)
+            return BSDF_MODEL_DELTA_REFLECTION;
+        return BSDF_MODEL_INVALID;
+    }
+    if (material.compatibilityKind != MATERIAL_PHYSICAL)
+        return BSDF_MODEL_INVALID;
+
+    // Physical materials no longer inherit their scattering model from the
+    // object. Keep the currently implemented endpoints explicit so a rough or
+    // transmissive material cannot silently fall back to diffuse rendering.
+    if (material.transmission > EPS)
+        return BSDF_MODEL_UNSUPPORTED;
+    if (material.metallic >= 1.0f - EPS && material.roughness <= EPS)
+        return BSDF_MODEL_DELTA_REFLECTION;
+    if (material.metallic <= EPS)
+        return BSDF_MODEL_LAMBERTIAN;
+    return BSDF_MODEL_UNSUPPORTED;
+}
+
+static BSDFEvaluation evaluateBSDF(
+    MaterialGPU material,
+    int responseKind,
+    float4 normal,
+    float4 incomingDirection,
+    float4 outgoingDirection
+) {
+    BSDFEvaluation evaluation{};
+    int model = resolveBSDFModel(material, responseKind);
+    if (model == BSDF_MODEL_DELTA_REFLECTION) {
+        evaluation.valid = 1;
+        return evaluation;
+    }
+    if (model != BSDF_MODEL_LAMBERTIAN)
+        return evaluation;
+    evaluation.valid = 1;
+    float outgoingCosine = clamp(
+        mdot(normal, outgoingDirection), 0.0f, 1.0f);
+    if (outgoingCosine <= 0.0f)
+        return evaluation;
+    const float inversePi = 0.31830988618f;
+    evaluation.value =
+    clamp(material.baseColor.rgb, 0.0f, 1.0f) * inversePi;
+    evaluation.pdf = outgoingCosine * inversePi;
+    return evaluation;
+}
+
+static BSDFSample sampleBSDF(
+    MaterialGPU material,
+    int responseKind,
+    float4 point,
+    float4 incidentDirection,
+    float4 normal,
+    float2 randomSample
+) {
+    BSDFSample sample{};
+    int model = resolveBSDFModel(material, responseKind);
+    if (model == BSDF_MODEL_DELTA_REFLECTION) {
+        sample.direction = tangentNormalize(
+            incidentDirection -
+            2.0f * mdot(incidentDirection, normal) * normal);
+        if (material.compatibilityKind == MATERIAL_LEGACY) {
+            float opacity = clamp(material.legacySpecular.a, 0.0f, 1.0f);
+            sample.weight = clamp(
+                material.legacySpecular.rgb * opacity, 0.0f, 1.0f);
+        } else {
+            sample.weight = clamp(material.baseColor.rgb, 0.0f, 1.0f);
+        }
+        sample.pdf = 1.0f;
+        sample.eventType = BSDF_EVENT_SPECULAR_REFLECTION;
+        sample.delta = 1;
+        sample.valid = all(isfinite(sample.direction)) &&
+        mdot(sample.direction, sample.direction) > 0.5f;
+        return sample;
+    }
+    if (model != BSDF_MODEL_LAMBERTIAN)
+        return sample;
+
+    float4 first, second;
+    if (!bsdfTangentFrame(point, normal, first, second))
+        return sample;
+    float radial = sqrt(clamp(randomSample.x, 0.0f, 1.0f));
+    float azimuth = TWO_PI * clamp(randomSample.y, 0.0f, 1.0f);
+    sample.direction = tangentNormalize(
+        radial * cos(azimuth) * first + radial * sin(azimuth) * second +
+        sqrt(max(1.0f - radial * radial, 0.0f)) * normal);
+    BSDFEvaluation evaluation = evaluateBSDF(
+        material, responseKind, normal, -incidentDirection,
+        sample.direction);
+    float cosine = clamp(mdot(normal, sample.direction), 0.0f, 1.0f);
+    if (!evaluation.valid || evaluation.pdf <= 0.0f || cosine <= 0.0f)
+        return BSDFSample{};
+    sample.weight = evaluation.value * cosine / evaluation.pdf;
+    sample.pdf = evaluation.pdf;
+    sample.eventType = BSDF_EVENT_DIFFUSE;
+    sample.delta = 0;
+    sample.valid = all(isfinite(sample.direction)) &&
+    all(isfinite(sample.weight));
+    return sample;
 }
 
 static int roots(float a, float b, float c, thread float &r0, thread float &r1) {
@@ -715,7 +916,9 @@ static float3 shade(Event hit, ObjectGPU object, MaterialGPU material, int chart
              thread uint &compoundPortalHops, thread uint &portalTests,
              thread bool &hitHopLimit) {
     const float inversePi = 0.31830988618f;
-    float3 diffuse = float3(ambient), spec = float3(0);
+    float3 radiance =
+    clamp(material.baseColor.rgb, 0.0f, 1.0f) * float3(ambient);
+    float3 spec = float3(0);
     int chartStack[5], nextPortal[5], incoming[5];
     float4x4 toStart[5];
     chartStack[0] = chartId;
@@ -761,22 +964,27 @@ static float3 shade(Event hit, ObjectGPU object, MaterialGPU material, int chart
                     float emitterRadius = areaRadius(l.radius);
                     attenuation = l.intensity * emitterRadius * emitterRadius /
                     (ar * ar);
+                    // The center approximation stores exitant Lambertian
+                    // radiance; convert it back to irradiance for evaluateBSDF.
+                    attenuation *= 0.5f * TWO_PI;
                 } else {
                     errorBits |= 1u;
                     continue;
                 }
                 float3 irradiance = float3(l.color) * attenuation;
-                // Legacy scene intensities are scaled by π. Apply the same
-                // normalization to their preview-only specular lobe so its
-                // ratio to diffuse does not change.
-                float pointLightScale =
-                l.kind == LIGHT_POINT ? inversePi : 1.0f;
-                diffuse += irradiance * nd * pointLightScale;
+                BSDFEvaluation evaluation = evaluateBSDF(
+                    material, object.responseKind, hit.normal, view, ld);
+                radiance += irradiance * evaluation.value * nd;
+                // Point-light scenes are authored π brighter, while spherical
+                // preview attenuation above is converted to irradiance by π.
+                // Undo either factor for the legacy preview-only specular lobe.
+                float legacySpecularScale = inversePi;
                 float4 halfv = tangentNormalize(ld + view);
                 float specularCosine =
                 clamp(mdot(hit.normal, halfv), 0.0f, 1.0f);
                 spec +=
-                irradiance * pow(specularCosine, 32.0f) * nd * pointLightScale;
+                irradiance * pow(specularCosine, 32.0f) * nd *
+                legacySpecularScale;
             }
             nextPortal[depth] = 0;
         }
@@ -800,8 +1008,8 @@ static float3 shade(Event hit, ObjectGPU object, MaterialGPU material, int chart
         toStart[child] = toStart[depth] * portals[portal.reversePortal].toNeighbor;
         depth = child;
     }
-    return material.color.rgb * diffuse +
-    material.specular.rgb * material.specular.a * spec;
+    return radiance + material.legacySpecular.rgb *
+    material.legacySpecular.a * spec;
 }
 
 static float fogVisibility(float distance, float horizon, int mode,
@@ -1021,7 +1229,8 @@ static TraceResult traceDeterministicSample(
             break;
         }
         MaterialGPU m = materials[o.colorIdx];
-        if (o.responseKind == RESPONSE_OPAQUE) {
+        int bsdfModel = resolveBSDFModel(m, o.responseKind);
+        if (bsdfModel == BSDF_MODEL_LAMBERTIAN) {
             radiance +=
             throughput * shade(e, o, m, chartId, -e.tangent, charts, portals,
                                objects, quadrics, clips, lights,
@@ -1033,19 +1242,32 @@ static TraceResult traceDeterministicSample(
                                portalTests, hitHopLimit);
             break;
         }
-        if (o.responseKind != RESPONSE_MIRROR)
-            break;
-
-        if (bounce == maxBounces) {
-            radiance += throughput * m.color.rgb;
+        if (bsdfModel != BSDF_MODEL_DELTA_REFLECTION) {
+            error |= 1u;
             break;
         }
 
-        float reflectivity =
-        clamp(m.specular.a * h->controls.bounceAttenuation, 0.0f, 1.0f);
-        radiance += throughput * m.color.rgb * (1.0f - reflectivity);
-        throughput *= m.specular.rgb * reflectivity;
-        v = tangentNormalize(e.tangent - 2 * mdot(e.tangent, e.normal) * e.normal);
+        if (bounce == maxBounces) {
+            if (m.compatibilityKind == MATERIAL_LEGACY)
+                radiance += throughput * m.baseColor.rgb;
+            break;
+        }
+
+        if (m.compatibilityKind == MATERIAL_LEGACY) {
+            float reflectivity = clamp(
+                m.legacySpecular.a * h->controls.bounceAttenuation,
+                0.0f, 1.0f);
+            radiance += throughput * m.baseColor.rgb * (1.0f - reflectivity);
+        }
+        BSDFSample bsdf = sampleBSDF(
+            m, o.responseKind, e.point, e.tangent, e.normal, float2(0));
+        if (!bsdf.valid) {
+            error |= 4u;
+            break;
+        }
+        throughput *= bsdf.weight * clamp(
+            h->controls.bounceAttenuation, 0.0f, 1.0f);
+        v = bsdf.direction;
         p = e.point;
         if (!canonicalizeRayState(p, v)) {
             error |= 4u;

@@ -1,5 +1,6 @@
 #include "GeometryCore/Chart.h"
 #include "test_framework.h"
+#include <cstddef>
 #include <cstring>
 using namespace geo;
 
@@ -50,6 +51,18 @@ static PrimitiveClip flatClip(const Atlas &a, int index) {
               sizeof(clip));
   return clip;
 }
+static Material flatMaterial(const Atlas &a, int index) {
+  ScenePacketHeader h = header(a);
+  Material material{};
+  std::memcpy(
+      &material,
+      a.packet().data() + sizeof(ScenePacketHeader) + sizeof(GPUChart) +
+          h.counts.objectCount * sizeof(Object) +
+          h.counts.quadricCount * sizeof(Quadric) +
+          h.counts.clipCount * sizeof(PrimitiveClip) + index * sizeof(Material),
+      sizeof(material));
+  return material;
+}
 static PointLight flatLight(const Atlas &a, int index) {
   ScenePacketHeader h = header(a);
   PointLight light{};
@@ -66,13 +79,24 @@ static PointLight flatLight(const Atlas &a, int index) {
 }
 
 void test_atlas() {
-  CHECK(GEO_CONTRACT_VERSION == 12);
+  CHECK(GEO_CONTRACT_VERSION == 13);
   CHECK(sizeof(ScenePacketHeader) == 192);
   CHECK(sizeof(Object) == 48);
   CHECK(sizeof(Quadric) == 64);
   CHECK(sizeof(PrimitiveClip) == 32);
   CHECK(sizeof(GPUPortal) == 96);
+  CHECK(sizeof(Material) == 64);
+  CHECK(offsetof(Material, baseColor) == 0);
+  CHECK(offsetof(Material, emission) == 16);
+  CHECK(offsetof(Material, compatibilityKind) == 28);
+  CHECK(offsetof(Material, legacySpecular) == 32);
+  CHECK(offsetof(Material, roughness) == 48);
+  CHECK(offsetof(Material, metallic) == 52);
+  CHECK(offsetof(Material, ior) == 56);
+  CHECK(offsetof(Material, transmission) == 60);
   CHECK(sizeof(PointLight) == 48);
+  CHECK(GEO_MATERIAL_PHYSICAL == 0);
+  CHECK(GEO_MATERIAL_LEGACY == 1);
   for (int model = 0; model <= 2; ++model) {
     Atlas a;
     a.start(model);
@@ -85,6 +109,11 @@ void test_atlas() {
     CHECK_NEAR(a.intrinsicDistance(vec4(0, 0, 0, 1), moved.localPosition), .4f,
                2e-4);
     CHECK(a.addMaterial(vec4(1, 0, 0, 1), vec4(.2f, .2f, .2f, 1)) == 0);
+    CHECK(a.addPhysicalMaterial(
+              vec4(.8f, .7f, .6f, 1), .35f, .2f, 1.45f, .1f,
+              vec3(2, 1, .5f)) == 1);
+    CHECK(a.addPhysicalMaterial(
+              vec4(1, 1, 1, 1), -1, 0, 1.5f, 0, vec3()) == -1);
     CHECK(a.addBall(0, p, .2f, 0) == 0);
     CHECK(a.addMirrorPlane(0, vec3(0, 2, 0), .8f, 0) == 1);
     CHECK(a.addLight(0, a.pointFromOriginTangent(vec3(-.2f, 0, 0)),
@@ -97,13 +126,28 @@ void test_atlas() {
     CHECK(a.build(0, 64) == 0);
     auto h = header(a);
     CHECK(h.meta.magic == GEO_PACKET_MAGIC);
-    CHECK(h.meta.contractVersion == 12);
+    CHECK(h.meta.contractVersion == 13);
     CHECK(h.meta.packetHeaderSize == 192);
     CHECK(h.controls.modelKind == model);
     CHECK(h.counts.chartCount == 1);
     CHECK(h.counts.portalCount == 0);
     CHECK(h.counts.objectCount == 2);
     CHECK(h.counts.lightCount == 2);
+    CHECK(h.counts.materialCount == 2);
+    Material legacyMaterial = flatMaterial(a, 0);
+    Material physicalMaterial = flatMaterial(a, 1);
+    CHECK_NEAR(legacyMaterial.baseColor.x, 1, 1e-6);
+    CHECK(legacyMaterial.compatibilityKind == GEO_MATERIAL_LEGACY);
+    CHECK_NEAR(legacyMaterial.legacySpecular.x, .2f, 1e-6);
+    CHECK_NEAR(legacyMaterial.roughness, .5f, 1e-6);
+    CHECK_NEAR(legacyMaterial.ior, 1.5f, 1e-6);
+    CHECK_NEAR(physicalMaterial.baseColor.y, .7f, 1e-6);
+    CHECK(physicalMaterial.compatibilityKind == GEO_MATERIAL_PHYSICAL);
+    CHECK_NEAR(physicalMaterial.emission.x, 2, 1e-6);
+    CHECK_NEAR(physicalMaterial.roughness, .35f, 1e-6);
+    CHECK_NEAR(physicalMaterial.metallic, .2f, 1e-6);
+    CHECK_NEAR(physicalMaterial.ior, 1.45f, 1e-6);
+    CHECK_NEAR(physicalMaterial.transmission, .1f, 1e-6);
     PointLight pointLight = flatLight(a, 0);
     PointLight areaLight = flatLight(a, 1);
     CHECK(pointLight.kind == GEO_LIGHT_POINT);

@@ -3,7 +3,7 @@ import XCTest
 
 final class GeometryCoreTests: XCTestCase {
   func testPacketLayoutAndNativePoints() {
-    XCTAssertEqual(geo.geometryCoreName(), "Geometry Core v12")
+    XCTAssertEqual(geo.geometryCoreName(), "Geometry Core v13")
     XCTAssertEqual(MemoryLayout<geo.Camera>.size, 96)
     XCTAssertEqual(MemoryLayout<geo.RenderControls>.size, 48)
     XCTAssertEqual(MemoryLayout<geo.Counts>.size, 32)
@@ -13,6 +13,7 @@ final class GeometryCoreTests: XCTestCase {
     XCTAssertEqual(MemoryLayout<geo.PrimitiveClip>.size, 32)
     XCTAssertEqual(MemoryLayout<geo.GPUChart>.size, 32)
     XCTAssertEqual(MemoryLayout<geo.GPUPortal>.size, 96)
+    XCTAssertEqual(MemoryLayout<geo.Material>.size, 64)
     XCTAssertEqual(MemoryLayout<geo.PointLight>.size, 48)
 
     var atlas = geo.Atlas()
@@ -28,6 +29,11 @@ final class GeometryCoreTests: XCTestCase {
     atlas.start(0)
     XCTAssertEqual(atlas.seed(3), 0)
     XCTAssertEqual(atlas.addMaterial(geo.vec4(1, 0, 0, 1), geo.vec4(0.2, 0.2, 0.2, 1)), 0)
+    XCTAssertEqual(
+      atlas.addPhysicalMaterial(
+        geo.vec4(0.8, 0.7, 0.6, 1), 0.35, 0.2, 1.45, 0.1,
+        geo.vec3(2, 1, 0.5)), 1
+    )
     let center = atlas.pointFromOriginTangent(geo.vec3(0.3, 0, 0))
     XCTAssertEqual(atlas.addBall(0, center, 0.2, 0), 0)
     XCTAssertEqual(atlas.addMirrorPlane(0, geo.vec3(0, 2, 0), 1, 0), 1)
@@ -44,12 +50,12 @@ final class GeometryCoreTests: XCTestCase {
 
     XCTAssertEqual(atlas.build(0, 64), 0)
     let flat = [UInt8](atlas.packetBytes())
-    XCTAssertEqual(flat.count, 192 + 32 + 2 * 48 + 32 + 32 + 2 * 48)
-    XCTAssertEqual(flat[4], 12)
+    XCTAssertEqual(flat.count, 192 + 32 + 2 * 48 + 32 + 2 * 64 + 2 * 48)
+    XCTAssertEqual(flat[4], 13)
 
     XCTAssertEqual(atlas.buildAtlas(0, 64, 1, 32), 0)
     let authored = [UInt8](atlas.packetBytes())
-    XCTAssertEqual(authored.count, 192 + 32 + 2 * 48 + 32 + 2 * 48)
+    XCTAssertEqual(authored.count, 192 + 32 + 2 * 48 + 2 * 64 + 2 * 48)
     XCTAssertNotNil(atlas.packetData())
   }
 

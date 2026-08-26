@@ -346,8 +346,9 @@ enum SphericalScene {
             geo.vec4(0.08, 0.68, 0.12, 1), geo.vec4(0, 0, 0, 0))
         let blue = atlas.addMaterial(
             geo.vec4(0.08, 0.28, 0.82, 1), geo.vec4(0, 0, 0, 0))
-        let mirror = atlas.addMaterial(
-            geo.vec4(0, 0, 0, 1), geo.vec4(0.92, 0.95, 1, 1))
+        let mirror = atlas.addPhysicalMaterial(
+            geo.vec4(0.92, 0.95, 1, 1), 0, 1, 1.5, 0,
+            geo.vec3(0, 0, 0))
 
         _ = atlas.addPlane(0, geo.vec3(1, 0, 0), -0.3, red, 0)
         _ = atlas.addPlane(0, geo.vec3(-1, 0, 0), -0.3, green, 0)
@@ -360,7 +361,7 @@ enum SphericalScene {
             0.09, blue)
         _ = atlas.addBallSurface(
             0, atlas.pointFromOriginTangent(geo.vec3(0.12, -0.192, 0.135)),
-            0.084, mirror, 1)
+            0.084, mirror, 0)
         _ = atlas.addSphericalAreaLight(
             0, atlas.pointFromOriginTangent(geo.vec3(0, 0.216, -0.075)),
             0.036, geo.vec3(1, 0.92, 0.78), 100)

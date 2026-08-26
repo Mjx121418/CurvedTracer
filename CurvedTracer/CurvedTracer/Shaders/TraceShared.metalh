@@ -15,13 +15,17 @@ constant int RESPONSE_OPAQUE = 0, RESPONSE_MIRROR = 1;
 constant int MATERIAL_PHYSICAL = 0, MATERIAL_LEGACY = 1;
 constant int BSDF_EVENT_NONE = 0, BSDF_EVENT_DIFFUSE = 1,
 BSDF_EVENT_SPECULAR_REFLECTION = 2, BSDF_EVENT_SPECULAR_TRANSMISSION = 3,
-BSDF_EVENT_GLOSSY_REFLECTION = 4;
+BSDF_EVENT_GLOSSY_REFLECTION = 4, BSDF_EVENT_GLOSSY_TRANSMISSION = 5;
 constant int BSDF_MODEL_INVALID = 0, BSDF_MODEL_LAMBERTIAN = 1,
 BSDF_MODEL_DELTA_REFLECTION = 2, BSDF_MODEL_DELTA_DIELECTRIC = 3,
-BSDF_MODEL_GGX_CONDUCTOR = 4, BSDF_MODEL_UNSUPPORTED = 5;
+BSDF_MODEL_GGX_CONDUCTOR = 4, BSDF_MODEL_GGX_DIELECTRIC = 5,
+BSDF_MODEL_GGX_OPAQUE_DIELECTRIC = 6, BSDF_MODEL_UNSUPPORTED = 7;
 constant int LIGHT_POINT = 0, LIGHT_SPHERE = 1;
 constant int CLIP_LINEAR = 0, CLIP_BALL = 1;
 constant int FOG_DISABLED = 0, FOG_COMPACT = 1, FOG_EXPONENTIAL = 2;
+constant uint DIAGNOSTIC_INVALID_RAY_STATE = 4u;
+constant uint PHOTO_DIAGNOSTIC_INVALID_BSDF_SAMPLE = 128u;
+constant uint PHOTO_DIAGNOSTIC_INVALID_EMITTER_SAMPLE = 256u;
 constant float EPS = 1e-5f, SELF_EPS = 1e-4f, INF = 1e30f,
 TWO_PI = 6.28318530718f;
 
@@ -311,16 +315,17 @@ static int resolveBSDFModel(MaterialGPU material, int responseKind) {
     // Physical materials no longer inherit their scattering model from the
     // object. Keep the currently implemented endpoints explicit so a rough or
     // transmissive material cannot silently fall back to diffuse rendering.
-    if (material.transmission >= 1.0f - EPS &&
-        material.metallic <= EPS && material.roughness <= EPS)
-        return BSDF_MODEL_DELTA_DIELECTRIC;
+    if (material.transmission >= 1.0f - EPS && material.metallic <= EPS)
+        return material.roughness <= EPS
+        ? BSDF_MODEL_DELTA_DIELECTRIC : BSDF_MODEL_GGX_DIELECTRIC;
     if (material.transmission > EPS)
         return BSDF_MODEL_UNSUPPORTED;
     if (material.metallic >= 1.0f - EPS)
         return material.roughness <= EPS
         ? BSDF_MODEL_DELTA_REFLECTION : BSDF_MODEL_GGX_CONDUCTOR;
     if (material.metallic <= EPS)
-        return BSDF_MODEL_LAMBERTIAN;
+        return material.roughness <= EPS
+        ? BSDF_MODEL_LAMBERTIAN : BSDF_MODEL_GGX_OPAQUE_DIELECTRIC;
     return BSDF_MODEL_UNSUPPORTED;
 }
 
@@ -358,10 +363,31 @@ static float3 conductorSchlickFresnel(float cosineHalf, float3 f0) {
     return f0 + (1.0f - f0) * fifthPower;
 }
 
+static float dielectricFresnel(
+    float cosineIncident,
+    float incidentIOR,
+    float transmittedIOR,
+    thread float &cosineTransmitted);
+
+static float opaqueDielectricSpecularProbability(
+    MaterialGPU material,
+    float incomingCosine,
+    bool frontFace
+) {
+    float incidentIOR = frontFace ? 1.0f : material.ior;
+    float transmittedIOR = frontFace ? material.ior : 1.0f;
+    float ignoredTransmittedCosine = 0.0f;
+    float fresnel = dielectricFresnel(
+        incomingCosine, incidentIOR, transmittedIOR,
+        ignoredTransmittedCosine);
+    return clamp(fresnel, 0.05f, 0.95f);
+}
+
 static BSDFEvaluation evaluateBSDF(
     MaterialGPU material,
     int responseKind,
     float4 normal,
+    bool frontFace,
     float4 incomingDirection,
     float4 outgoingDirection
 ) {
@@ -400,6 +426,146 @@ static BSDFEvaluation evaluateBSDF(
         // Reflection's 1/(4 wi·h) Jacobian cancels its final factor.
         evaluation.pdf = distribution * incomingMasking /
         max(4.0f * incomingCosine, EPS);
+        evaluation.valid = all(isfinite(evaluation.value)) &&
+        isfinite(evaluation.pdf) && evaluation.pdf > 0.0f;
+        return evaluation;
+    }
+    if (model == BSDF_MODEL_GGX_OPAQUE_DIELECTRIC) {
+        float incomingCosine = mdot(normal, incomingDirection);
+        float outgoingCosine = mdot(normal, outgoingDirection);
+        if (incomingCosine <= EPS || outgoingCosine <= EPS)
+            return evaluation;
+        float4 halfDirection = tangentNormalize(
+            incomingDirection + outgoingDirection);
+        float halfCosine = mdot(normal, halfDirection);
+        if (halfCosine < 0.0f) {
+            halfDirection = -halfDirection;
+            halfCosine = -halfCosine;
+        }
+        float incomingHalfCosine =
+        mdot(incomingDirection, halfDirection);
+        if (halfCosine <= 0.0f || incomingHalfCosine <= 0.0f)
+            return evaluation;
+
+        float incidentIOR = frontFace ? 1.0f : material.ior;
+        float transmittedIOR = frontFace ? material.ior : 1.0f;
+        float ignoredTransmittedCosine = 0.0f;
+        float microfacetFresnel = dielectricFresnel(
+            incomingHalfCosine, incidentIOR, transmittedIOR,
+            ignoredTransmittedCosine);
+        float incomingFresnel = dielectricFresnel(
+            incomingCosine, incidentIOR, transmittedIOR,
+            ignoredTransmittedCosine);
+        float outgoingFresnel = dielectricFresnel(
+            outgoingCosine, incidentIOR, transmittedIOR,
+            ignoredTransmittedCosine);
+        float alpha = ggxAlpha(material);
+        float distribution = ggxDistribution(halfCosine, alpha);
+        float incomingMasking = ggxSmithG1(incomingCosine, alpha);
+        float outgoingMasking = ggxSmithG1(outgoingCosine, alpha);
+        float3 specular = float3(
+            microfacetFresnel * distribution * incomingMasking *
+            outgoingMasking /
+            max(4.0f * incomingCosine * outgoingCosine, EPS));
+        const float inversePi = 0.31830988618f;
+        float3 diffuse = clamp(material.baseColor.rgb, 0.0f, 1.0f) *
+        (1.0f - incomingFresnel) * (1.0f - outgoingFresnel) *
+        inversePi;
+        evaluation.value = specular + diffuse;
+
+        float specularProbability = opaqueDielectricSpecularProbability(
+            material, incomingCosine, frontFace);
+        float specularPDF = distribution * incomingMasking /
+        max(4.0f * incomingCosine, EPS);
+        float diffusePDF = outgoingCosine * inversePi;
+        evaluation.pdf = specularProbability * specularPDF +
+        (1.0f - specularProbability) * diffusePDF;
+        evaluation.valid = all(isfinite(evaluation.value)) &&
+        isfinite(evaluation.pdf) && evaluation.pdf > 0.0f;
+        return evaluation;
+    }
+    if (model == BSDF_MODEL_GGX_DIELECTRIC) {
+        float incomingCosine = mdot(normal, incomingDirection);
+        float outgoingCosine = mdot(normal, outgoingDirection);
+        if (incomingCosine <= EPS || abs(outgoingCosine) <= EPS)
+            return evaluation;
+        float incidentIOR = frontFace ? 1.0f : material.ior;
+        float transmittedIOR = frontFace ? material.ior : 1.0f;
+        float alpha = ggxAlpha(material);
+        float incomingMasking = ggxSmithG1(incomingCosine, alpha);
+        if (outgoingCosine > 0.0f) {
+            float4 halfDirection = tangentNormalize(
+                incomingDirection + outgoingDirection);
+            float halfCosine = mdot(normal, halfDirection);
+            if (halfCosine < 0.0f) {
+                halfDirection = -halfDirection;
+                halfCosine = -halfCosine;
+            }
+            float incomingHalfCosine =
+            mdot(incomingDirection, halfDirection);
+            if (halfCosine <= 0.0f || incomingHalfCosine <= 0.0f)
+                return evaluation;
+            float ignoredTransmittedCosine = 0.0f;
+            float fresnel = dielectricFresnel(
+                incomingHalfCosine, incidentIOR, transmittedIOR,
+                ignoredTransmittedCosine);
+            float distribution = ggxDistribution(halfCosine, alpha);
+            float masking = incomingMasking *
+            ggxSmithG1(outgoingCosine, alpha);
+            evaluation.value = float3(
+                fresnel * distribution * masking /
+                max(4.0f * incomingCosine * outgoingCosine, EPS));
+            evaluation.pdf = fresnel * distribution * incomingMasking /
+            max(4.0f * incomingCosine, EPS);
+        } else {
+            float4 halfDirection = tangentNormalize(-(
+                incidentIOR * incomingDirection +
+                transmittedIOR * outgoingDirection));
+            float halfCosine = mdot(normal, halfDirection);
+            if (halfCosine < 0.0f) {
+                halfDirection = -halfDirection;
+                halfCosine = -halfCosine;
+            }
+            float incomingHalfCosine =
+            mdot(incomingDirection, halfDirection);
+            float outgoingHalfCosine =
+            mdot(outgoingDirection, halfDirection);
+            if (halfCosine <= 0.0f || incomingHalfCosine <= 0.0f ||
+                outgoingHalfCosine >= 0.0f)
+                return evaluation;
+            float ignoredTransmittedCosine = 0.0f;
+            float fresnel = dielectricFresnel(
+                incomingHalfCosine, incidentIOR, transmittedIOR,
+                ignoredTransmittedCosine);
+            float oneMinusFresnel = 1.0f - fresnel;
+            if (oneMinusFresnel <= 0.0f)
+                return evaluation;
+            float denominator = incidentIOR * incomingHalfCosine +
+            transmittedIOR * outgoingHalfCosine;
+            float denominatorSquared = denominator * denominator;
+            if (denominatorSquared <= 1e-12f)
+                return evaluation;
+            float distribution = ggxDistribution(halfCosine, alpha);
+            float outgoingMasking = ggxSmithG1(-outgoingCosine, alpha);
+            float masking = incomingMasking * outgoingMasking;
+            float directionalProduct = abs(
+                incomingHalfCosine * outgoingHalfCosine);
+            float transmissionScale =
+            incidentIOR * incidentIOR / denominatorSquared;
+            evaluation.value = clamp(material.baseColor.rgb, 0.0f, 1.0f) *
+            oneMinusFresnel * distribution * masking * directionalProduct *
+            transmissionScale /
+            max(incomingCosine * -outgoingCosine, EPS);
+            float visibleNormalPDF = distribution * incomingMasking *
+            incomingHalfCosine / max(incomingCosine, EPS);
+            // Walter's refractive half-vector mapping contributes eta_t²
+            // |wo·h| / (eta_i wi·h + eta_t wo·h)² to the directional PDF.
+            float refractionJacobian =
+            transmittedIOR * transmittedIOR * abs(outgoingHalfCosine) /
+            denominatorSquared;
+            evaluation.pdf = visibleNormalPDF * oneMinusFresnel *
+            refractionJacobian;
+        }
         evaluation.valid = all(isfinite(evaluation.value)) &&
         isfinite(evaluation.pdf) && evaluation.pdf > 0.0f;
         return evaluation;
@@ -509,7 +675,7 @@ static BSDFSample sampleBSDF(
     float4 incidentDirection,
     float4 normal,
     bool frontFace,
-    float2 randomSample
+    float3 randomSample
 ) {
     BSDFSample sample{};
     int model = resolveBSDFModel(material, responseKind);
@@ -536,7 +702,7 @@ static BSDFSample sampleBSDF(
         float4 microfacetNormal;
         if (!sampleGGXVisibleNormal(
                 point, normal, viewDirection, ggxAlpha(material),
-                randomSample, microfacetNormal))
+                randomSample.xy, microfacetNormal))
             return sample;
         float viewHalfCosine = mdot(viewDirection, microfacetNormal);
         sample.direction = tangentNormalize(
@@ -553,7 +719,7 @@ static BSDFSample sampleBSDF(
             return sample;
         }
         BSDFEvaluation evaluation = evaluateBSDF(
-            material, responseKind, normal, viewDirection,
+            material, responseKind, normal, frontFace, viewDirection,
             sample.direction);
         if (!evaluation.valid || evaluation.pdf <= 0.0f)
             return BSDFSample{};
@@ -569,6 +735,140 @@ static BSDFSample sampleBSDF(
         mdot(sample.direction, sample.direction) > 0.5f;
         return sample;
     }
+    if (model == BSDF_MODEL_GGX_OPAQUE_DIELECTRIC) {
+        float4 viewDirection = -incidentDirection;
+        float incomingCosine = mdot(normal, viewDirection);
+        if (incomingCosine <= 0.0f)
+            return sample;
+        if (incomingCosine <= EPS) {
+            // The evaluator intentionally excludes this numerically unstable
+            // grazing band. Terminate it without classifying the finite ray
+            // as malformed.
+            sample.direction = normal;
+            sample.valid = all(isfinite(sample.direction)) &&
+            mdot(sample.direction, sample.direction) > 0.5f;
+            return sample;
+        }
+        float specularProbability = opaqueDielectricSpecularProbability(
+            material, incomingCosine, frontFace);
+        if (randomSample.z < specularProbability) {
+            float4 microfacetNormal;
+            if (!sampleGGXVisibleNormal(
+                    point, normal, viewDirection, ggxAlpha(material),
+                    randomSample.xy, microfacetNormal))
+                return sample;
+            float viewHalfCosine = mdot(viewDirection, microfacetNormal);
+            sample.direction = tangentNormalize(
+                incidentDirection + 2.0f * viewHalfCosine *
+                microfacetNormal);
+            sample.eventType = BSDF_EVENT_GLOSSY_REFLECTION;
+        } else {
+            float4 first, second;
+            if (!bsdfTangentFrame(point, normal, first, second))
+                return sample;
+            float radial = sqrt(clamp(randomSample.x, 0.0f, 1.0f));
+            float azimuth = TWO_PI * clamp(randomSample.y, 0.0f, 1.0f);
+            sample.direction = tangentNormalize(
+                radial * cos(azimuth) * first +
+                radial * sin(azimuth) * second +
+                sqrt(max(1.0f - radial * radial, 0.0f)) * normal);
+            sample.eventType = BSDF_EVENT_DIFFUSE;
+        }
+        sample.delta = 0;
+        float outgoingCosine = mdot(normal, sample.direction);
+        if (outgoingCosine <= EPS) {
+            sample.valid = all(isfinite(sample.direction)) &&
+            mdot(sample.direction, sample.direction) > 0.5f;
+            return sample;
+        }
+        BSDFEvaluation evaluation = evaluateBSDF(
+            material, responseKind, normal, frontFace, viewDirection,
+            sample.direction);
+        if (!evaluation.valid || evaluation.pdf <= 0.0f)
+            return BSDFSample{};
+        sample.weight = evaluation.value * outgoingCosine / evaluation.pdf;
+        sample.pdf = evaluation.pdf;
+        sample.valid = all(isfinite(sample.direction)) &&
+        all(isfinite(sample.weight)) &&
+        mdot(sample.direction, sample.direction) > 0.5f;
+        return sample;
+    }
+    if (model == BSDF_MODEL_GGX_DIELECTRIC) {
+        if (abs(material.ior - 1.0f) <= EPS) {
+            sample.direction = tangentNormalize(incidentDirection);
+            sample.weight = clamp(material.baseColor.rgb, 0.0f, 1.0f);
+            sample.pdf = 1.0f;
+            sample.eventType = BSDF_EVENT_GLOSSY_TRANSMISSION;
+            sample.delta = 1;
+            sample.valid = all(isfinite(sample.direction)) &&
+            mdot(sample.direction, sample.direction) > 0.5f;
+            return sample;
+        }
+        float4 viewDirection = -incidentDirection;
+        float incomingCosine = mdot(normal, viewDirection);
+        if (incomingCosine <= 0.0f)
+            return sample;
+        if (incomingCosine <= EPS) {
+            // Match evaluateBSDF's grazing cutoff with a valid path
+            // termination instead of reporting an invalid BSDF sample.
+            sample.direction = normal;
+            sample.valid = all(isfinite(sample.direction)) &&
+            mdot(sample.direction, sample.direction) > 0.5f;
+            return sample;
+        }
+        float alpha = ggxAlpha(material);
+        float4 microfacetNormal;
+        if (!sampleGGXVisibleNormal(
+                point, normal, viewDirection, alpha, randomSample.xy,
+                microfacetNormal))
+            return sample;
+        float viewHalfCosine = mdot(viewDirection, microfacetNormal);
+        float incidentIOR = frontFace ? 1.0f : material.ior;
+        float transmittedIOR = frontFace ? material.ior : 1.0f;
+        float transmittedHalfCosine = 0.0f;
+        float fresnel = dielectricFresnel(
+            viewHalfCosine, incidentIOR, transmittedIOR,
+            transmittedHalfCosine);
+        bool reflect = randomSample.z < fresnel;
+        if (reflect) {
+            sample.direction = tangentNormalize(
+                incidentDirection + 2.0f * viewHalfCosine *
+                microfacetNormal);
+            sample.eventType = BSDF_EVENT_GLOSSY_REFLECTION;
+        } else {
+            float eta = incidentIOR / transmittedIOR;
+            sample.direction = tangentNormalize(
+                eta * incidentDirection +
+                (eta * viewHalfCosine - transmittedHalfCosine) *
+                microfacetNormal);
+            sample.eventType = BSDF_EVENT_GLOSSY_TRANSMISSION;
+        }
+        sample.delta = 0;
+        float outgoingCosine = mdot(normal, sample.direction);
+        bool validHemisphere = reflect
+        ? outgoingCosine > EPS : outgoingCosine < -EPS;
+        if (!validHemisphere) {
+            sample.valid = all(isfinite(sample.direction)) &&
+            mdot(sample.direction, sample.direction) > 0.5f;
+            return sample;
+        }
+        BSDFEvaluation evaluation = evaluateBSDF(
+            material, responseKind, normal, frontFace, viewDirection,
+            sample.direction);
+        if (!evaluation.valid || evaluation.pdf <= 0.0f)
+            return BSDFSample{};
+        float outgoingMasking = ggxSmithG1(abs(outgoingCosine), alpha);
+        sample.weight = reflect
+        ? float3(outgoingMasking)
+        : clamp(material.baseColor.rgb, 0.0f, 1.0f) * outgoingMasking *
+          (incidentIOR * incidentIOR /
+           (transmittedIOR * transmittedIOR));
+        sample.pdf = evaluation.pdf;
+        sample.valid = all(isfinite(sample.direction)) &&
+        all(isfinite(sample.weight)) &&
+        mdot(sample.direction, sample.direction) > 0.5f;
+        return sample;
+    }
     if (model == BSDF_MODEL_DELTA_DIELECTRIC) {
         float incidentIOR = frontFace ? 1.0f : material.ior;
         float transmittedIOR = frontFace ? material.ior : 1.0f;
@@ -578,7 +878,7 @@ static BSDFSample sampleBSDF(
         float fresnel = dielectricFresnel(
             cosineIncident, incidentIOR, transmittedIOR,
             cosineTransmitted);
-        bool reflect = randomSample.x < fresnel;
+        bool reflect = randomSample.z < fresnel;
         if (reflect) {
             sample.direction = tangentNormalize(
                 incidentDirection + 2.0f * cosineIncident * normal);
@@ -616,7 +916,7 @@ static BSDFSample sampleBSDF(
         radial * cos(azimuth) * first + radial * sin(azimuth) * second +
         sqrt(max(1.0f - radial * radial, 0.0f)) * normal);
     BSDFEvaluation evaluation = evaluateBSDF(
-        material, responseKind, normal, -incidentDirection,
+        material, responseKind, normal, frontFace, -incidentDirection,
         sample.direction);
     float cosine = clamp(mdot(normal, sample.direction), 0.0f, 1.0f);
     if (!evaluation.valid || evaluation.pdf <= 0.0f || cosine <= 0.0f)
@@ -1147,8 +1447,18 @@ static float3 shade(Event hit, ObjectGPU object, MaterialGPU material, int chart
              thread uint &compoundPortalHops, thread uint &portalTests,
              thread bool &hitHopLimit) {
     const float inversePi = 0.31830988618f;
-    float3 radiance =
-    clamp(material.baseColor.rgb, 0.0f, 1.0f) * float3(ambient);
+    float4 normal;
+    if (!bsdfCanonicalNormal(hit.point, hit.normal, normal)) {
+        errorBits |= 32u;
+        return float3(0);
+    }
+    bool frontFace = mdot(normal, view) >= 0.0f;
+    if (!frontFace)
+        normal = -normal;
+    int bsdfModel = resolveBSDFModel(material, object.responseKind);
+    float3 radiance = bsdfModel == BSDF_MODEL_GGX_DIELECTRIC
+    ? float3(0)
+    : clamp(material.baseColor.rgb, 0.0f, 1.0f) * float3(ambient);
     float3 spec = float3(0);
     int chartStack[5], nextPortal[5], incoming[5];
     float4x4 toStart[5];
@@ -1167,7 +1477,7 @@ static float3 shade(Event hit, ObjectGPU object, MaterialGPU material, int chart
                 if (!isfinite(d) || d < EPS)
                     continue;
                 float4 ld = directionTo(hit.point, lightPosition, d);
-                float nd = clamp(mdot(hit.normal, ld), 0.0f, 1.0f);
+                float nd = clamp(mdot(normal, ld), 0.0f, 1.0f);
                 if (nd <= 0.0f)
                     continue;
                 if (enableShadows) {
@@ -1204,7 +1514,8 @@ static float3 shade(Event hit, ObjectGPU object, MaterialGPU material, int chart
                 }
                 float3 irradiance = float3(l.color) * attenuation;
                 BSDFEvaluation evaluation = evaluateBSDF(
-                    material, object.responseKind, hit.normal, view, ld);
+                    material, object.responseKind, normal, frontFace, view,
+                    ld);
                 radiance += irradiance * evaluation.value * nd;
                 // Point-light scenes are authored π brighter, while spherical
                 // preview attenuation above is converted to irradiance by π.
@@ -1212,7 +1523,7 @@ static float3 shade(Event hit, ObjectGPU object, MaterialGPU material, int chart
                 float legacySpecularScale = inversePi;
                 float4 halfv = tangentNormalize(ld + view);
                 float specularCosine =
-                clamp(mdot(hit.normal, halfv), 0.0f, 1.0f);
+                clamp(mdot(normal, halfv), 0.0f, 1.0f);
                 spec +=
                 irradiance * pow(specularCosine, 32.0f) * nd *
                 legacySpecularScale;
@@ -1462,7 +1773,8 @@ static TraceResult traceDeterministicSample(
         MaterialGPU m = materials[o.colorIdx];
         int bsdfModel = resolveBSDFModel(m, o.responseKind);
         if (bsdfModel == BSDF_MODEL_LAMBERTIAN ||
-            bsdfModel == BSDF_MODEL_GGX_CONDUCTOR) {
+            bsdfModel == BSDF_MODEL_GGX_CONDUCTOR ||
+            bsdfModel == BSDF_MODEL_GGX_OPAQUE_DIELECTRIC) {
             radiance +=
             throughput * shade(e, o, m, chartId, -e.tangent, charts, portals,
                                objects, quadrics, clips, lights,
@@ -1474,8 +1786,20 @@ static TraceResult traceDeterministicSample(
                                portalTests, hitHopLimit);
             break;
         }
+        if (bsdfModel == BSDF_MODEL_GGX_DIELECTRIC) {
+            radiance +=
+            throughput * shade(e, o, m, chartId, -e.tangent, charts, portals,
+                               objects, quadrics, clips, lights,
+                               h->controls.ambient, h->controls.falloffK,
+                               clamp(h->controls.maxLightHops, 0, 4),
+                               clamp(h->controls.maxLightStates, 1, 256),
+                               h->controls.maxChartHops, enableShadows, error,
+                               secondaryPortalHops, compoundPortalHops,
+                               portalTests, hitHopLimit);
+        }
         if (bsdfModel != BSDF_MODEL_DELTA_REFLECTION &&
-            bsdfModel != BSDF_MODEL_DELTA_DIELECTRIC) {
+            bsdfModel != BSDF_MODEL_DELTA_DIELECTRIC &&
+            bsdfModel != BSDF_MODEL_GGX_DIELECTRIC) {
             error |= 1u;
             break;
         }
@@ -1501,16 +1825,21 @@ static TraceResult traceDeterministicSample(
         if (!frontFace)
             normal = -normal;
         float dielectricChoice =
-        bsdfModel == BSDF_MODEL_DELTA_DIELECTRIC ? 0.5f : 0.0f;
+        (bsdfModel == BSDF_MODEL_DELTA_DIELECTRIC ||
+         bsdfModel == BSDF_MODEL_GGX_DIELECTRIC) ? 0.5f : 0.0f;
+        MaterialGPU continuationMaterial = m;
+        if (bsdfModel == BSDF_MODEL_GGX_DIELECTRIC)
+            continuationMaterial.roughness = 0.0f;
         BSDFSample bsdf = sampleBSDF(
-            m, o.responseKind, e.point, e.tangent, normal, frontFace,
-            float2(dielectricChoice, 0));
+            continuationMaterial, o.responseKind, e.point, e.tangent, normal,
+            frontFace, float3(0, 0, dielectricChoice));
         if (!bsdf.valid) {
             error |= 4u;
             break;
         }
         float deterministicLobeWeight =
-        bsdfModel == BSDF_MODEL_DELTA_DIELECTRIC ? bsdf.pdf : 1.0f;
+        (bsdfModel == BSDF_MODEL_DELTA_DIELECTRIC ||
+         bsdfModel == BSDF_MODEL_GGX_DIELECTRIC) ? bsdf.pdf : 1.0f;
         float continuationAttenuation =
         m.compatibilityKind == MATERIAL_LEGACY
         ? clamp(h->controls.bounceAttenuation, 0.0f, 1.0f) : 1.0f;

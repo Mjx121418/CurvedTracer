@@ -199,6 +199,7 @@ static float3 photoDirectLighting(
     float4 normal,
     MaterialGPU material,
     int responseKind,
+    bool frontFace,
     int chartId,
     device const HeaderGPU *h,
     device const ChartGPU *charts,
@@ -237,10 +238,11 @@ static float3 photoDirectLighting(
                         !photoSampleSphericalEmitter(
                             lightCenter, light.radius, randomState,
                             lightPosition, lightNormal)) {
-                        result.errorBits |= 4u;
+                        result.errorBits |=
+                        PHOTO_DIAGNOSTIC_INVALID_EMITTER_SAMPLE;
                         continue;
                     }
-                    if (hasBSDFSample) {
+                    if (hasBSDFSample && bsdfSample.pdf > 0.0f) {
                         float centerDistance = intrinsicDistance(
                             hit.point, lightCenter);
                         if (isfinite(centerDistance)) {
@@ -273,7 +275,7 @@ static float3 photoDirectLighting(
                 if (cosine <= 0.0f)
                     continue;
                 BSDFEvaluation evaluation = evaluateBSDF(
-                    material, responseKind, normal, -hit.tangent,
+                    material, responseKind, normal, frontFace, -hit.tangent,
                     lightDirection);
                 if (!evaluation.valid || evaluation.pdf <= 0.0f)
                     continue;
@@ -411,7 +413,7 @@ static TraceResult tracePathSample(
     TraceResult result{};
     RayState ray;
     if (!makeCameraRay(h, samplePosition, renderSize, ray)) {
-        result.errorBits = 4u;
+        result.errorBits = DIAGNOSTIC_INVALID_RAY_STATE;
         result.radiance = float3(1, 0, 1);
         return result;
     }
@@ -445,7 +447,7 @@ static TraceResult tracePathSample(
         canonicalHit.chartId = surface.chartId;
         if (!canonicalizeRayState(
                 canonicalHit.point, canonicalHit.tangent)) {
-            result.errorBits |= 4u;
+            result.errorBits |= DIAGNOSTIC_INVALID_RAY_STATE;
             break;
         }
         hit.point = canonicalHit.point;
@@ -465,7 +467,9 @@ static TraceResult tracePathSample(
         if (bsdfModel != BSDF_MODEL_LAMBERTIAN &&
             bsdfModel != BSDF_MODEL_DELTA_REFLECTION &&
             bsdfModel != BSDF_MODEL_DELTA_DIELECTRIC &&
-            bsdfModel != BSDF_MODEL_GGX_CONDUCTOR) {
+            bsdfModel != BSDF_MODEL_GGX_CONDUCTOR &&
+            bsdfModel != BSDF_MODEL_GGX_DIELECTRIC &&
+            bsdfModel != BSDF_MODEL_GGX_OPAQUE_DIELECTRIC) {
             result.errorBits |= 1u;
             break;
         }
@@ -473,25 +477,33 @@ static TraceResult tracePathSample(
         bool hasBSDFSample = depth < maxBounces;
         BSDFSample bsdfSample{};
         if (hasBSDFSample) {
-            float2 randomSample =
-            bsdfModel == BSDF_MODEL_DELTA_REFLECTION
-            ? float2(0)
-            : float2(photoRandom(randomState), photoRandom(randomState));
+            float3 randomSample;
+            if (bsdfModel == BSDF_MODEL_DELTA_REFLECTION) {
+                randomSample = float3(0);
+            } else if (bsdfModel == BSDF_MODEL_DELTA_DIELECTRIC) {
+                randomSample = float3(0, 0, photoRandom(randomState));
+            } else {
+                randomSample = float3(
+                    photoRandom(randomState), photoRandom(randomState),
+                    photoRandom(randomState));
+            }
             bsdfSample = sampleBSDF(
                 material, object.responseKind, hit.point, hit.tangent,
                 normal, frontFace, randomSample);
             if (!bsdfSample.valid) {
-                result.errorBits |= 4u;
+                result.errorBits |= PHOTO_DIAGNOSTIC_INVALID_BSDF_SAMPLE;
                 break;
             }
         }
 
         if (bsdfModel == BSDF_MODEL_LAMBERTIAN ||
-            bsdfModel == BSDF_MODEL_GGX_CONDUCTOR) {
+            bsdfModel == BSDF_MODEL_GGX_CONDUCTOR ||
+            bsdfModel == BSDF_MODEL_GGX_DIELECTRIC ||
+            bsdfModel == BSDF_MODEL_GGX_OPAQUE_DIELECTRIC) {
             radiance += throughput * photoDirectLighting(
-                hit, normal, material, object.responseKind, surface.chartId, h,
-                charts, portals, objects, quadrics, clips, lights, result,
-                randomState, hasBSDFSample, bsdfSample);
+                hit, normal, material, object.responseKind, frontFace,
+                surface.chartId, h, charts, portals, objects, quadrics, clips,
+                lights, result, randomState, hasBSDFSample, bsdfSample);
         }
         if (!hasBSDFSample)
             break;
@@ -504,7 +516,7 @@ static TraceResult tracePathSample(
         if (max(max(throughput.r, throughput.g), throughput.b) <= EPS)
             break;
         if (!canonicalizeRayState(ray.point, ray.tangent)) {
-            result.errorBits |= 4u;
+            result.errorBits |= DIAGNOSTIC_INVALID_RAY_STATE;
             break;
         }
     }

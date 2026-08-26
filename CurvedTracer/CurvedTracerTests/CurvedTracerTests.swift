@@ -501,7 +501,7 @@ struct CurvedTracerTests {
         #expect(abs(float32(bytes, at: 140) - 0.6) < 0.0001)
     }
 
-    @Test func pathRoomUsesPhysicalConductorGGXAndDielectricDispatch() {
+    @Test func pathRoomUsesConductorAndDielectricGGXDispatch() {
         var atlas = geo.Atlas()
         _ = EuclideanScene.pathTracingRoom(&atlas)
         let bytes = [UInt8](atlas.packetBytes())
@@ -515,6 +515,9 @@ struct CurvedTracerTests {
         #expect(materialCount == 7)
 
         let objectOffset = 192 + chartCount * 32 + portalCount * 96
+        let blueObjectOffset = objectOffset + 6 * 48
+        #expect(int32(bytes, at: blueObjectOffset + 24) == 0)
+        #expect(int32(bytes, at: blueObjectOffset + 28) == 3)
         let mirrorObjectOffset = objectOffset + 7 * 48
         // The object is deliberately opaque: its physical material selects
         // ideal-conductor reflection independently of this legacy field.
@@ -523,6 +526,12 @@ struct CurvedTracerTests {
 
         let materialOffset = objectOffset + objectCount * 48
             + quadricCount * 64 + clipCount * 32
+        let blueMaterialOffset = materialOffset + 3 * 64
+        #expect(int32(bytes, at: blueMaterialOffset + 28) == 0)
+        #expect(abs(float32(bytes, at: blueMaterialOffset + 48) - 0.38) < 0.0001)
+        #expect(float32(bytes, at: blueMaterialOffset + 52) == 0.0)
+        #expect(float32(bytes, at: blueMaterialOffset + 56) == 1.5)
+        #expect(float32(bytes, at: blueMaterialOffset + 60) == 0.0)
         let mirrorMaterialOffset = materialOffset + 4 * 64
         #expect(abs(float32(bytes, at: mirrorMaterialOffset) - 0.92) < 0.0001)
         #expect(abs(float32(bytes, at: mirrorMaterialOffset + 4) - 0.95) < 0.0001)
@@ -540,7 +549,7 @@ struct CurvedTracerTests {
         #expect(abs(float32(bytes, at: glassMaterialOffset + 4) - 0.99) < 0.0001)
         #expect(float32(bytes, at: glassMaterialOffset + 8) == 1.0)
         #expect(int32(bytes, at: glassMaterialOffset + 28) == 0)
-        #expect(float32(bytes, at: glassMaterialOffset + 48) == 0.0)
+        #expect(abs(float32(bytes, at: glassMaterialOffset + 48) - 0.18) < 0.0001)
         #expect(float32(bytes, at: glassMaterialOffset + 52) == 0.0)
         #expect(float32(bytes, at: glassMaterialOffset + 56) == 1.5)
         #expect(float32(bytes, at: glassMaterialOffset + 60) == 1.0)

@@ -1003,7 +1003,24 @@ final class Renderer: NSObject, MTKViewDelegate {
             if errorBits == 0 {
                 NSLog("GPU tracing diagnostics cleared")
             } else {
-                NSLog("GPU tracing diagnostics: 0x%08x", errorBits)
+                var labels: [String] = []
+                if errorBits & 0x00000004 != 0 {
+                    labels.append("invalid ray state/canonicalization")
+                }
+                if errorBits & 0x00000080 != 0 {
+                    labels.append("invalid Photo Mode BSDF sample")
+                }
+                if errorBits & 0x00000100 != 0 {
+                    labels.append("invalid Photo Mode emitter sample")
+                }
+                if labels.isEmpty {
+                    NSLog("GPU tracing diagnostics: 0x%08x", errorBits)
+                } else {
+                    NSLog(
+                        "GPU tracing diagnostics: 0x%08x (%@)",
+                        errorBits,
+                        labels.joined(separator: ", "))
+                }
             }
             lastAtlasStatus = errorBits
         }

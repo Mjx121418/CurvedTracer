@@ -42,13 +42,14 @@ enum EuclideanScene {
             geo.vec4(0.78, 0.08, 0.05, 1), geo.vec4(0, 0, 0, 0))
         let green = atlas.addMaterial(
             geo.vec4(0.08, 0.68, 0.12, 1), geo.vec4(0, 0, 0, 0))
-        let blue = atlas.addMaterial(
-            geo.vec4(0.08, 0.28, 0.82, 1), geo.vec4(0, 0, 0, 0))
+        let blue = atlas.addPhysicalMaterial(
+            geo.vec4(0.08, 0.28, 0.82, 1), 0.38, 0, 1.5, 0,
+            geo.vec3(0, 0, 0))
         let mirror = atlas.addPhysicalMaterial(
             geo.vec4(0.92, 0.95, 1, 1), 0, 1, 1.5, 0,
             geo.vec3(0, 0, 0))
-        let glass = atlas.addPhysicalMaterial(
-            geo.vec4(0.98, 0.99, 1, 1), 0, 0, 1.5, 1,
+        let roughGlass = atlas.addPhysicalMaterial(
+            geo.vec4(0.98, 0.99, 1, 1), 0.18, 0, 1.5, 1,
             geo.vec3(0, 0, 0))
         let roughMetal = atlas.addPhysicalMaterial(
             geo.vec4(0.95, 0.64, 0.2, 1), 0.32, 1, 1.5, 0,
@@ -66,7 +67,7 @@ enum EuclideanScene {
         _ = atlas.addBallSurface(
             0, geo.vec4(0.4, -0.64, 0.45, 1), 0.28, mirror, 0)
         _ = atlas.addBallSurface(
-            0, geo.vec4(0, -0.68, -0.35, 1), 0.22, glass, 0)
+            0, geo.vec4(0, -0.68, -0.35, 1), 0.22, roughGlass, 0)
         _ = atlas.addBallSurface(
             0, geo.vec4(0.62, -0.74, -0.32, 1), 0.18, roughMetal, 0)
         _ = atlas.addSphericalAreaLight(
@@ -76,7 +77,7 @@ enum EuclideanScene {
         atlas.setCamera(
             0.62, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0),
             geo.vec3(0, -0.08, 1))
-        atlas.setControls(6, 0.35, 0.05, 0.95, 0, 0, 0)
+        atlas.setControls(8, 0.35, 0.05, 0.95, 0, 0, 0)
         let camera = atlas.cameraChartAt(0, geo.vec4(0, 0, -1.15, 1), 10)
         let result = atlas.build(camera, 64)
         if result != 0 { fatalError("R³ path tracing room build failed: \(result)") }

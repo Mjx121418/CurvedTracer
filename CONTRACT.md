@@ -177,10 +177,14 @@ Both kernels use the shared `evaluateBSDF` and `sampleBSDF` interface. An
 evaluation returns the BSDF value and directional PDF. A sample returns the
 continued direction, throughput weight, PDF, event type, and delta flag. The
 version-13 implementation provides cosine-weighted Lambertian evaluation and
-sampling, ideal and rough conductor reflection, and smooth ideal-dielectric
-reflection/refraction. A physical material with zero transmission and metallic
-zero is Lambertian. Metallic one with zero transmission selects a conductor:
-roughness zero is an ideal reflection colored by `baseColor`, while positive
+sampling, ideal and rough conductor reflection, and ideal and rough dielectric
+reflection/refraction. A physical material with zero transmission, metallic
+zero, and roughness zero is Lambertian. Positive roughness selects an opaque
+dielectric layer: exact-IOR GGX reflection over a Fresnel-reduced Lambertian
+substrate. Its sampler mixes visible-normal reflection and cosine-weighted
+diffuse directions and reports the combined PDF. Metallic one with zero
+transmission selects a conductor: roughness zero is an ideal reflection
+colored by `baseColor`, while positive
 roughness uses an isotropic GGX microfacet BRDF. GGX maps perceptual roughness
 to `alpha = max(roughness², 0.001)`, uses the Trowbridge–Reitz normal
 distribution, separable Smith masking-shadowing, and a `baseColor` Schlick
@@ -189,25 +193,29 @@ reports the matching solid-angle PDF for MIS. Real-time mode directly evaluates
 the same lobe under the scene lights and uses the material color as an indirect
 specular ambient approximation.
 
-A material with metallic and roughness zero and transmission one is ideal
-dielectric glass. Glass uses exact unpolarized Fresnel probabilities, Snell
+A material with metallic zero and transmission one is dielectric glass.
+Roughness zero selects the ideal interface; positive roughness selects an
+isotropic GGX microfacet dielectric. Both use exact unpolarized Fresnel, Snell
 refraction, total internal reflection, and the squared relative-IOR radiance
-Jacobian. Its `baseColor` tints transmission but not reflection.
+Jacobian. Rough glass samples the same visible-normal distribution as the
+conductor and applies the refractive half-vector Jacobian to its transmission
+PDF. Its `baseColor` tints transmission but not reflection. Real-time rough
+glass evaluates its GGX reflection under the scene lights and uses a stable
+macro-normal dominant-lobe continuation for the transmitted view.
 
 Dielectric surfaces currently assume an air exterior, a homogeneous material
 interior, and an outward geometric normal. Closed balls satisfy this contract;
 nested or overlapping dielectric media do not yet carry an IOR stack. Photo
 Mode stochastically selects the Fresnel lobes. The single-path real-time tracer
 chooses the dominant lobe and applies that lobe's Fresnel coefficient. Partial
-transmission, intermediate metallic values, and rough dielectrics report an
-unsupported material diagnostic until their mixed or transmissive GGX lobes
-exist. Legacy materials continue to select Lambertian or delta reflection from
-the object response and remain subject to the legacy bounce-attenuation
+transmission and intermediate metallic values report an unsupported material
+diagnostic until their mixed lobes exist. Legacy materials continue to select
+Lambertian or delta reflection from the object response and remain subject to
+the legacy bounce-attenuation
 control. Physical specular continuations are energy conserving and do not
 apply that empirical attenuation. The interface and tangent-frame construction
-are common to R³,
-S³, and H³; emission and the remaining rough/mixed cases are reserved for
-later stages.
+are common to R³, S³, and H³; emission and the remaining rough/mixed cases are
+reserved for later stages.
 
 Real-time and Photo Mode use the same nonnegative exposure multiplier and
 Reinhard display transform, `display = exposure * radiance /

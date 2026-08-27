@@ -23,11 +23,23 @@ ordinary curved scenes, multi-chart covers, and quotient spaces.
 
 ### Hopf fibration
 
-The S³ Hopf-fibration scene places a thin tube around each of the 20 great-circle
-fibers over the vertices of a regular dodecahedron in S². The fibers are split
-between overlapping antipodal charts so every circle is rendered completely.
+These scenes are based on the Hopf fibration.
 
-![Hopf fibration](<Images/Hopf.png>)
+#### Lifted dodecahedron
+
+This scene consists of 20 thin tubes around the 20 great-circle
+fibers over the vertices of a regular dodecahedron in S².
+The camera is placed on the fiber of the center of a face,
+looking along the fiber.
+
+![Hopf dodecahedron](<Images/Hopf-dodecahedron.jpg>)
+
+#### Pentagonal tube
+
+We lift the 5 edges of pentagon face in the regular dodecahedron.
+They form a pentagonal tube enclosed by 5 patches of the Clifford torus.
+
+![Pentagonal tube](<Images/Hopf-pentagonal-tube.jpg>)
 
 ### Hyperbolic honeycomb
 

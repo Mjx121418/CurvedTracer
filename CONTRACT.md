@@ -1,6 +1,8 @@
-# GeometryCore contract, version 14
+# GeometryCore contract, version 15
 
-Version 14 removes the transitional legacy-material boundary. BSDF selection
+Version 15 adds homogeneous quadric object clips while preserving the 32-byte
+clip record and existing surface/portal packet layout. Version 14 removed the
+transitional legacy-material boundary. BSDF selection
 is exclusively material-driven; objects no longer carry opaque/mirror response
 state, and the packet no longer carries compatibility or Blinn–Phong fields.
 Version 13 added the physical-material packet and shared shader BSDF interface.
@@ -55,6 +57,7 @@ addQuadric(chart, columnMajorSymmetricMatrix, material)
 addCliffordTorus(chart, material)
 addObjectClip(object, normal, offset)
 addObjectClipPlane(object, outwardDirection, signedDistance)
+addObjectClipQuadric(object, columnMajorSymmetricMatrix, keepPositive)
 addMaterial(baseColor, roughness, metallic, IOR, transmission, emission)
 addLight(chart, vec4 position, color, intensity)
 addSphericalAreaLight(chart, vec4 center, intrinsicRadius,
@@ -85,8 +88,12 @@ matrix. The coefficient scale is normalized during authoring. In R³,
 scattering is independent of equation kind: linear and quadratic surfaces both
 obtain their BSDF exclusively from their material.
 
-Each object may carry up to 16 linear clips. A clip retains
-`metricDot(n,P) <= h`; clip surfaces are invisible and do not create caps.
+Each object may carry up to 16 clips. Linear clips retain
+`metricDot(n,P) <= h`. A quadric clip retains `PᵀQP <= 0` when
+`keepPositive` is false and `PᵀQP >= 0` when it is true. Quadric matrices are
+normalized and transformed with the containing chart during flattening. Clip
+surfaces are invisible and do not create caps, so intersecting a plane with a
+quadric produces only the retained portion of the plane.
 
 `addPortalPair` gives trigger planes a `0.01`-unit outward intrinsic collar.
 `addPortalPairWithCollar` accepts an explicit nonnegative collar for atlas
@@ -97,7 +104,7 @@ compound portal reduction.
 
 ## Packet
 
-`GEO_CONTRACT_VERSION` is 14 and `GEO_PACKET_MAGIC` is `0x41545243`. Both
+`GEO_CONTRACT_VERSION` is 15 and `GEO_PACKET_MAGIC` is `0x41545243`. Both
 `build()` and `buildAtlas()` emit:
 
 ```text
@@ -105,7 +112,7 @@ ScenePacketHeader (192)
 GPUChart[chartCount] (32 each)
 GPUPortal[portalCount] (96 each)
 Object[objectCount] (48 each)
-Quadric[quadricCount] (64 each)
+Quadric[quadricCount] (64 each; surface and quadric-clip matrices share this table)
 PrimitiveClip[clipCount] (32 each)
 Material[materialCount] (48 each)
 PointLight[lightCount] (48 each)

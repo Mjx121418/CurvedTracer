@@ -1,8 +1,8 @@
 #pragma once
-// Version-14 scene packet shared verbatim by C++ and Metal.
+// Version-15 scene packet shared verbatim by C++ and Metal.
 #include "GeometryCore/Math.h"
 
-#define GEO_CONTRACT_VERSION 14
+#define GEO_CONTRACT_VERSION 15
 #define GEO_PACKET_MAGIC 0x41545243
 
 #define GEO_MAX_OBJECTS 4096
@@ -11,6 +11,7 @@
 #define GEO_MAX_CHARTS 256
 #define GEO_MAX_PORTALS 1024
 #define GEO_MAX_CHART_DEPTH 64
+#define GEO_MAX_QUADRICS 4096
 #define GEO_MAX_CLIPS 65536
 #define GEO_MAX_CLIPS_PER_OBJECT 16
 
@@ -27,6 +28,7 @@
 
 #define GEO_CLIP_LINEAR 0
 #define GEO_CLIP_BALL 1
+#define GEO_CLIP_QUADRIC 2
 
 namespace geo {
 
@@ -106,6 +108,8 @@ struct Quadric {
 
 // LINEAR retains metricDot(geometry, P) <= parameter.
 // BALL retains the intrinsic ball encoded by geometry/parameter.
+// QUADRIC retains Q(P) <= 0 when pad1 == 0 and Q(P) >= 0 when pad1 != 0;
+// pad0 indexes the shared Quadric table. Geometry and parameter are unused.
 struct PrimitiveClip {
     vec4 geometry;
     float parameter;

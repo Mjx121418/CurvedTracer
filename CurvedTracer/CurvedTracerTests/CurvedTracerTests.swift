@@ -185,11 +185,11 @@ struct CurvedTracerTests {
         #expect(stats.snapshot.hopLimitRays == 1)
     }
 
-    @Test func allSpaceTraversalScenesBuildV14MaterialPackets() {
+    @Test func allSpaceTraversalScenesBuildV15MaterialPackets() {
         #expect(AmbientSpace.allCases.count == 3)
         #expect(TraversalMode.allCases.count == 2)
         #expect(EuclideanFlatSceneVariant.allCases.count == 2)
-        #expect(SphericalFlatSceneVariant.allCases.count == 6)
+        #expect(SphericalFlatSceneVariant.allCases.count == 7)
         #expect(HyperbolicFlatSceneVariant.allCases.count == 4)
         #expect(HyperbolicAtlasVariant.allCases.count == 2)
         var atlas = geo.Atlas()
@@ -197,6 +197,7 @@ struct CurvedTracerTests {
             SphericalScene.cell600, SphericalScene.objectDemo,
             SphericalScene.pathTracingRoom,
             SphericalScene.primitiveGallery, SphericalScene.hopfFibration,
+            SphericalScene.hopfFacePatches,
             SphericalScene.cliffordTorusConstruction,
             SphericalScene.lensSpaceL52,
             HyperbolicScene.honeycombCell, HyperbolicScene.poincareBallDemo,
@@ -211,7 +212,7 @@ struct CurvedTracerTests {
             _ = build(&atlas)
             let bytes = [UInt8](atlas.packetBytes())
             #expect(atlas.packetSize() >= 192)
-            #expect(int32(bytes, at: 4) == 14)
+            #expect(int32(bytes, at: 4) == 15)
             let materialCount = Int(int32(bytes, at: 172))
             #expect(materialCount > 0)
         }
@@ -410,6 +411,82 @@ struct CurvedTracerTests {
         #expect(abs(float32(bytes, at: 20) - 0) < 0.0001)
         #expect(abs(float32(bytes, at: 24) - 0) < 0.0001)
         #expect(abs(float32(bytes, at: 28) - 1) < 0.0001)
+    }
+
+    @Test func hopfFacePatchesUseCliffordTorusClips() {
+        var atlas = geo.Atlas()
+        _ = SphericalScene.hopfFacePatches(&atlas)
+        var bytes = [UInt8](atlas.packetBytes())
+        #expect(int32(bytes, at: 160) == 1)
+        #expect(int32(bytes, at: 164) == 0)
+        #expect(int32(bytes, at: 168) == 10)
+        #expect(int32(bytes, at: 172) == 5)
+        #expect(int32(bytes, at: 176) == 2)
+        #expect(int32(bytes, at: 180) == 30)
+        #expect(int32(bytes, at: 184) == 40)
+
+        let firstObject = 192 + 32
+        let firstClip = firstObject + 10 * 48 + 30 * 64
+        for patch in 0..<10 {
+            let object = firstObject + patch * 48
+            #expect(int32(bytes, at: object + 20) == 2)
+            #expect(int32(bytes, at: object + 24) == Int32(patch % 5))
+            #expect(int32(bytes, at: object + 28) == Int32(patch * 4))
+            #expect(int32(bytes, at: object + 32) == 4)
+            #expect(int32(bytes, at: object + 36) == Int32(patch * 3))
+
+            let clip = firstClip + patch * 4 * 32
+            #expect(int32(bytes, at: clip + 20) == 2)
+            #expect(int32(bytes, at: clip + 24) == Int32(patch * 3 + 1))
+            #expect(int32(bytes, at: clip + 28) == 0)
+            #expect(int32(bytes, at: clip + 32 + 20) == 2)
+            #expect(int32(bytes, at: clip + 32 + 24) == Int32(patch * 3 + 2))
+            #expect(int32(bytes, at: clip + 32 + 28) == 0)
+            #expect(int32(bytes, at: clip + 64 + 20) == 0)
+            #expect(int32(bytes, at: clip + 96 + 20) == 1)
+        }
+
+        // The third authored clip splits each patch at the chart equator.
+        // The second chart owns the complementary hemisphere, so flattening
+        // remains disjoint while camera movement can complete a fiber loop.
+        #expect(atlas.buildAtlas(atlas.cameraChartId(), 64, 1, 32) == 0)
+        bytes = [UInt8](atlas.packetBytes())
+        #expect(int32(bytes, at: 160) == 2)
+        #expect(int32(bytes, at: 168) == 10)
+        #expect(int32(bytes, at: 180) == 30)
+        #expect(int32(bytes, at: 184) == 30)
+
+        let placement = SphericalScene.hopfFibrationCameraPlacement()
+        let initialForward = atlas.cameraFwd()
+        var visitedCharts = Set<Int32>([atlas.cameraChartId()])
+        var builtOppositeChart = false
+        for _ in 0..<628 {
+            let forward = atlas.cameraFwd()
+            _ = atlas.cameraMove(
+                geo.vec3(forward.x * 0.01, forward.y * 0.01, forward.z * 0.01))
+            visitedCharts.insert(atlas.cameraChartId())
+            if atlas.cameraChartId() == 1 && !builtOppositeChart {
+                #expect(atlas.build(atlas.cameraChartId(), 64) == 0)
+                builtOppositeChart = true
+            }
+        }
+        #expect(visitedCharts == Set([Int32(0), Int32(1)]))
+        #expect(builtOppositeChart)
+        #expect(atlas.cameraChartId() == 0)
+        #expect(abs(atlas.cameraFwd().x - initialForward.x) < 0.0001)
+        #expect(abs(atlas.cameraFwd().y - initialForward.y) < 0.0001)
+        #expect(abs(atlas.cameraFwd().z - initialForward.z) < 0.0001)
+        #expect(atlas.buildAtlas(atlas.cameraChartId(), 64, 1, 32) == 0)
+        bytes = [UInt8](atlas.packetBytes())
+        #expect(abs(float32(bytes, at: 16)) < 0.01)
+        #expect(abs(float32(bytes, at: 20)) < 0.01)
+        #expect(abs(float32(bytes, at: 24)) < 0.01)
+        #expect(abs(float32(bytes, at: 28) - 1) < 0.01)
+
+        let cameraForward = atlas.cameraFwd()
+        #expect(abs(cameraForward.x - placement.centeredForward.x) < 0.01)
+        #expect(abs(cameraForward.y - placement.centeredForward.y) < 0.01)
+        #expect(abs(cameraForward.z - placement.centeredForward.z) < 0.01)
     }
 
     @Test func cliffordTorusUsesEightCheckerboardReflectionPatches() {

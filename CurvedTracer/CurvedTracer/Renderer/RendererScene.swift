@@ -21,6 +21,8 @@ extension Renderer {
                 cameraChart = SphericalScene.pathTracingRoom(&atlas)
             case .primitiveGallery: cameraChart = SphericalScene.primitiveGallery(&atlas)
             case .hopfFibration: cameraChart = SphericalScene.hopfFibration(&atlas)
+            case .hopfFacePatches:
+                cameraChart = SphericalScene.hopfFacePatches(&atlas)
             case .cliffordTorusConstruction:
                 cameraChart = SphericalScene.cliffordTorusConstruction(&atlas)
             }

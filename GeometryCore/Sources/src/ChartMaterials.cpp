@@ -133,33 +133,24 @@ int Atlas::addPlane(int chart, const vec3 &dir, float d, int material) {
   return addLinearSurface(chart, normal, offset, material);
 }
 
-int Atlas::addQuadric(int chart, const float coefficients[16], int material) {
-  packet_.clear();
-  if (!validChartId(chart) || coefficients == nullptr || material < 0 ||
-      material >= int(materials_.size()) ||
-      objects_.size() >= GEO_MAX_OBJECTS) {
-    setError(3);
-    return -1;
-  }
+bool Atlas::normalizedQuadric(const float coefficients[16],
+                              mat4 &normalized) const {
+  if (coefficients == nullptr)
+    return false;
   mat4 q;
   for (int i = 0; i < 16; ++i) {
-    if (!finite(coefficients[i])) {
-      setError(3);
-      return -1;
-    }
+    if (!finite(coefficients[i]))
+      return false;
     q.m[i] = coefficients[i];
   }
   float scale = matrixScale(q);
-  if (!finite(scale) || scale == 0) {
-    setError(3);
-    return -1;
-  }
+  if (!finite(scale) || scale == 0)
+    return false;
   for (int row = 0; row < 4; ++row) {
     for (int column = row + 1; column < 4; ++column) {
       if (std::fabs(q.m[column * 4 + row] - q.m[row * 4 + column]) >
           1e-5f * scale) {
-        setError(3);
-        return -1;
+        return false;
       }
       float symmetric =
           0.5f * (q.m[column * 4 + row] + q.m[row * 4 + column]);
@@ -167,10 +158,27 @@ int Atlas::addQuadric(int chart, const float coefficients[16], int material) {
       q.m[row * 4 + column] = symmetric;
     }
   }
+  normalized = normalizedMatrix(q);
+  return true;
+}
+
+int Atlas::addQuadric(int chart, const float coefficients[16], int material) {
+  packet_.clear();
+  if (!validChartId(chart) || material < 0 ||
+      material >= int(materials_.size()) ||
+      objects_.size() >= GEO_MAX_OBJECTS) {
+    setError(3);
+    return -1;
+  }
+  mat4 normalized;
+  if (!normalizedQuadric(coefficients, normalized)) {
+    setError(3);
+    return -1;
+  }
   ChartObject o;
   o.chartId = chart;
   o.equationKind = GEO_EQUATION_QUADRIC;
-  o.quadric = normalizedMatrix(q);
+  o.quadric = normalized;
   o.colorIdx = material;
   o.needsChartBound = true;
   objects_.push_back(o);
@@ -201,7 +209,34 @@ int Atlas::addObjectClip(int object, const vec4 &raw, float offset) {
     setError(3);
     return -1;
   }
-  clips_.push_back(ChartClip{normal, normalizedOffset});
+  ChartClip clip;
+  clip.normal = normal;
+  clip.offset = normalizedOffset;
+  clips_.push_back(clip);
+  objects_[object].clipIds.push_back(int(clips_.size() - 1));
+  setError(0);
+  return int(clips_.size() - 1);
+}
+
+int Atlas::addObjectClipQuadric(int object, const float coefficients[16],
+                                bool keepPositive) {
+  packet_.clear();
+  if (object < 0 || object >= int(objects_.size()) ||
+      objects_[object].clipIds.size() >= GEO_MAX_CLIPS_PER_OBJECT ||
+      clips_.size() >= GEO_MAX_CLIPS) {
+    setError(3);
+    return -1;
+  }
+  mat4 normalized;
+  if (!normalizedQuadric(coefficients, normalized)) {
+    setError(3);
+    return -1;
+  }
+  ChartClip clip;
+  clip.kind = GEO_CLIP_QUADRIC;
+  clip.keepPositive = keepPositive ? 1 : 0;
+  clip.quadric = normalized;
+  clips_.push_back(clip);
   objects_[object].clipIds.push_back(int(clips_.size() - 1));
   setError(0);
   return int(clips_.size() - 1);

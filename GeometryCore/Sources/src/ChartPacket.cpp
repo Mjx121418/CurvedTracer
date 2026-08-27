@@ -53,6 +53,14 @@ bool Atlas::validateScene() const {
       if (clipId < 0 || clipId >= int(clips_.size()))
         return false;
   }
+  for (const auto &clip : clips_) {
+    if (clip.kind == GEO_CLIP_LINEAR)
+      continue;
+    if (clip.kind != GEO_CLIP_QUADRIC ||
+        (clip.keepPositive != 0 && clip.keepPositive != 1) ||
+        !finite(clip.quadric) || matrixScale(clip.quadric) == 0)
+      return false;
+  }
   for (const auto &p : portals_)
     if (!p.toNeighbor.validate() || !validChartId(p.neighborId) ||
         p.reversePortal < 0 || p.reversePortal >= int(portals_.size()))
@@ -152,12 +160,20 @@ int Atlas::emit(bool flatten, int cameraChart, int depth, int hops,
     for (int clipId : o.clipIds) {
       const auto &clip = clips_[clipId];
       PrimitiveClip emitted{};
-      emitted.kind = GEO_CLIP_LINEAR;
-      emitted.parameter = clip.offset;
-      emitted.geometry = developed
-                             ? transformPlane(transform, clip.normal,
-                                              emitted.parameter, modelKind_)
-                             : clip.normal;
+      emitted.kind = clip.kind;
+      if (clip.kind == GEO_CLIP_QUADRIC) {
+        emitted.pad0 = int(gpuQuadrics.size());
+        emitted.pad1 = clip.keepPositive;
+        gpuQuadrics.push_back(
+            Quadric{developed ? transformQuadric(transform, clip.quadric)
+                              : clip.quadric});
+      } else {
+        emitted.parameter = clip.offset;
+        emitted.geometry = developed
+                               ? transformPlane(transform, clip.normal,
+                                                emitted.parameter, modelKind_)
+                               : clip.normal;
+      }
       gpuClips.push_back(emitted);
     }
     if (developed && o.needsChartBound) {
@@ -229,7 +245,7 @@ int Atlas::emit(bool flatten, int cameraChart, int depth, int hops,
       gpuCharts.push_back(g);
     }
   }
-  if (gpuQuadrics.size() > GEO_MAX_OBJECTS ||
+  if (gpuQuadrics.size() > GEO_MAX_QUADRICS ||
       gpuClips.size() > GEO_MAX_CLIPS) {
     packet_.clear();
     setError(3);

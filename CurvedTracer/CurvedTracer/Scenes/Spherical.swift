@@ -656,6 +656,134 @@ enum SphericalScene {
         return camera
     }
 
+    /// Displays the inverse images of the five edges of the dodecahedron face
+    /// centered at the camera's base point. Each edge is a segment of a base
+    /// great circle, so its inverse image is a Clifford torus clipped by the
+    /// two neighboring edge tori.
+    @discardableResult static func hopfFacePatches(
+        _ atlas: inout geo.Atlas
+    ) -> Int32 {
+        atlas.start(1)
+        // Two antipodal charts of radius > π/2 cover the complete S³. Each
+        // patch is split by the chart equator, so flattening does not duplicate
+        // the surface while camera movement can cross the cover indefinitely.
+        let chartRadius: Float = Float.pi * 0.56
+        let cameraPlacement = hopfFibrationCameraPlacement()
+        let cameraFrame = s3MovePointToOrigin(cameraPlacement.point)
+        _ = atlas.seed(chartRadius)
+        let oppositeChart = atlas.addChart(
+            chartRadius, 0, antipodalMatrix, true)
+        if oppositeChart != 1 {
+            fatalError("invalid Hopf face-patch chart pair")
+        }
+
+        let colors: [geo.vec4] = [
+            geo.vec4(0.96, 0.20, 0.10, 1),
+            geo.vec4(0.08, 0.62, 1.00, 1),
+            geo.vec4(1.00, 0.78, 0.08, 1),
+            geo.vec4(0.18, 0.90, 0.38, 1),
+            geo.vec4(0.78, 0.22, 0.96, 1),
+        ]
+        for color in colors {
+            _ = addPreviewMaterial(&atlas, color)
+        }
+
+        let vertices = dodecahedronVertices()
+        // These are the five vertices of the face whose outward normal is
+        // (0, φ, 1). They are ordered cyclically around that face.
+        let faceIndices = [18, 12, 3, 17, 7]
+        let faceCenter = cameraPlacement.base
+        var edgeNormals = [SIMD3<Float>]()
+        for edge in 0..<faceIndices.count {
+            let first = vertices[faceIndices[edge]]
+            let second = vertices[faceIndices[(edge + 1) % faceIndices.count]]
+            var normal = SIMD3<Float>(
+                first.y * second.z - first.z * second.y,
+                first.z * second.x - first.x * second.z,
+                first.x * second.y - first.y * second.x)
+            let normalLength = sqrt(
+                normal.x * normal.x + normal.y * normal.y + normal.z * normal.z)
+            normal /= normalLength
+            let centerDot = normal.x * faceCenter.x
+                + normal.y * faceCenter.y + normal.z * faceCenter.z
+            if centerDot < 0 {
+                normal = -normal
+            }
+            edgeNormals.append(normal)
+        }
+
+        for chart in [Int32(0), oppositeChart] {
+            // In chart 0, w >= 0 owns the northern half of each patch. The
+            // antipodal chart receives the same local half, which maps back to
+            // w <= 0 in chart 0. The linear clip keeps the two authored copies
+            // disjoint when build() flattens the atlas.
+            let chartFrame = chart == 0 ? cameraFrame :
+                matrixProduct(antipodalMatrix, cameraFrame)
+            for edge in 0..<edgeNormals.count {
+                // At radius π/4, hopfFiberTubeQuadric is exactly the Clifford
+                // torus over the corresponding base great circle. Its value is
+                // -normal·h(P), so <= 0 retains the face-side hemisphere.
+                let torus = transformQuadric(
+                    hopfFiberTubeQuadric(
+                        base: edgeNormals[edge], radius: Float.pi / 4),
+                    by: chartFrame)
+                let patch = atlas.addQuadric(
+                    chart, torus, Int32(edge % colors.count))
+                if patch < 0 {
+                    fatalError("invalid Hopf face patch")
+                }
+
+                let previous = transformQuadric(
+                    hopfFiberTubeQuadric(
+                        base: edgeNormals[(edge + edgeNormals.count - 1)
+                            % edgeNormals.count], radius: Float.pi / 4),
+                    by: chartFrame)
+                let next = transformQuadric(
+                    hopfFiberTubeQuadric(
+                        base: edgeNormals[(edge + 1) % edgeNormals.count],
+                        radius: Float.pi / 4),
+                    by: chartFrame)
+                if atlas.addObjectClipQuadric(patch, previous, false) < 0
+                    || atlas.addObjectClipQuadric(patch, next, false) < 0
+                    || atlas.addObjectClip(
+                        patch, geo.vec4(0, 0, 0, -1), 0) < 0
+                {
+                    fatalError("invalid Hopf face patch clip")
+                }
+            }
+        }
+
+        // Keep the same two finite emitters on the camera fiber as the Hopf
+        // tube scene, so the patch scene has a directly comparable view.
+        let fiberTangent = geo.vec4(cameraPlacement.centeredForward, 0)
+        let fiberOffset: Float = 0.55
+        let warmLightCenter = s3FiberPoint(
+            cameraPlacement.point, fiberTangent, fiberOffset)
+        let coolLightCenter = s3FiberPoint(
+            cameraPlacement.point, fiberTangent, -fiberOffset)
+        let areaLightRadius: Float = 0.06
+        let areaLightRadiance: Float = 80
+        _ = atlas.addSphericalAreaLight(
+            0, matrixApply(cameraFrame, warmLightCenter), areaLightRadius,
+            geo.vec3(1, 0.92, 0.75), areaLightRadiance)
+        _ = atlas.addSphericalAreaLight(
+            0, matrixApply(cameraFrame, coolLightCenter), areaLightRadius,
+            geo.vec3(0.45, 0.68, 1), 0.7 * areaLightRadiance)
+
+        let forward = cameraPlacement.centeredForward
+        let right = geo.vec3(0, 0, 1)
+        let up = geo.vec3(forward.y, -forward.x, 0)
+        atlas.setCamera(0.88, 16.0 / 9.0, right, up, forward)
+        atlas.setControls(5, 0.05, 0.2, 2, 0, 0)
+        let camera = atlas.cameraChartAt(
+            0, geo.vec4(0, 0, 0, 1), Float.pi * 0.98)
+        let result = atlas.build(camera, 64)
+        if result != 0 {
+            fatalError("Hopf face patches build failed: \(result)")
+        }
+        return camera
+    }
+
     /// Displays Lawson's reflection construction of the Clifford torus. The
     /// linked polar circles are P = C₁₂ and Q = C₃₄, with the four uniformly
     /// spaced points ±e₁, ±e₂ on P and ±e₃, ±e₄ on Q. The base minimal disk

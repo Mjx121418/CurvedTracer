@@ -3,7 +3,7 @@ import XCTest
 
 final class GeometryCoreTests: XCTestCase {
   func testPacketLayoutAndNativePoints() {
-    XCTAssertEqual(geo.geometryCoreName(), "Geometry Core v14")
+    XCTAssertEqual(geo.geometryCoreName(), "Geometry Core v15")
     XCTAssertEqual(MemoryLayout<geo.Camera>.size, 96)
     XCTAssertEqual(MemoryLayout<geo.RenderControls>.size, 48)
     XCTAssertEqual(MemoryLayout<geo.Counts>.size, 32)
@@ -54,7 +54,7 @@ final class GeometryCoreTests: XCTestCase {
     XCTAssertEqual(atlas.build(0, 64), 0)
     let flat = [UInt8](atlas.packetBytes())
     XCTAssertEqual(flat.count, 192 + 32 + 2 * 48 + 32 + 2 * 48 + 2 * 48)
-    XCTAssertEqual(flat[4], 14)
+    XCTAssertEqual(flat[4], 15)
 
     XCTAssertEqual(atlas.buildAtlas(0, 64, 1, 32), 0)
     let authored = [UInt8](atlas.packetBytes())
@@ -81,5 +81,24 @@ final class GeometryCoreTests: XCTestCase {
     XCTAssertEqual(atlas.cameraChartAt(0, geo.vec4(0.99, 0, 0, 1), 5), 0)
     XCTAssertEqual(atlas.cameraMove(geo.vec3(0.03, 0, 0)), 0)
     XCTAssertEqual(atlas.buildAtlas(0, 64, 1, 32), 0)
+  }
+
+  func testQuadricObjectClip() {
+    var atlas = geo.Atlas()
+    atlas.start(2)
+    XCTAssertEqual(atlas.seed(3), 0)
+    XCTAssertEqual(
+      atlas.addMaterial(
+        geo.vec4(1, 1, 1, 1), 0, 0, 1.5, 0, geo.vec3()), 0
+    )
+    XCTAssertEqual(atlas.addPlane(0, geo.vec3(1, 0, 0), 0, 0), 0)
+    var sphere = [Float](repeating: 0, count: 16)
+    sphere[0] = 1
+    sphere[5] = 1
+    sphere[10] = 1
+    sphere[15] = -1
+    XCTAssertEqual(atlas.addObjectClipQuadric(0, sphere, false), 0)
+    XCTAssertEqual(atlas.cameraChartAt(0, geo.vec4(0, 0, 0, 1), 2.5), 0)
+    XCTAssertEqual(atlas.build(0, 64), 0)
   }
 }

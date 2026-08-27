@@ -79,7 +79,7 @@ static PointLight flatLight(const Atlas &a, int index) {
 }
 
 void test_atlas() {
-  CHECK(GEO_CONTRACT_VERSION == 14);
+  CHECK(GEO_CONTRACT_VERSION == 15);
   CHECK(sizeof(ScenePacketHeader) == 192);
   CHECK(sizeof(Object) == 48);
   CHECK(offsetof(Object, equationKind) == 20);
@@ -129,7 +129,7 @@ void test_atlas() {
     CHECK(a.build(0, 64) == 0);
     auto h = header(a);
     CHECK(h.meta.magic == GEO_PACKET_MAGIC);
-    CHECK(h.meta.contractVersion == 14);
+    CHECK(h.meta.contractVersion == 15);
     CHECK(h.meta.packetHeaderSize == 192);
     CHECK_NEAR(h.camera.maxTraceDistance, 2.5f, 1e-6);
     CHECK(h.controls.modelKind == model);
@@ -199,23 +199,33 @@ void test_atlas() {
     q[10] = .75f;
     q[15] = -.2f;
     CHECK(a.addQuadric(0, q, 0) == 2);
+    float clipSphere[16] = {};
+    clipSphere[0] = clipSphere[5] = clipSphere[10] = 1;
+    clipSphere[15] = -1;
+    CHECK(a.addObjectClipQuadric(1, clipSphere, true) == 1);
     CHECK(a.cameraChartAt(0, vec4(0, 0, 0, 1), 2.5f) == 0);
     CHECK(a.build(0, 64) == 0);
     auto h = header(a);
     CHECK(h.counts.objectCount == 3);
-    CHECK(h.counts.quadricCount == 1);
-    CHECK(h.counts.clipCount == 3);
+    CHECK(h.counts.quadricCount == 2);
+    CHECK(h.counts.clipCount == 4);
     Object encodedBall = flatObject(a, 0);
     CHECK(encodedBall.equationKind ==
           (model == GEO_MODEL_R3 ? GEO_EQUATION_R3_SPHERE
                                  : GEO_EQUATION_LINEAR));
     CHECK(flatObject(a, 1).equationKind == GEO_EQUATION_LINEAR);
     CHECK(flatObject(a, 2).equationKind == GEO_EQUATION_QUADRIC);
-    CHECK(flatObject(a, 2).quadricIndex == 0);
-    CHECK_NEAR(flatQuadric(a, 0).coefficients.m[5], 1.5f / sqrt(3.8525f),
+    CHECK(flatObject(a, 2).quadricIndex == 1);
+    CHECK_NEAR(flatQuadric(a, 1).coefficients.m[5], 1.5f / sqrt(3.8525f),
                2e-5);
     CHECK(flatClip(a, 0).kind == GEO_CLIP_LINEAR);
-    CHECK(flatClip(a, 1).kind == GEO_CLIP_BALL);
+    CHECK(flatClip(a, 1).kind == GEO_CLIP_QUADRIC);
+    CHECK(flatClip(a, 1).pad0 == 0);
+    CHECK(flatClip(a, 1).pad1 == 1);
+    CHECK(flatClip(a, 2).kind == GEO_CLIP_BALL);
+    CHECK(flatClip(a, 3).kind == GEO_CLIP_BALL);
+    CHECK_NEAR(flatQuadric(a, flatClip(a, 1).pad0).coefficients.m[0],
+               1.0f / sqrt(4.0f), 2e-5);
   }
   {
     Atlas a;
@@ -228,11 +238,12 @@ void test_atlas() {
     CHECK(a.addQuadric(0, asymmetric, 0) < 0);
     int plane = a.addPlane(0, vec3(0, 0, 1), .3f, 0);
     CHECK(plane == 1);
+    CHECK(a.addObjectClipQuadric(plane, asymmetric, false) < 0);
     for (int i = 0; i < GEO_MAX_CLIPS_PER_OBJECT; ++i)
       CHECK(a.addObjectClipPlane(plane, vec3(1, 0, 0), .5f) >= 0);
     CHECK(a.addObjectClipPlane(plane, vec3(1, 0, 0), .5f) < 0);
   }
-  // Flattening develops both the quadric equation and its clipping half-spaces
+  // Flattening develops both the quadric equation and its linear/quadric clips
   // into the camera chart. For x' = x - 2, the unit sphere becomes
   // (x' + 2)^2 + y^2 + z^2 - w^2 = 0.
   {
@@ -250,6 +261,10 @@ void test_atlas() {
     int object = a.addQuadric(1, sphere, 0);
     CHECK(object == 0);
     CHECK(a.addObjectClipPlane(object, vec3(1, 0, 0), .5f) == 0);
+    float clipSphere[16] = {};
+    clipSphere[0] = clipSphere[5] = clipSphere[10] = 1;
+    clipSphere[15] = -4;
+    CHECK(a.addObjectClipQuadric(object, clipSphere, false) == 1);
     CHECK(a.cameraChartAt(0, vec4(0, 0, 0, 1), 3) == 0);
     CHECK(a.build(0, 64) == 0);
     float norm = sqrt(20.0f);
@@ -259,8 +274,14 @@ void test_atlas() {
     CHECK_NEAR(developed.coefficients.m[12], 2 / norm, 2e-5);
     CHECK_NEAR(developed.coefficients.m[15], 3 / norm, 2e-5);
     CHECK_NEAR(flatClip(a, 0).parameter, -1.5f, 2e-5);
-    CHECK(flatClip(a, 1).kind == GEO_CLIP_BALL);
-    CHECK_NEAR(flatClip(a, 1).geometry.x, -2.0f, 2e-5);
+    CHECK(flatClip(a, 1).kind == GEO_CLIP_QUADRIC);
+    CHECK(flatClip(a, 1).pad0 == 1);
+    CHECK(flatClip(a, 1).pad1 == 0);
+    CHECK_NEAR(flatQuadric(a, 1).coefficients.m[3], 2 / sqrt(11.0f),
+               2e-5);
+    CHECK_NEAR(flatQuadric(a, 1).coefficients.m[15], 0, 2e-5);
+    CHECK(flatClip(a, 2).kind == GEO_CLIP_BALL);
+    CHECK_NEAR(flatClip(a, 2).geometry.x, -2.0f, 2e-5);
   }
   // A near-symmetric API matrix is stored exactly symmetric, and normalization
   // remains stable for finite coefficients near the float range.

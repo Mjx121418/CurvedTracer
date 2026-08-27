@@ -70,6 +70,7 @@ enum SphericalFlatSceneVariant: String, CaseIterable, Identifiable {
     case pathTracingRoom = "Path tracing room"
     case primitiveGallery = "Primitive gallery"
     case hopfFibration = "Hopf fibration"
+    case hopfFacePatches = "Hopf face patches"
     case cliffordTorusConstruction = "Clifford torus construction"
 
     var id: Self { self }

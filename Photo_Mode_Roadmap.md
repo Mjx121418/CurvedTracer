@@ -370,7 +370,9 @@ through the existing MIS interface. Keep this separate from material emission
 itself: it adds light-selection state and visibility rays, whereas visible
 emission is only a surface-hit term.
 
-This stage is the first expected GeometryCore packet-contract revision.
+The finite-light records were introduced in an earlier packet revision;
+future geometry additions such as quadric clips should likewise version the
+contract explicitly while preserving existing record sizes where possible.
 
 ---
 

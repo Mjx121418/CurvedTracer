@@ -149,14 +149,29 @@ static float4 objectNormal(ObjectGPU o, float4 hit,
     return tangentNormalize(gradient - kappa() * mdot(gradient, hit) * hit);
 }
 
-static bool insideClip(PrimitiveClipGPU clip, float4 point) {
+static bool insideClip(PrimitiveClipGPU clip, float4 point,
+                       device const QuadricGPU *quadrics) {
     if (clip.kind == CLIP_LINEAR) {
         float scale = 1 + length(clip.geometry) + abs(clip.parameter);
         return mdot(clip.geometry, point) <= clip.parameter + 4 * EPS * scale;
     }
-    if (SPACE_FORM == MODEL_R3)
-        return distance(point.xyz, clip.geometry.xyz) <= clip.parameter + 4 * EPS;
-    return mdot(clip.geometry, point) >= clip.parameter - 4 * EPS;
+    if (clip.kind == CLIP_BALL) {
+        if (SPACE_FORM == MODEL_R3)
+            return distance(point.xyz, clip.geometry.xyz) <= clip.parameter + 4 * EPS;
+        return mdot(clip.geometry, point) >= clip.parameter - 4 * EPS;
+    }
+    if (clip.kind == CLIP_QUADRIC && clip.pad0 >= 0) {
+        float4 qPoint = quadrics[clip.pad0].coefficients * point;
+        float value = dot(point, qPoint);
+        if (!isfinite(value) || any(!isfinite(qPoint)))
+            return false;
+        float scale = 1.0f + abs(point.x * qPoint.x) +
+                      abs(point.y * qPoint.y) + abs(point.z * qPoint.z) +
+                      abs(point.w * qPoint.w);
+        float tolerance = 8.0f * EPS * scale;
+        return clip.pad1 != 0 ? value >= -tolerance : value <= tolerance;
+    }
+    return false;
 }
 
 static float objectRoot(ObjectGPU o, float4 p, float4 v, float minimum,
@@ -201,7 +216,8 @@ static float objectRoot(ObjectGPU o, float4 p, float4 v, float minimum,
         float4 point = rayPoint(p, v, distance);
         bool accepted = true;
         for (int local = 0; local < o.clipCount; ++local)
-            accepted = accepted && insideClip(clips[o.firstClip + local], point);
+            accepted = accepted &&
+                       insideClip(clips[o.firstClip + local], point, quadrics);
         if (!accepted)
             continue;
         float4 normal = objectNormal(o, point, quadrics);

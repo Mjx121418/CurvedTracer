@@ -18,7 +18,7 @@
 
 namespace geo {
 
-inline std::string geometryCoreName() { return "Geometry Core v14"; }
+inline std::string geometryCoreName() { return "Geometry Core v15"; }
 
 struct ChartObject {
   int chartId = -1;
@@ -34,6 +34,9 @@ struct ChartObject {
 struct ChartClip {
   vec4 normal;
   float offset = 0.0f;
+  int kind = GEO_CLIP_LINEAR;
+  int keepPositive = 0;
+  mat4 quadric;
 };
 
 struct ChartLight {
@@ -107,6 +110,8 @@ public:
   int addObjectClip(int object, const vec4 &normal, float offset);
   int addObjectClipPlane(int object, const vec3 &outwardDirection,
                          float signedDistance);
+  int addObjectClipQuadric(int object, const float coefficients[16],
+                           bool keepPositive);
   int addLight(int chart, const vec4 &position, const vec3 &color,
                float intensity);
   int addSphericalAreaLight(int chart, const vec4 &center,
@@ -191,6 +196,7 @@ private:
   vec4 planeNormal(const vec3 &outward, float distance) const;
   bool normalizedLinearForm(const vec4 &normal, float offset,
                             vec4 &normalized, float &normalizedOffset) const;
+  bool normalizedQuadric(const float coefficients[16], mat4 &normalized) const;
   float planeValue(const ChartPortal &p, const vec4 &x) const;
   Isometry movePointToOrigin(const vec4 &p) const;
   vec4 expMap(const vec4 &p, const vec4 &tangent) const;

@@ -25,6 +25,12 @@ inline bool finite(const vec3 &v) {
 inline bool finite(const vec4 &v) {
   return finite(v.x) && finite(v.y) && finite(v.z) && finite(v.w);
 }
+inline bool finite(const mat4 &m) {
+  for (float value : m.m)
+    if (!finite(value))
+      return false;
+  return true;
+}
 inline float lorDot(const vec4 &a, const vec4 &b) {
   return a.x * b.x + a.y * b.y + a.z * b.z - a.w * b.w;
 }

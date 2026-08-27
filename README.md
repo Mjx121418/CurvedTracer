@@ -59,6 +59,8 @@ Rays wrap continuously through identified faces.
 
 ## Camera controls
 
+The app launches in a real-time rendering mode.
+This mode implements a naive ray tracer without hard shadows.
 Press **Tab** to enable or disable camera control. While it is enabled, the
 cursor is hidden and the following controls are active:
 
@@ -71,6 +73,12 @@ cursor is hidden and the following controls are active:
 
 Movement and rotation use the camera's current local frame.
 In GPU-atlas quotient scenes, camera movement passes continuously through portal faces.
+
+## Photo mode
+
+Click "Start Photo Mode" to enter the photo mode.
+The app will utlize path tracing to gradually produce a photographic image.
+Camera control is disabled in this mode.
 
 ## Build and test GeometryCore
 

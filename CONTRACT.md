@@ -24,11 +24,12 @@ Canonical points are `vec4`:
 `sin/cos`, `sinh/cosh`, or Euclidean addition. Input points are canonicalized
 only within a small tolerance; malformed points are rejected.
 
-Every chart radius and camera view distance is intrinsic. S³ requires
-`0 < R < π` for both. A chart radius bounds an authored chart domain; the
-camera view distance is an independent maximum ray/path distance.
-H³ and R³ require positive finite values whose float32 derived parameters are
-finite. A ball must satisfy `distance(origin,center) + radius <= chart.radius`.
+Charts are radius-free coordinate states. Camera view distance and object or
+emitter radii are independent intrinsic quantities. S³ requires their positive
+radii and view distances to be less than π. H³ requires derived `sinh/cosh`
+values to remain finite; R³ requires positive finite values. Signed plane and
+portal-trigger distances are validated independently from object radii and
+camera view distance.
 
 ## Isometries
 
@@ -49,6 +50,8 @@ carry quotient holonomy.
 The native public operations are:
 
 ```cpp
+seed()
+addChart(fromChart, columnMajorIsometry, safe)
 addBall(chart, vec4 center, float intrinsicRadius, material)
 addBallSurface(chart, center, radius, material)
 addLinearSurface(chart, vec4 normal, offset, material)
@@ -100,7 +103,14 @@ quadric produces only the retained portion of the plane.
 experiments. A pairing must map its mathematical face to the opposite face and
 its outward tangent to the neighbor's inward tangent. Camera movement and GPU
 tracing use the exponential map, direct isometry tangent transport, and
-compound portal reduction.
+compound portal reduction. Both apply the directed portal's `toNeighbor`
+transition directly after crossing its trigger; they do not consult the reverse
+portal. `reversePortal` is packet bookkeeping for bounded light-lift traversal:
+it suppresses the immediate parent edge and supplies the already-authored
+neighbor-to-current inverse map. Portals are the only CPU camera-transition
+triggers. Ordinary overlap edges develop chart coordinates during flattening;
+crossing a radial chart horizon does not select an overlap edge or clamp the
+camera.
 
 ## Packet
 
@@ -119,7 +129,8 @@ PointLight[lightCount] (48 each)
 ```
 
 `build()` emits one flattened chart and zero portals. `buildAtlas()` preserves
-authored charts and quotient portals.
+authored charts and quotient portals. Either mode accepts any canonical camera
+position in its active coordinate state.
 
 A material stores `baseColor`, three-component `emission`, `roughness`,
 `metallic`, `IOR`, `transmission`, and one reserved float. `addMaterial`
@@ -138,20 +149,20 @@ point-light irradiance. Catalog preview scenes retain π-scaled point-light
 intensities to preserve their original linear illumination after this
 normalization.
 A spherical emitter has kind `GEO_LIGHT_SPHERE`, positive intrinsic radius,
-and interprets `color * intensity` as emitted radiance. The emitter must fit
-inside its authored chart.
+and interprets `color * intensity` as emitted radiance.
 
 An object descriptor stores its equation kind, material index, inline
 linear/sphere coefficients, optional quadric index, clip range, and two
-reserved words. Object records remain 48 bytes. Flattened unbounded surfaces
-receive an internal source-chart ball clip;
-authored-atlas tracing obtains the same bound from the active chart horizon.
+reserved words. Object records remain 48 bytes. Builds do not implicitly clip
+objects to a chart domain. Surface extent and overlap ownership are defined by
+the object's authored linear and quadric clips. In atlas traversal, an explicit
+portal changes the coordinate state before any farther object can be hit, and
+camera view distance terminates traversal.
 
-Each chart stores its intrinsic radius and tracing parameter:
-
-- S³: `tan(R/2)`;
-- H³: `tanh(R/2)`;
-- R³: `R/2`.
+`Camera.reservedFloat0` and `GPUChart.reserved0/reserved1` are zeroed
+compatibility fields that preserve the version-15 packet sizes. Shaders do not
+read them. Primitive clips use kind 0 for linear inequalities and kind 2 for
+quadric inequalities; the former implicit ball-clip kind 1 is retired.
 
 ## Shader specialization
 

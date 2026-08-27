@@ -44,20 +44,32 @@ void Atlas::begin(int model) {
 bool Atlas::validModelKind() const {
   return modelKind_ >= GEO_MODEL_H3 && modelKind_ <= GEO_MODEL_R3;
 }
-bool Atlas::validChartRadius(float r) const {
-  if (!finite(r) || r <= 0)
+bool Atlas::validGeodesicRadius(float radius) const {
+  if (!finite(radius) || radius <= 0)
     return false;
   if (modelKind_ == GEO_MODEL_S3)
-    return r < PI;
+    return radius < PI;
   if (modelKind_ == GEO_MODEL_H3)
-    return finite(std::sinh(r)) && finite(std::cosh(r));
-  return finite(r * 0.5f);
+    return finite(std::sinh(radius)) && finite(std::cosh(radius));
+  return finite(radius * 0.5f);
+}
+
+bool Atlas::validSignedDistance(float distance) const {
+  if (!finite(distance))
+    return false;
+  float magnitude = std::fabs(distance);
+  if (modelKind_ == GEO_MODEL_S3)
+    return magnitude < PI;
+  if (modelKind_ == GEO_MODEL_H3)
+    return finite(std::sinh(distance)) && finite(std::cosh(distance));
+  return true;
+}
+
+bool Atlas::validPortalDistance(float distance) const {
+  return distance >= 0 && validSignedDistance(distance);
 }
 
 bool Atlas::validViewDistance(float distance) const {
-  // Keep the numerical restrictions shared with chart radii for now. The
-  // concepts are intentionally separate: a view distance limits ray travel,
-  // while a chart radius describes the authored chart domain.
   if (!finite(distance) || distance <= 0)
     return false;
   if (modelKind_ == GEO_MODEL_S3)
@@ -67,15 +79,7 @@ bool Atlas::validViewDistance(float distance) const {
   return finite(distance * 0.5f);
 }
 
-float Atlas::tracingParameter(float distance) const {
-  if (modelKind_ == GEO_MODEL_S3)
-    return std::tan(0.5f * distance);
-  if (modelKind_ == GEO_MODEL_H3)
-    return std::tanh(0.5f * distance);
-  return 0.5f * distance;
-}
-
-int Atlas::seed(float r) {
+int Atlas::seed() {
   packet_.clear();
   if (!validModelKind()) {
     setError(6);
@@ -85,13 +89,8 @@ int Atlas::seed(float r) {
     setError(5);
     return -1;
   }
-  if (!validChartRadius(r)) {
-    setError(3);
-    return -1;
-  }
   Chart c;
   c.id = 0;
-  c.radius = r;
   charts_.push_back(c);
   setError(0);
   return 0;
@@ -120,9 +119,9 @@ void Atlas::upsertEdge(int a, int b, const Isometry &m, bool safe) {
   charts_[a].edges.push_back(e);
 }
 
-int Atlas::addChart(float r, int from, const float raw[16], bool safe) {
+int Atlas::addChart(int from, const float raw[16], bool safe) {
   packet_.clear();
-  if (!validChartId(from) || !validChartRadius(r) || !raw) {
+  if (!validChartId(from) || !raw) {
     setError(3);
     return -1;
   }
@@ -133,7 +132,6 @@ int Atlas::addChart(float r, int from, const float raw[16], bool safe) {
   }
   Chart c;
   c.id = int(charts_.size());
-  c.radius = r;
   charts_.push_back(c);
   upsertEdge(from, c.id, m, safe);
   upsertEdge(c.id, from, m.inverse(), safe);
@@ -191,14 +189,6 @@ bool Atlas::canonicalizePoint(const vec4 &in, vec4 &out) const {
     return false;
   out = in / std::sqrt(-q);
   return out.w > 0;
-}
-
-float Atlas::originDistance(const vec4 &p) const {
-  if (modelKind_ == GEO_MODEL_S3)
-    return std::acos(std::clamp(p.w, -1.0f, 1.0f));
-  if (modelKind_ == GEO_MODEL_H3)
-    return std::acosh(std::max(p.w, 1.0f));
-  return length(p.xyz());
 }
 
 float Atlas::intrinsicDistance(const vec4 &a0, const vec4 &b0) const {

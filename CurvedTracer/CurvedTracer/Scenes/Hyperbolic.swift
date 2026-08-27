@@ -127,7 +127,7 @@ enum HyperbolicScene {
     /// Builds the one-chart Poincaré-ball object and mirror demonstration.
     @discardableResult static func poincareBallDemo(_ atlas: inout geo.Atlas) -> Int32 {
         atlas.start(0)
-        _ = atlas.seed(intrinsicRadius(fromCompactAngle: Float.pi * 0.999 / 2))
+        _ = atlas.seed()
 
         addDiffuseMaterial(&atlas, [1, 0, 0])
         addDiffuseMaterial(&atlas, [0, 1, 0])
@@ -168,7 +168,7 @@ enum HyperbolicScene {
     /// A curvature-small counterpart of the R³ path tracing room.
     @discardableResult static func pathTracingRoom(_ atlas: inout geo.Atlas) -> Int32 {
         atlas.start(0)
-        _ = atlas.seed(1.0)
+        _ = atlas.seed()
         let white = addLambertianMaterial(
             &atlas, geo.vec4(0.78, 0.78, 0.78, 1))
         let red = addLambertianMaterial(
@@ -230,7 +230,7 @@ enum HyperbolicScene {
     /// Demonstrates clipped linear and quadratic surfaces in H³.
     @discardableResult static func primitiveGallery(_ atlas: inout geo.Atlas) -> Int32 {
         atlas.start(0)
-        _ = atlas.seed(3.0)
+        _ = atlas.seed()
         addDiffuseMaterial(&atlas, [0.95, 0.16, 0.08])
         addDiffuseMaterial(&atlas, [0.10, 0.68, 1.0])
         addDiffuseMaterial(&atlas, [0.95, 0.72, 0.10])
@@ -278,6 +278,8 @@ enum HyperbolicScene {
         if mirrorPatch < 0
             || atlas.addObjectClipPlane(mirrorPatch, geo.vec3(1, 0, 0), 0.65) < 0
             || atlas.addObjectClipPlane(mirrorPatch, geo.vec3(-1, 0, 0), 0.65) < 0
+            || atlas.addObjectClipPlane(mirrorPatch, geo.vec3(0, 0, 1), 0.65) < 0
+            || atlas.addObjectClipPlane(mirrorPatch, geo.vec3(0, 0, -1), 0.65) < 0
         {
             fatalError("invalid reflective H³ plane patch")
         }
@@ -301,7 +303,7 @@ enum HyperbolicScene {
 
     @discardableResult static func honeycombCell(_ atlas: inout geo.Atlas) -> Int32 {
         atlas.start(0)
-        _ = atlas.seed(intrinsicRadius(fromCompactAngle: Float.pi * 0.999 / 2))
+        _ = atlas.seed()
 
         addDiffuseMaterial(&atlas, [1, 0, 0])
         _ = atlas.addMaterial(
@@ -358,11 +360,7 @@ enum HyperbolicScene {
 
     @discardableResult static func seifertWeberAtlas(_ atlas: inout geo.Atlas) -> Int32 {
         atlas.start(0)
-        // The outward portal collar puts the dodecahedron vertices at an
-        // intrinsic radius of about 1.969. Keep the chart ball beyond them so
-        // its tracing horizon cannot win before a portal near an edge.
-        let chartRadius: Float = 2.05
-        _ = atlas.seed(chartRadius)
+        _ = atlas.seed()
         materials(&atlas)
         let phi: Float = (1 + sqrt(5)) / 2
         let scale: Float = 1 / sqrt(1 + phi * phi)
@@ -402,13 +400,12 @@ enum HyperbolicScene {
     /// mathematical faces and avoids overlap between displaced face collars.
     @discardableResult static func seifertWeberMultiChartAtlas(_ atlas: inout geo.Atlas) -> Int32 {
         atlas.start(0)
-        let chartRadius: Float = 2.05
-        _ = atlas.seed(chartRadius)
+        _ = atlas.seed()
 
         let chartCount: Int32 = 14
         let chartIdentity = identity()
         for chart in 1..<chartCount {
-            if atlas.addChart(chartRadius, 0, chartIdentity, true) != chart {
+            if atlas.addChart(0, chartIdentity, true) != chart {
                 fatalError("failed to add Seifert-Weber chart state")
             }
         }

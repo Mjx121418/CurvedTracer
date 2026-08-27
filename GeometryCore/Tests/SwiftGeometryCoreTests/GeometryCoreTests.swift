@@ -18,7 +18,7 @@ final class GeometryCoreTests: XCTestCase {
 
     var atlas = geo.Atlas()
     atlas.start(2)
-    XCTAssertEqual(atlas.seed(4), 0)
+    XCTAssertEqual(atlas.seed(), 0)
     let point = atlas.pointFromOriginTangent(geo.vec3(1, 2, 3))
     XCTAssertEqual(point.w, 1)
     XCTAssertEqual(point.z, 3)
@@ -27,7 +27,7 @@ final class GeometryCoreTests: XCTestCase {
   func testTypedSceneAndUnifiedBuilds() {
     var atlas = geo.Atlas()
     atlas.start(0)
-    XCTAssertEqual(atlas.seed(3), 0)
+    XCTAssertEqual(atlas.seed(), 0)
     XCTAssertEqual(
       atlas.addMaterial(
         geo.vec4(1, 0, 0, 1), 0, 0, 1.5, 0, geo.vec3()), 0
@@ -53,7 +53,7 @@ final class GeometryCoreTests: XCTestCase {
 
     XCTAssertEqual(atlas.build(0, 64), 0)
     let flat = [UInt8](atlas.packetBytes())
-    XCTAssertEqual(flat.count, 192 + 32 + 2 * 48 + 32 + 2 * 48 + 2 * 48)
+    XCTAssertEqual(flat.count, 192 + 32 + 2 * 48 + 2 * 48 + 2 * 48)
     XCTAssertEqual(flat[4], 15)
 
     XCTAssertEqual(atlas.buildAtlas(0, 64, 1, 32), 0)
@@ -65,7 +65,7 @@ final class GeometryCoreTests: XCTestCase {
   func testEuclideanPortalWrapping() {
     var atlas = geo.Atlas()
     atlas.start(2)
-    XCTAssertEqual(atlas.seed(2), 0)
+    XCTAssertEqual(atlas.seed(), 0)
     var translation = [Float](repeating: 0, count: 16)
     translation[0] = 1
     translation[5] = 1
@@ -86,7 +86,7 @@ final class GeometryCoreTests: XCTestCase {
   func testQuadricObjectClip() {
     var atlas = geo.Atlas()
     atlas.start(2)
-    XCTAssertEqual(atlas.seed(3), 0)
+    XCTAssertEqual(atlas.seed(), 0)
     XCTAssertEqual(
       atlas.addMaterial(
         geo.vec4(1, 1, 1, 1), 0, 0, 1.5, 0, geo.vec3()), 0

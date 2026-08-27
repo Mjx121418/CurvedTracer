@@ -31,7 +31,7 @@ enum EuclideanScene {
     private static func identity() -> [Float] { [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] }
     private static func configure(_ atlas: inout geo.Atlas) {
         atlas.start(2)
-        _ = atlas.seed(2.0)
+        _ = atlas.seed()
         _ = addPreviewMaterial(&atlas, geo.vec4(0.95, 0.18, 0.08, 1))
         _ = addPreviewMaterial(&atlas, geo.vec4(0.08, 0.55, 1, 1))
         _ = addMirrorMaterial(&atlas, geo.vec4(0.405, 0.855, 0.9, 1))
@@ -58,7 +58,7 @@ enum EuclideanScene {
 
     @discardableResult static func pathTracingRoom(_ atlas: inout geo.Atlas) -> Int32 {
         atlas.start(2)
-        _ = atlas.seed(3.0)
+        _ = atlas.seed()
         let white = addLambertianMaterial(
             &atlas, geo.vec4(0.78, 0.78, 0.78, 1))
         let red = addLambertianMaterial(

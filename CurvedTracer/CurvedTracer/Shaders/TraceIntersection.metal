@@ -155,11 +155,6 @@ static bool insideClip(PrimitiveClipGPU clip, float4 point,
         float scale = 1 + length(clip.geometry) + abs(clip.parameter);
         return mdot(clip.geometry, point) <= clip.parameter + 4 * EPS * scale;
     }
-    if (clip.kind == CLIP_BALL) {
-        if (SPACE_FORM == MODEL_R3)
-            return distance(point.xyz, clip.geometry.xyz) <= clip.parameter + 4 * EPS;
-        return mdot(clip.geometry, point) >= clip.parameter - 4 * EPS;
-    }
     if (clip.kind == CLIP_QUADRIC && clip.pad0 >= 0) {
         float4 qPoint = quadrics[clip.pad0].coefficients * point;
         float value = dot(point, qPoint);
@@ -261,24 +256,10 @@ static Event nearestEvent(float4 p, float4 v, int chartId, float maximum,
     e.valid = false;
     e.distance = maximum + 1;
     ChartGPU chart = charts[chartId];
-    float chartExit = INF;
-    if (SPACE_FORM == MODEL_R3) {
-        float r0, r1;
-        int count = roots(dot(v.xyz, v.xyz), 2 * dot(p.xyz, v.xyz),
-                          dot(p.xyz, p.xyz) -
-                          chart.intrinsicRadius * chart.intrinsicRadius,
-                          r0, r1);
-        if (count > 0 && r0 >= objectMinimum && r0 <= maximum)
-            chartExit = r0;
-        if (count > 1 && r1 >= objectMinimum && r1 <= maximum)
-            chartExit = min(chartExit, r1);
-    } else {
-        float level = SPACE_FORM == MODEL_S3 ? cos(chart.intrinsicRadius)
-        : -cosh(chart.intrinsicRadius);
-        chartExit = curvedRoot(mdot(origin(), p), mdot(origin(), v), level,
-                               objectMinimum, maximum);
-    }
-    float localMaximum = min(maximum, chartExit);
+    // A chart is a coordinate state, not an intrinsic ball. The ray remains
+    // in that state until it reaches an explicit portal; the camera's view
+    // distance is the only implicit traversal horizon.
+    float localMaximum = maximum;
     for (int local = 0; local < chart.objectCount; ++local) {
         int i = chart.firstObject + local;
         float d = objectRoot(objects[i], p, v, objectMinimum, localMaximum,

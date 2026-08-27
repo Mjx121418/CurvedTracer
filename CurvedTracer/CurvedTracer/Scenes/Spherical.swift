@@ -30,7 +30,6 @@ enum SphericalScene {
     }
 
     private static let lensFaceDistance = Float.pi / 5
-    private static let lensChartRadius = Float.pi / 2 + 0.13
     private static let antipodalMatrix: [Float] = [
         -1, 0, 0, 0,
         0, -1, 0, 0,
@@ -397,7 +396,7 @@ enum SphericalScene {
 
     private static func configure(_ atlas: inout geo.Atlas) {
         atlas.start(1)
-        _ = atlas.seed(Float.pi * 0.94)
+        _ = atlas.seed()
         let colors: [geo.vec4] = [
             geo.vec4(0.95, 0.12, 0.08, 1), geo.vec4(0.10, 0.65, 1, 1),
             geo.vec4(0.96, 0.72, 0.10, 1), geo.vec4(0.42, 0.90, 0.32, 1),
@@ -442,7 +441,7 @@ enum SphericalScene {
     /// A curvature-small counterpart of the R³ path tracing room.
     @discardableResult static func pathTracingRoom(_ atlas: inout geo.Atlas) -> Int32 {
         atlas.start(1)
-        _ = atlas.seed(1.0)
+        _ = atlas.seed()
         let white = addLambertianMaterial(
             &atlas, geo.vec4(0.78, 0.78, 0.78, 1))
         let red = addLambertianMaterial(
@@ -505,7 +504,7 @@ enum SphericalScene {
     /// response in S³.
     @discardableResult static func primitiveGallery(_ atlas: inout geo.Atlas) -> Int32 {
         atlas.start(1)
-        _ = atlas.seed(Float.pi * 0.94)
+        _ = atlas.seed()
 
         _ = addPreviewMaterial(&atlas, geo.vec4(0.95, 0.18, 0.08, 1))
         _ = addPreviewMaterial(&atlas, geo.vec4(0.12, 0.72, 1.0, 1))
@@ -540,6 +539,8 @@ enum SphericalScene {
         if mirrorPatch < 0
             || atlas.addObjectClipPlane(mirrorPatch, geo.vec3(1, 0, 0), 0.65) < 0
             || atlas.addObjectClipPlane(mirrorPatch, geo.vec3(-1, 0, 0), 0.65) < 0
+            || atlas.addObjectClipPlane(mirrorPatch, geo.vec3(0, 0, 1), 0.65) < 0
+            || atlas.addObjectClipPlane(mirrorPatch, geo.vec3(0, 0, -1), 0.65) < 0
         {
             fatalError("invalid reflective S³ plane patch")
         }
@@ -574,14 +575,11 @@ enum SphericalScene {
     /// regular dodecahedron in S².
     @discardableResult static func hopfFibration(_ atlas: inout geo.Atlas) -> Int32 {
         atlas.start(1)
-        // Recenter the construction at the camera. A radius of 2.35 is large
-        // enough for exactly the ten fibers on the opposite side of the
-        // selected dodecahedron face, while remaining comfortably below the
-        // stereographic singularity at π.
-        let chartRadius: Float = 2.35
+        // Recenter the construction at the camera and divide the 20 complete
+        // fibers evenly between this frame and the antipodal face frame.
         let cameraPlacement = hopfFibrationCameraPlacement()
         let cameraFrame = s3MovePointToOrigin(cameraPlacement.point)
-        _ = atlas.seed(chartRadius)
+        _ = atlas.seed()
 
         // The second chart is centered on a lift of the opposite face center.
         // Its base direction is the negative of the camera's, so it contains
@@ -592,8 +590,7 @@ enum SphericalScene {
         let oppositeCenter = matrixApply(
             cameraFrame, hopfLift(oppositeBase))
         let oppositeChartFrame = s3MovePointToOrigin(oppositeCenter)
-        let oppositeChart = atlas.addChart(
-            chartRadius, 0, oppositeChartFrame, true)
+        let oppositeChart = atlas.addChart(0, oppositeChartFrame, true)
         if oppositeChart != 1 { fatalError("invalid Hopf chart pair") }
 
         let colors: [geo.vec4] = [
@@ -664,15 +661,13 @@ enum SphericalScene {
         _ atlas: inout geo.Atlas
     ) -> Int32 {
         atlas.start(1)
-        // Two antipodal charts of radius > π/2 cover the complete S³. Each
-        // patch is split by the chart equator, so flattening does not duplicate
-        // the surface while camera movement can cross the cover indefinitely.
-        let chartRadius: Float = Float.pi * 0.56
+        // Two antipodal authored coordinate frames cover the complete S³.
+        // Each patch is split by the chart equator, so flattening does not
+        // duplicate the surface.
         let cameraPlacement = hopfFibrationCameraPlacement()
         let cameraFrame = s3MovePointToOrigin(cameraPlacement.point)
-        _ = atlas.seed(chartRadius)
-        let oppositeChart = atlas.addChart(
-            chartRadius, 0, antipodalMatrix, true)
+        _ = atlas.seed()
+        let oppositeChart = atlas.addChart(0, antipodalMatrix, true)
         if oppositeChart != 1 {
             fatalError("invalid Hopf face-patch chart pair")
         }
@@ -794,15 +789,12 @@ enum SphericalScene {
         _ atlas: inout geo.Atlas
     ) -> Int32 {
         atlas.start(1)
-        // Two antipodal charts of radius > π/2 cover S³. Assigning every
-        // patch to the chart centered on its w-hemisphere keeps the automatic
-        // flattened-chart bound strictly outside the whole patch. The same
-        // overlap also lets camera movement cross either chart boundary
-        // without approaching the coordinate singularity at its antipode.
-        let chartRadius = Float.pi * 0.56
-        _ = atlas.seed(chartRadius)
-        let antipodalChart = atlas.addChart(
-            chartRadius, 0, antipodalMatrix, true)
+        // Two antipodal authored charts cover S³. Every patch has explicit
+        // orthant or hemisphere ownership, so flattening does not depend on a
+        // radial chart bound. Camera movement remains in its selected
+        // coordinate chart independently of these authoring bounds.
+        _ = atlas.seed()
+        let antipodalChart = atlas.addChart(0, antipodalMatrix, true)
         if antipodalChart != 1 { fatalError("invalid antipodal S³ chart") }
         _ = addPreviewMaterial(&atlas, geo.vec4(0.95, 0.24, 0.10, 1))
         _ = addPreviewMaterial(&atlas, geo.vec4(0.08, 0.62, 1.0, 1))
@@ -899,12 +891,11 @@ enum SphericalScene {
     /// Builds the original 24-chart 600-cell scene. The overlap graph is the
     /// complete 24-cell graph: 24 chart vertices, degree eight, and 96 edges.
     @discardableResult static func cell600(_ atlas: inout geo.Atlas) -> Int32 {
-        let chartRadius = Float.pi / 2
         let ballRadius = acos(Float(0.995))
         let viewDistance = Float.pi * 0.9
 
         atlas.start(1)
-        let baseChart = atlas.seed(chartRadius)
+        let baseChart = atlas.seed()
 
         let colors: [geo.vec4] = [
             geo.vec4(1, 0, 0, 1),
@@ -937,7 +928,7 @@ enum SphericalScene {
 
             for neighbor in adjacency[current] where chartIDs[neighbor] < 0 {
                 let matrix = transition(from: centers[current], to: centers[neighbor])
-                let chart = atlas.add(chartRadius, chartIDs[current], matrix, true)
+                let chart = atlas.add(chartIDs[current], matrix, true)
                 if chart < 0 {
                     fatalError("failed to add 600-cell chart")
                 }
@@ -1004,10 +995,7 @@ enum SphericalScene {
     @discardableResult static func lensSpaceL52(_ atlas: inout geo.Atlas) -> Int32 {
         atlas.start(1)
 
-        // The fundamental lune reaches distance π/2 from its center along
-        // z₁ = 0. Keep the chart boundary comfortably beyond that entire
-        // ridge, including the portal collar.
-        _ = atlas.seed(lensChartRadius)
+        _ = atlas.seed()
 
         _ = addPreviewMaterial(&atlas, geo.vec4(0.95, 0.12, 0.08, 1))
         _ = addPreviewMaterial(&atlas, geo.vec4(0.10, 0.65, 1.00, 1))

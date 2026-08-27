@@ -7,8 +7,9 @@
 namespace geo {
 
 struct GPUChart {
-    float intrinsicRadius;
-    float tracingParameter;
+    // Reserved version-15 fields retained to preserve the 32-byte layout.
+    float reserved0;
+    float reserved1;
     int firstPortal;
     int portalCount;
     int firstObject;
@@ -22,6 +23,8 @@ struct GPUPortal {
     vec4 normal;
     float offset;
     int neighborChart;
+    // Light-lift traversal uses this as both its parent back-edge and the
+    // source of the neighbor-to-current inverse map. Primary rays do not.
     int reversePortal;
     int pad0;
 };

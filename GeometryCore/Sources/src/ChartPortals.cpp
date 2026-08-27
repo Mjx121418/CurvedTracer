@@ -19,11 +19,11 @@ int Atlas::addPortalPairWithCollar(int ca, const vec3 &da, float fa, int cb,
                                    const float raw[16], float collar) {
   packet_.clear();
   float la = length(da), lb = length(db);
+  float triggerA = fa + collar, triggerB = fb + collar;
   if (!validChartId(ca) || !validChartId(cb) || !raw || !finite(da) ||
       !finite(db) || la < 1e-8f || lb < 1e-8f || !finite(fa) || !finite(fb) ||
       !finite(collar) || fa < 0 || fb < 0 || collar < 0 ||
-      fa + collar > charts_[ca].radius + CONTAIN_TOL ||
-      fb + collar > charts_[cb].radius + CONTAIN_TOL ||
+      !validPortalDistance(triggerA) || !validPortalDistance(triggerB) ||
       portals_.size() + 2 > GEO_MAX_PORTALS) {
     setError(7);
     return -1;
@@ -65,14 +65,14 @@ int Atlas::addPortalPairWithCollar(int ca, const vec3 &da, float fa, int cb,
   ChartPortal a, b;
   a.chartId = ca;
   a.neighborId = cb;
-  a.normal = planeNormal(da / la, fa + collar);
-  a.offset = modelKind_ == GEO_MODEL_R3 ? fa + collar : 0;
+  a.normal = planeNormal(da / la, triggerA);
+  a.offset = modelKind_ == GEO_MODEL_R3 ? triggerA : 0;
   a.reversePortal = ib;
   a.toNeighbor = ab;
   b.chartId = cb;
   b.neighborId = ca;
-  b.normal = planeNormal(db / lb, fb + collar);
-  b.offset = modelKind_ == GEO_MODEL_R3 ? fb + collar : 0;
+  b.normal = planeNormal(db / lb, triggerB);
+  b.offset = modelKind_ == GEO_MODEL_R3 ? triggerB : 0;
   b.reversePortal = ia;
   b.toNeighbor = ab.inverse();
   portals_.push_back(a);
@@ -139,8 +139,36 @@ Isometry Atlas::movePointToOrigin(const vec4 &p) const {
     return out;
   }
   vec3 u = p.xyz();
-  float k = modelKind_ == GEO_MODEL_S3 ? 1.0f : -1.0f;
-  float scale = -k / std::max(1.0f + p.w, 1e-6f);
+  if (modelKind_ == GEO_MODEL_S3) {
+    // This is the same minimal rotation as the former
+    // -u*u^T/(1+w) formula, written without its antipodal denominator.
+    // At the exact antipode the rotation plane is not unique; choose x-w.
+    float spatialLength = length(u);
+    vec3 axis = spatialLength > 1e-12f ? u / spatialLength : vec3(1, 0, 0);
+    float scale = p.w - 1.0f;
+    vec3 c0 = vec3(1, 0, 0) + axis * (scale * axis.x),
+         c1 = vec3(0, 1, 0) + axis * (scale * axis.y),
+         c2 = vec3(0, 0, 1) + axis * (scale * axis.z);
+    mat4 &B = out.m;
+    B.m[0] = c0.x;
+    B.m[1] = c0.y;
+    B.m[2] = c0.z;
+    B.m[3] = u.x;
+    B.m[4] = c1.x;
+    B.m[5] = c1.y;
+    B.m[6] = c1.z;
+    B.m[7] = u.y;
+    B.m[8] = c2.x;
+    B.m[9] = c2.y;
+    B.m[10] = c2.z;
+    B.m[11] = u.z;
+    B.m[12] = -u.x;
+    B.m[13] = -u.y;
+    B.m[14] = -u.z;
+    B.m[15] = p.w;
+    return out;
+  }
+  float scale = 1.0f / std::max(1.0f + p.w, 1e-6f);
   vec3 c0 = vec3(1, 0, 0) + u * (scale * u.x),
        c1 = vec3(0, 1, 0) + u * (scale * u.y),
        c2 = vec3(0, 0, 1) + u * (scale * u.z);
@@ -148,15 +176,15 @@ Isometry Atlas::movePointToOrigin(const vec4 &p) const {
   B.m[0] = c0.x;
   B.m[1] = c0.y;
   B.m[2] = c0.z;
-  B.m[3] = k * u.x;
+  B.m[3] = -u.x;
   B.m[4] = c1.x;
   B.m[5] = c1.y;
   B.m[6] = c1.z;
-  B.m[7] = k * u.y;
+  B.m[7] = -u.y;
   B.m[8] = c2.x;
   B.m[9] = c2.y;
   B.m[10] = c2.z;
-  B.m[11] = k * u.z;
+  B.m[11] = -u.z;
   B.m[12] = -u.x;
   B.m[13] = -u.y;
   B.m[14] = -u.z;
@@ -225,26 +253,6 @@ CameraPlacement Atlas::resolveCameraPlacement(int chart, const vec4 &start,
     p = portal.toNeighbor.applyPoint(p);
     current = portal.neighborId;
   }
-  if (originDistance(p) > charts_[current].radius + CONTAIN_TOL) {
-    bool found = false;
-    for (const auto &e : charts_[current].edges) {
-      vec4 q = e.toNeighbor.applyPoint(p);
-      if (originDistance(q) <= charts_[e.neighborId].radius + CONTAIN_TOL) {
-        p = q;
-        current = e.neighborId;
-        found = true;
-        break;
-      }
-    }
-    if (!found) {
-      float d = originDistance(p);
-      if (d > 0) {
-        vec3 t = p.xyz();
-        p = pointFromOriginTangent(
-            normalize(t) * (charts_[current].radius * (1 - CONTAIN_TOL)));
-      }
-    }
-  }
   result.chartId = current;
   result.localPosition = p;
   return result;
@@ -253,8 +261,7 @@ CameraPlacement Atlas::resolveCameraPlacement(int chart, const vec4 &start,
 int Atlas::cameraChartAt(int chart, const vec4 &raw, float viewDistance) {
   vec4 p;
   if (!validChartId(chart) || !canonicalizePoint(raw, p) ||
-      !validViewDistance(viewDistance) ||
-      originDistance(p) > charts_[chart].radius + CONTAIN_TOL) {
+      !validViewDistance(viewDistance)) {
     setError(4);
     return -1;
   }
@@ -299,19 +306,6 @@ int Atlas::cameraMove(const vec3 &movement) {
     up = portal.toNeighbor.applyTangent(up);
     fwd = portal.toNeighbor.applyTangent(fwd);
     current = portal.neighborId;
-  }
-  if (originDistance(p) > charts_[current].radius + CONTAIN_TOL) {
-    for (const auto &e : charts_[current].edges) {
-      vec4 q = e.toNeighbor.applyPoint(p);
-      if (originDistance(q) <= charts_[e.neighborId].radius + CONTAIN_TOL) {
-        p = q;
-        right = e.toNeighbor.applyTangent(right);
-        up = e.toNeighbor.applyTangent(up);
-        fwd = e.toNeighbor.applyTangent(fwd);
-        current = e.neighborId;
-        break;
-      }
-    }
   }
   Isometry centered = movePointToOrigin(p);
   cameraRight_ = normalize(centered.applyTangent(right).xyz());

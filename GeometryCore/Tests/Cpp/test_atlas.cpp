@@ -22,6 +22,14 @@ static Object flatObject(const Atlas &a, int index) {
               sizeof(o));
   return o;
 }
+static GPUChart packetChart(const Atlas &a, int index) {
+  GPUChart chart{};
+  std::memcpy(&chart,
+              a.packet().data() + sizeof(ScenePacketHeader) +
+                  index * sizeof(GPUChart),
+              sizeof(chart));
+  return chart;
+}
 static GPUPortal atlasPortal(const Atlas &a, int index) {
   GPUPortal portal{};
   std::memcpy(&portal,
@@ -102,7 +110,7 @@ void test_atlas() {
   for (int model = 0; model <= 2; ++model) {
     Atlas a;
     a.start(model);
-    CHECK(a.seed(model == GEO_MODEL_S3 ? 2.0f : 3.0f) == 0);
+    CHECK(a.seed() == 0);
     vec4 p = a.pointFromOriginTangent(vec3(.3f, -.2f, .1f));
     CHECK_NEAR(a.intrinsicDistance(vec4(0, 0, 0, 1), p), sqrt(.14f), 2e-4);
     CameraPlacement moved =
@@ -186,7 +194,7 @@ void test_atlas() {
   for (int model = GEO_MODEL_H3; model <= GEO_MODEL_R3; ++model) {
     Atlas a;
     a.start(model);
-    CHECK(a.seed(model == GEO_MODEL_S3 ? 2.7f : 3.0f) == 0);
+    CHECK(a.seed() == 0);
     CHECK(a.addMaterial(vec4(1, 1, 1, 1), 0, 0, 1.5f, 0, vec3()) == 0);
     int ball = a.addBallSurface(
         0, a.pointFromOriginTangent(vec3(.2f, 0, 0)), .25f, 0);
@@ -208,7 +216,7 @@ void test_atlas() {
     auto h = header(a);
     CHECK(h.counts.objectCount == 3);
     CHECK(h.counts.quadricCount == 2);
-    CHECK(h.counts.clipCount == 4);
+    CHECK(h.counts.clipCount == 2);
     Object encodedBall = flatObject(a, 0);
     CHECK(encodedBall.equationKind ==
           (model == GEO_MODEL_R3 ? GEO_EQUATION_R3_SPHERE
@@ -222,15 +230,14 @@ void test_atlas() {
     CHECK(flatClip(a, 1).kind == GEO_CLIP_QUADRIC);
     CHECK(flatClip(a, 1).pad0 == 0);
     CHECK(flatClip(a, 1).pad1 == 1);
-    CHECK(flatClip(a, 2).kind == GEO_CLIP_BALL);
-    CHECK(flatClip(a, 3).kind == GEO_CLIP_BALL);
+    CHECK(flatObject(a, 2).clipCount == 0);
     CHECK_NEAR(flatQuadric(a, flatClip(a, 1).pad0).coefficients.m[0],
                1.0f / sqrt(4.0f), 2e-5);
   }
   {
     Atlas a;
     a.start(GEO_MODEL_S3);
-    CHECK(a.seed(2.8f) == 0);
+    CHECK(a.seed() == 0);
     CHECK(a.addMaterial(vec4(1, 1, 1, 1), 0, 0, 1.5f, 0, vec3()) == 0);
     CHECK(a.addCliffordTorus(0, 0) == 0);
     float asymmetric[16] = {};
@@ -249,11 +256,11 @@ void test_atlas() {
   {
     Atlas a;
     a.start(GEO_MODEL_R3);
-    CHECK(a.seed(3) == 0);
+    CHECK(a.seed() == 0);
     float translation[16];
     identity(translation);
     translation[12] = 2;
-    CHECK(a.addChart(3, 0, translation, true) == 1);
+    CHECK(a.addChart(0, translation, true) == 1);
     CHECK(a.addMaterial(vec4(1, 1, 1, 1), 0, 0, 1.5f, 0, vec3()) == 0);
     float sphere[16] = {};
     sphere[0] = sphere[5] = sphere[10] = 1;
@@ -280,15 +287,15 @@ void test_atlas() {
     CHECK_NEAR(flatQuadric(a, 1).coefficients.m[3], 2 / sqrt(11.0f),
                2e-5);
     CHECK_NEAR(flatQuadric(a, 1).coefficients.m[15], 0, 2e-5);
-    CHECK(flatClip(a, 2).kind == GEO_CLIP_BALL);
-    CHECK_NEAR(flatClip(a, 2).geometry.x, -2.0f, 2e-5);
+    CHECK(header(a).counts.clipCount == 2);
+    CHECK(flatObject(a, 0).clipCount == 2);
   }
   // A near-symmetric API matrix is stored exactly symmetric, and normalization
   // remains stable for finite coefficients near the float range.
   {
     Atlas a;
     a.start(GEO_MODEL_R3);
-    CHECK(a.seed(3) == 0);
+    CHECK(a.seed() == 0);
     CHECK(a.addMaterial(vec4(1, 1, 1, 1), 0, 0, 1.5f, 0, vec3()) == 0);
     float q[16] = {};
     q[0] = 1e30f;
@@ -308,7 +315,7 @@ void test_atlas() {
   {
     Atlas a;
     a.start(GEO_MODEL_H3);
-    CHECK(a.seed(3) == 0);
+    CHECK(a.seed() == 0);
     CHECK(a.addMaterial(vec4(1, 1, 1, 1), 0, 0, 1.5f, 0, vec3()) == 0);
     CHECK(a.addLinearSurface(0, vec4(1, 0, 0, 0), sinh(.4f), 0) == 0);
     // A null Lorentz normal represents a horosphere.
@@ -320,13 +327,13 @@ void test_atlas() {
   {
     Atlas a;
     a.start(GEO_MODEL_H3);
-    CHECK(a.seed(4.0f) == 0);
+    CHECK(a.seed() == 0);
     CHECK(a.pointFromOriginTangent(vec3(2, 0, 0)).w > 1);
   }
   {
     Atlas a;
     a.start(GEO_MODEL_H3);
-    CHECK(a.seed(2) == 0);
+    CHECK(a.seed() == 0);
     float m[16];
     identity(m);
     float c = cosh(1.2f), s = sinh(1.2f);
@@ -338,12 +345,84 @@ void test_atlas() {
           0);
     CHECK(a.portalCount() == 2);
   }
+  // The authored portal is the transition source for both CPU camera motion
+  // and the GPU-atlas packet. In every model, crossing the outward trigger
+  // maps through the collar to the interior side of the opposite trigger.
+  for (int model = GEO_MODEL_H3; model <= GEO_MODEL_R3; ++model) {
+    Atlas a;
+    a.start(model);
+    CHECK(a.seed() == 0);
+
+    constexpr float faceDistance = .6f;
+    constexpr float collar = .01f;
+    constexpr float stepEpsilon = .002f;
+    float pairing[16];
+    identity(pairing);
+    vec3 outwardA, outwardB;
+    if (model == GEO_MODEL_R3) {
+      outwardA = vec3(1, 0, 0);
+      outwardB = vec3(-1, 0, 0);
+      pairing[12] = -2 * faceDistance;
+    } else {
+      outwardA = vec3(-1, 0, 0);
+      outwardB = vec3(1, 0, 0);
+      float c = model == GEO_MODEL_S3 ? std::cos(2 * faceDistance)
+                                     : std::cosh(2 * faceDistance);
+      float s = model == GEO_MODEL_S3 ? std::sin(2 * faceDistance)
+                                     : std::sinh(2 * faceDistance);
+      pairing[0] = c;
+      pairing[3] = model == GEO_MODEL_S3 ? -s : s;
+      pairing[12] = s;
+      pairing[15] = c;
+    }
+
+    CHECK(a.addPortalPair(0, outwardA, faceDistance, 0, outwardB,
+                          faceDistance, pairing) == 0);
+    CHECK(a.cameraChartAt(
+              0,
+              a.pointFromOriginTangent(
+                  outwardA * (faceDistance + collar - stepEpsilon)),
+              2.4f) == 0);
+    CHECK(a.buildAtlas(0, 64, 1, 32) == 0);
+
+    GPUPortal forward = atlasPortal(a, 0);
+    GPUPortal reverse = atlasPortal(a, 1);
+    CHECK(forward.reversePortal == 1);
+    CHECK(reverse.reversePortal == 0);
+    vec4 sourceTrigger = a.pointFromOriginTangent(
+        outwardA * (faceDistance + collar));
+    vec4 expectedInterior = a.pointFromOriginTangent(
+        outwardB * (faceDistance - collar));
+    vec4 packetMapped = mat4Apply(forward.toNeighbor, sourceTrigger);
+    float distanceTolerance = model == GEO_MODEL_H3 ? 6e-4f : 2e-4f;
+    CHECK_NEAR(a.intrinsicDistance(packetMapped, expectedInterior), 0,
+               distanceTolerance);
+
+    CHECK(a.cameraMove(outwardA * (2 * stepEpsilon)) == 0);
+    CHECK(a.buildAtlas(0, 64, 1, 32) == 0);
+    vec4 expectedCamera = a.pointFromOriginTangent(
+        outwardB * (faceDistance - collar - stepEpsilon));
+    CHECK_NEAR(a.intrinsicDistance(header(a).camera.position, expectedCamera),
+               0, distanceTolerance);
+  }
+  // Pair validation is transactional: a mismatched face map cannot leave a
+  // partial directed portal in the atlas.
+  {
+    Atlas a;
+    a.start(GEO_MODEL_R3);
+    CHECK(a.seed() == 0);
+    float mismatch[16];
+    identity(mismatch);
+    CHECK(a.addPortalPair(0, vec3(1, 0, 0), .6f, 0, vec3(-1, 0, 0),
+                          .6f, mismatch) < 0);
+    CHECK(a.portalCount() == 0);
+  }
   // Explicit trigger collars leave the default API unchanged and allow a
   // true-face transition for overlap-atlas experiments.
   {
     Atlas a;
     a.start(GEO_MODEL_R3);
-    CHECK(a.seed(2) == 0);
+    CHECK(a.seed() == 0);
     float translation[16];
     identity(translation);
     translation[12] = -2;
@@ -360,7 +439,7 @@ void test_atlas() {
   for (int model = GEO_MODEL_H3; model <= GEO_MODEL_R3; ++model) {
     auto configure = [model](Atlas &a) {
       a.start(model);
-      CHECK(a.seed(model == GEO_MODEL_S3 ? 2.5f : 3.0f) == 0);
+      CHECK(a.seed() == 0);
       a.setCamera(.8f, 1.6f, vec3(0, 0, 1), vec3(.6f, .8f, 0),
                   vec3(-.8f, .6f, 0));
       CHECK(a.cameraChartAt(0, a.pointFromOriginTangent(vec3(.35f, -.2f, .1f)),
@@ -390,7 +469,7 @@ void test_atlas() {
   {
     auto configure = [](Atlas &a) {
       a.start(GEO_MODEL_H3);
-      CHECK(a.seed(3) == 0);
+      CHECK(a.seed() == 0);
       float boost[16];
       identity(boost);
       float c = cosh(1.2f), s = sinh(1.2f);
@@ -427,33 +506,125 @@ void test_atlas() {
   {
     Atlas a;
     a.start(GEO_MODEL_S3);
-    CHECK(a.seed(3.14159265f) < 0);
+    CHECK(a.seed() == 0);
+    CHECK(a.addMaterial(vec4(1, 1, 1, 1), 0, 0, 1.5f, 0, vec3()) == 0);
+    CHECK(a.addBall(0, vec4(0, 0, 0, 1), 3.14159265f, 0) < 0);
+    CHECK(a.addSphericalAreaLight(0, vec4(0, 0, 0, 1), 3.14159265f,
+                                  vec3(1, 1, 1), 1) < 0);
+    CHECK(a.addPlane(0, vec3(1, 0, 0), 3.14159265f, 0) < 0);
+    float I[16];
+    identity(I);
+    CHECK(a.addPortalPair(0, vec3(1, 0, 0), 3.14159265f, 0,
+                          vec3(-1, 0, 0), 3.14159265f, I) < 0);
   }
-  // The camera view distance has the same intrinsic S³ upper bound as a
-  // chart radius, but is validated independently from the authored chart
-  // domain. In particular, a camera may use a shorter distance than its chart
-  // radius without changing the chart itself.
+  // Camera view distance retains its independent intrinsic S³ upper bound.
   {
     Atlas a;
     a.start(GEO_MODEL_S3);
-    CHECK(a.seed(2.0f) == 0);
+    CHECK(a.seed() == 0);
     a.setCamera(.8f, 1.6f, vec3(1, 0, 0), vec3(0, 1, 0), vec3(0, 0, 1));
     CHECK(a.cameraChartAt(0, vec4(0, 0, 0, 1), 3.14159265f) < 0);
     CHECK(a.cameraChartAt(0, vec4(0, 0, 0, 1), 1.5f) == 0);
   }
+  // GPU-atlas serialization accepts any canonical active-camera coordinate in
+  // every model; view distance bounds rays.
+  for (int model = GEO_MODEL_H3; model <= GEO_MODEL_R3; ++model) {
+    Atlas a;
+    a.start(model);
+    CHECK(a.seed() == 0);
+    vec4 remote = a.pointFromOriginTangent(vec3(.8f, 0, 0));
+    CHECK(a.cameraChartAt(0, remote, 2) == 0);
+    CHECK(a.buildAtlas(0, 64, 1, 32) == 0);
+    CHECK_NEAR(header(a).camera.reservedFloat0, 0, 0);
+    CHECK_NEAR(packetChart(a, 0).reserved0, 0, 0);
+    CHECK_NEAR(packetChart(a, 0).reserved1, 0, 0);
+    float packetTolerance = model == GEO_MODEL_H3 ? 6e-4f : 2e-5f;
+    CHECK_NEAR(a.intrinsicDistance(header(a).camera.position, remote), 0,
+               packetTolerance);
+  }
+  // Ordinary overlap edges do not change camera coordinates; only explicit
+  // portals do.
   {
     Atlas a;
     a.start(GEO_MODEL_R3);
-    CHECK(a.seed(2) == 0);
+    CHECK(a.seed() == 0);
+    float toNeighbor[16];
+    identity(toNeighbor);
+    toNeighbor[12] = -1;
+    CHECK(a.addChart(0, toNeighbor, true) == 1);
+
+    CameraPlacement resolved =
+        a.resolveCameraPlacement(0, vec4(.9f, 0, 0, 1), vec3(.3f, 0, 0));
+    CHECK(resolved.chartId == 0);
+    CHECK_NEAR(resolved.localPosition.x, 1.2f, 1e-6);
+
+    CHECK(a.cameraChartAt(0, vec4(.9f, 0, 0, 1), 4) == 0);
+    CHECK(a.cameraMove(vec3(.3f, 0, 0)) == 0);
+    CHECK(a.cameraChartId() == 0);
+    CHECK(a.build(0, 64) == 0);
+    CHECK(a.buildAtlas(0, 64, 1, 32) == 0);
+    CHECK_NEAR(header(a).camera.position.x, 1.2f, 1e-6);
+
+    CHECK(a.cameraChartAt(0, vec4(1.2f, 0, 0, 1), 4) == 0);
+    CHECK(a.build(0, 64) == 0);
+  }
+  // A whole-sphere S3 camera can pass through the antipode without a chart
+  // transition. The exact antipode also admits a finite, oriented recentering.
+  {
+    Atlas a;
+    a.start(GEO_MODEL_S3);
+    CHECK(a.seed() == 0);
+    CHECK(a.addLight(0, a.pointFromOriginTangent(vec3(.2f, 0, 0)),
+                     vec3(1, 1, 1), 1) == 0);
+    a.setCamera(.8f, 1.6f, vec3(1, 0, 0), vec3(0, 1, 0), vec3(0, 0, 1));
+    CHECK(a.cameraChartAt(0, vec4(0, 0, 0, -1), 2.5f) == 0);
+    CHECK(a.build(0, 64) == 0);
+    ScenePacketHeader antipodal = header(a);
+    auto finiteVector = [](const vec4 &v) {
+      return std::isfinite(v.x) && std::isfinite(v.y) &&
+             std::isfinite(v.z) && std::isfinite(v.w);
+    };
+    CHECK(finiteVector(antipodal.camera.right));
+    CHECK(finiteVector(antipodal.camera.up));
+    CHECK(finiteVector(antipodal.camera.fwd));
+    // The deterministic x-w rotation chosen at the exact antipode is
+    // orientation preserving; a reflection would leave this x coordinate
+    // positive instead.
+    PointLight antipodalLight = flatLight(a, 0);
+    CHECK_NEAR(antipodalLight.position.x, -std::sin(.2f), 2e-5);
+    CHECK_NEAR(antipodalLight.position.w, -std::cos(.2f), 2e-5);
+    CHECK(a.buildAtlas(0, 64, 1, 32) == 0);
+    CHECK_NEAR(header(a).camera.position.w, -1, 1e-6);
+
+    CHECK(a.cameraChartAt(0, vec4(0, 0, 0, 1), 2.5f) == 0);
+    constexpr int steps = 400;
+    float step = 2 * 3.14159265358979323846f / steps;
+    for (int i = 0; i < steps; ++i)
+      CHECK(a.cameraMove(a.cameraFwd() * step) == 0);
+    CHECK(a.cameraChartId() == 0);
+    CHECK(a.buildAtlas(0, 64, 1, 32) == 0);
+    ScenePacketHeader looped = header(a);
+    CHECK_NEAR(looped.camera.position.x, 0, 2e-4);
+    CHECK_NEAR(looped.camera.position.y, 0, 2e-4);
+    CHECK_NEAR(looped.camera.position.z, 0, 2e-4);
+    CHECK_NEAR(looped.camera.position.w, 1, 2e-4);
+    CHECK_NEAR(a.cameraFwd().x, 0, 2e-4);
+    CHECK_NEAR(a.cameraFwd().y, 0, 2e-4);
+    CHECK_NEAR(a.cameraFwd().z, 1, 2e-4);
+  }
+  {
+    Atlas a;
+    a.start(GEO_MODEL_R3);
+    CHECK(a.seed() == 0);
     CHECK(a.addMaterial(vec4(1, 1, 1, 1), 0, 0, 1.5f, 0, vec3()) == 0);
-    CHECK(a.addBall(0, vec4(1.9f, 0, 0, 1), .2f, 0) < 0);
+    CHECK(a.addBall(0, vec4(1.9f, 0, 0, 1), .2f, 0) == 0);
     CHECK(a.addPlane(0, vec3(), 1, 0) < 0);
   }
   // One-chart Euclidean torus: six directed portals and translation closure.
   {
     Atlas a;
     a.start(GEO_MODEL_R3);
-    CHECK(a.seed(2.0f) == 0);
+    CHECK(a.seed() == 0);
     float tx[16], ty[16], tz[16];
     identity(tx);
     identity(ty);
@@ -480,7 +651,7 @@ void test_atlas() {
   {
     Atlas a;
     a.start(GEO_MODEL_R3);
-    CHECK(a.seed(2) == 0);
+    CHECK(a.seed() == 0);
     float translation[16];
     identity(translation);
     translation[12] = -2;
@@ -499,11 +670,11 @@ void test_atlas() {
   {
     Atlas a;
     a.start(GEO_MODEL_R3);
-    CHECK(a.seed(2) == 0);
+    CHECK(a.seed() == 0);
     float I[16];
     identity(I);
-    CHECK(a.add(2, 0, I, true) == 1);
-    CHECK(a.add(2, 1, I, true) == 2);
+    CHECK(a.add(0, I, true) == 1);
+    CHECK(a.add(1, I, true) == 2);
     float t[16];
     identity(t);
     t[12] = 1;

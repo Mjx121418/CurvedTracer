@@ -27,7 +27,6 @@ struct ChartObject {
   float parameter = 0.0f;
   mat4 quadric;
   int colorIdx = 0;
-  bool needsChartBound = false;
   std::vector<int> clipIds;
 };
 
@@ -61,7 +60,6 @@ struct ChartEdge {
 
 struct Chart {
   int id = -1;
-  float radius = 1.0f;
   std::vector<ChartEdge> edges;
   std::vector<int> objectIds;
   std::vector<int> lightIds;
@@ -73,6 +71,9 @@ struct ChartPortal {
   int neighborId = -1;
   vec4 normal;
   float offset = 0.0f;
+  // Camera and ray crossings use toNeighbor directly. The reverse index is
+  // retained only for bounded GPU light-lift traversal, which needs the
+  // incoming portal and the inverse coordinate map without inverting a matrix.
   int reversePortal = -1;
   Isometry toNeighbor;
 };
@@ -83,12 +84,11 @@ public:
   void begin(int modelKind);
   void start(int modelKind) { begin(modelKind); }
 
-  int seed(float intrinsicRadius);
-  int addChart(float intrinsicRadius, int fromChart, const float m[16],
-               bool safe);
+  int seed();
+  int addChart(int fromChart, const float m[16], bool safe);
   void linkCharts(int a, int b, const float m_ab[16], bool safe);
-  int add(float r, int from, const float m[16], bool safe) {
-    return addChart(r, from, m, safe);
+  int add(int from, const float m[16], bool safe) {
+    return addChart(from, m, safe);
   }
   void link(int a, int b, const float m[16], bool safe) {
     linkCharts(a, b, m, safe);
@@ -186,13 +186,13 @@ private:
   bool validChartId(int id) const {
     return id >= 0 && id < int(charts_.size());
   }
-  bool validChartRadius(float r) const;
+  bool validGeodesicRadius(float radius) const;
+  bool validSignedDistance(float distance) const;
+  bool validPortalDistance(float distance) const;
   bool validViewDistance(float distance) const;
   ModelKind kind() const { return static_cast<ModelKind>(modelKind_); }
   Isometry isometryFrom(const float m[16]) const;
   bool canonicalizePoint(const vec4 &in, vec4 &out) const;
-  float originDistance(const vec4 &p) const;
-  float tracingParameter(float distance) const;
   vec4 planeNormal(const vec3 &outward, float distance) const;
   bool normalizedLinearForm(const vec4 &normal, float offset,
                             vec4 &normalized, float &normalizedOffset) const;

@@ -176,25 +176,12 @@ int Atlas::emit(bool flatten, int cameraChart, int depth, int hops,
       }
       gpuClips.push_back(emitted);
     }
-    if (developed && o.needsChartBound) {
-      PrimitiveClip bound{};
-      bound.kind = GEO_CLIP_BALL;
-      bound.geometry = transform.applyPoint(vec4(0, 0, 0, 1));
-      float radius = charts_[o.chartId].radius;
-      bound.parameter = modelKind_ == GEO_MODEL_S3 ? std::cos(radius)
-                        : modelKind_ == GEO_MODEL_H3
-                            ? -std::cosh(radius)
-                            : radius;
-      gpuClips.push_back(bound);
-    }
     x.clipCount = int(gpuClips.size()) - x.firstClip;
     gpuObjects.push_back(x);
   };
 
   if (flatten) {
     GPUChart c{};
-    c.intrinsicRadius = cameraViewDistance_;
-    c.tracingParameter = tracingParameter(cameraViewDistance_);
     c.objectCount = int(objects_.size());
     c.lightCount = int(lights_.size());
     gpuCharts.push_back(c);
@@ -216,8 +203,6 @@ int Atlas::emit(bool flatten, int cameraChart, int depth, int hops,
         portalRemap[id] = nextPortal++;
     for (const auto &c : charts_) {
       GPUChart g{};
-      g.intrinsicRadius = c.radius;
-      g.tracingParameter = tracingParameter(c.radius);
       g.firstPortal = int(gpuPortals.size());
       g.portalCount = int(c.portalIds.size());
       g.firstObject = int(gpuObjects.size());
@@ -231,6 +216,8 @@ int Atlas::emit(bool flatten, int cameraChart, int depth, int hops,
         x.normal = p.normal;
         x.offset = p.offset;
         x.neighborChart = p.neighborId;
+        // Packet portals are regrouped by chart, so translate the authoring
+        // index used by bounded light-lift traversal into packet order.
         x.reversePortal = portalRemap[p.reversePortal];
         gpuPortals.push_back(x);
       }
@@ -258,7 +245,6 @@ int Atlas::emit(bool flatten, int cameraChart, int depth, int hops,
   h.camera.fovTan = fovTan_;
   h.camera.aspect = aspect_;
   h.camera.maxTraceDistance = cameraViewDistance_;
-  h.camera.maxTraceParameter = tracingParameter(cameraViewDistance_);
   h.camera.chartId = flatten ? 0 : cameraChart;
   if (flatten) {
     h.camera.right = vec4(cameraRight_, 0);

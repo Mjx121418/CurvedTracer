@@ -37,9 +37,9 @@ int Atlas::addBall(int chart, const vec4 &raw, float r, int material) {
 int Atlas::addBallSurface(int chart, const vec4 &raw, float r, int material) {
   packet_.clear();
   vec4 center;
-  if (!validChartId(chart) || !canonicalizePoint(raw, center) || !finite(r) ||
-      r <= 0 || material < 0 || material >= int(materials_.size()) ||
-      originDistance(center) + r > charts_[chart].radius + CONTAIN_TOL ||
+  if (!validChartId(chart) || !canonicalizePoint(raw, center) ||
+      !validGeodesicRadius(r) || material < 0 ||
+      material >= int(materials_.size()) ||
       objects_.size() >= GEO_MAX_OBJECTS) {
     setError(3);
     return -1;
@@ -106,7 +106,6 @@ int Atlas::addLinearSurface(int chart, const vec4 &raw, float offset,
   o.geometry = normal;
   o.parameter = normalizedOffset;
   o.colorIdx = material;
-  o.needsChartBound = true;
   objects_.push_back(o);
   charts_[chart].objectIds.push_back(int(objects_.size() - 1));
   setError(0);
@@ -123,8 +122,8 @@ vec4 Atlas::planeNormal(const vec3 &u, float d) const {
 
 int Atlas::addPlane(int chart, const vec3 &dir, float d, int material) {
   float l = length(dir);
-  if (!validChartId(chart) || !finite(dir) || l < 1e-8f || !finite(d) ||
-      std::fabs(d) > charts_[chart].radius + CONTAIN_TOL) {
+  if (!validChartId(chart) || !finite(dir) || l < 1e-8f ||
+      !validSignedDistance(d)) {
     setError(3);
     return -1;
   }
@@ -180,7 +179,6 @@ int Atlas::addQuadric(int chart, const float coefficients[16], int material) {
   o.equationKind = GEO_EQUATION_QUADRIC;
   o.quadric = normalized;
   o.colorIdx = material;
-  o.needsChartBound = true;
   objects_.push_back(o);
   charts_[chart].objectIds.push_back(int(objects_.size() - 1));
   setError(0);
@@ -245,7 +243,7 @@ int Atlas::addObjectClipQuadric(int object, const float coefficients[16],
 int Atlas::addObjectClipPlane(int object, const vec3 &dir, float d) {
   float l = length(dir);
   if (object < 0 || object >= int(objects_.size()) || !finite(dir) ||
-      l < 1e-8f || !finite(d)) {
+      l < 1e-8f || !validSignedDistance(d)) {
     setError(3);
     return -1;
   }
@@ -260,7 +258,6 @@ int Atlas::addLight(int chart, const vec4 &raw, const vec3 &color,
   vec4 p;
   if (!validChartId(chart) || !canonicalizePoint(raw, p) || !finite(color) ||
       !finite(intensity) || intensity < 0 ||
-      originDistance(p) > charts_[chart].radius + CONTAIN_TOL ||
       lights_.size() >= GEO_MAX_LIGHTS) {
     setError(3);
     return -1;
@@ -283,10 +280,8 @@ int Atlas::addSphericalAreaLight(int chart, const vec4 &raw, float radius,
   packet_.clear();
   vec4 center;
   if (!validChartId(chart) || !canonicalizePoint(raw, center) ||
-      !validChartRadius(radius) || !finite(color) ||
+      !validGeodesicRadius(radius) || !finite(color) ||
       !finite(emittedRadiance) || emittedRadiance < 0 ||
-      originDistance(center) + radius >
-          charts_[chart].radius + CONTAIN_TOL ||
       lights_.size() >= GEO_MAX_LIGHTS) {
     setError(3);
     return -1;

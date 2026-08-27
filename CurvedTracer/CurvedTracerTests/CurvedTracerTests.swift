@@ -225,14 +225,17 @@ struct CurvedTracerTests {
         #expect(int32(bytes, at: 168) == 5)
         #expect(int32(bytes, at: 172) == 5)
         #expect(int32(bytes, at: 180) == 2)
-        #expect(int32(bytes, at: 184) == 10)
+        #expect(int32(bytes, at: 184) == 8)
         let firstObject = 192 + 32
         #expect(int32(bytes, at: firstObject + 20) == 0)
+        let mirror = firstObject + 2 * 48
+        #expect(int32(bytes, at: mirror + 32) == 4)
         for ring in 0..<2 {
             let object = firstObject + (3 + ring) * 48
             #expect(int32(bytes, at: object + 20) == 2)
             #expect(int32(bytes, at: object + 24) == Int32(3 + ring))
-            #expect(int32(bytes, at: object + 32) == 1)
+            #expect(int32(bytes, at: object + 28) == 8)
+            #expect(int32(bytes, at: object + 32) == 0)
             #expect(int32(bytes, at: object + 36) == Int32(ring))
         }
 
@@ -240,7 +243,9 @@ struct CurvedTracerTests {
         bytes = [UInt8](atlas.packetBytes())
         #expect(int32(bytes, at: 168) == 4)
         #expect(int32(bytes, at: 180) == 1)
-        #expect(int32(bytes, at: 184) == 10)
+        #expect(int32(bytes, at: 184) == 9)
+        let hyperbolicMirror = 192 + 32 + 3 * 48
+        #expect(int32(bytes, at: hyperbolicMirror + 32) == 4)
     }
 
     @Test func catalogPointLightsCompensateLambertianNormalization() {
@@ -285,7 +290,7 @@ struct CurvedTracerTests {
         #expect(int32(bytes, at: 172) == 5)
         #expect(int32(bytes, at: 176) == 2)
         #expect(int32(bytes, at: 180) == 20)
-        #expect(int32(bytes, at: 184) == 20)
+        #expect(int32(bytes, at: 184) == 0)
 
         let cameraPlacement = SphericalScene.hopfFibrationCameraPlacement()
         let point = cameraPlacement.point
@@ -314,8 +319,8 @@ struct CurvedTracerTests {
             #expect(material >= 0 && material < 5)
             fiberMaterials.append(material)
             #expect(int32(bytes, at: object + 20) == 2)
-            #expect(int32(bytes, at: object + 28) == Int32(fiber))
-            #expect(int32(bytes, at: object + 32) == 1)
+            #expect(int32(bytes, at: object + 28) == 0)
+            #expect(int32(bytes, at: object + 32) == 0)
             #expect(int32(bytes, at: object + 36) == Int32(fiber))
         }
 
@@ -401,8 +406,10 @@ struct CurvedTracerTests {
         #expect(int32(bytes, at: 176) == 2)
         #expect(int32(bytes, at: 180) == 20)
         #expect(int32(bytes, at: 184) == 0)
-        #expect(abs(float32(bytes, at: 192) - 2.35) < 0.0001)
-        #expect(abs(float32(bytes, at: 224) - 2.35) < 0.0001)
+        #expect(float32(bytes, at: 192) == 0)
+        #expect(float32(bytes, at: 196) == 0)
+        #expect(float32(bytes, at: 224) == 0)
+        #expect(float32(bytes, at: 228) == 0)
         #expect(int32(bytes, at: 192 + 20) == 10)
         #expect(int32(bytes, at: 224 + 20) == 10)
         #expect(int32(bytes, at: 192 + 28) == 2)
@@ -423,7 +430,7 @@ struct CurvedTracerTests {
         #expect(int32(bytes, at: 172) == 5)
         #expect(int32(bytes, at: 176) == 2)
         #expect(int32(bytes, at: 180) == 30)
-        #expect(int32(bytes, at: 184) == 40)
+        #expect(int32(bytes, at: 184) == 30)
 
         let firstObject = 192 + 32
         let firstClip = firstObject + 10 * 48 + 30 * 64
@@ -431,11 +438,11 @@ struct CurvedTracerTests {
             let object = firstObject + patch * 48
             #expect(int32(bytes, at: object + 20) == 2)
             #expect(int32(bytes, at: object + 24) == Int32(patch % 5))
-            #expect(int32(bytes, at: object + 28) == Int32(patch * 4))
-            #expect(int32(bytes, at: object + 32) == 4)
+            #expect(int32(bytes, at: object + 28) == Int32(patch * 3))
+            #expect(int32(bytes, at: object + 32) == 3)
             #expect(int32(bytes, at: object + 36) == Int32(patch * 3))
 
-            let clip = firstClip + patch * 4 * 32
+            let clip = firstClip + patch * 3 * 32
             #expect(int32(bytes, at: clip + 20) == 2)
             #expect(int32(bytes, at: clip + 24) == Int32(patch * 3 + 1))
             #expect(int32(bytes, at: clip + 28) == 0)
@@ -443,12 +450,12 @@ struct CurvedTracerTests {
             #expect(int32(bytes, at: clip + 32 + 24) == Int32(patch * 3 + 2))
             #expect(int32(bytes, at: clip + 32 + 28) == 0)
             #expect(int32(bytes, at: clip + 64 + 20) == 0)
-            #expect(int32(bytes, at: clip + 96 + 20) == 1)
         }
 
         // The third authored clip splits each patch at the chart equator.
         // The second chart owns the complementary hemisphere, so flattening
-        // remains disjoint while camera movement can complete a fiber loop.
+        // remains disjoint while a radius-independent camera can complete a
+        // fiber loop without changing its coordinate chart.
         #expect(atlas.buildAtlas(atlas.cameraChartId(), 64, 1, 32) == 0)
         bytes = [UInt8](atlas.packetBytes())
         #expect(int32(bytes, at: 160) == 2)
@@ -459,19 +466,13 @@ struct CurvedTracerTests {
         let placement = SphericalScene.hopfFibrationCameraPlacement()
         let initialForward = atlas.cameraFwd()
         var visitedCharts = Set<Int32>([atlas.cameraChartId()])
-        var builtOppositeChart = false
         for _ in 0..<628 {
             let forward = atlas.cameraFwd()
             _ = atlas.cameraMove(
                 geo.vec3(forward.x * 0.01, forward.y * 0.01, forward.z * 0.01))
             visitedCharts.insert(atlas.cameraChartId())
-            if atlas.cameraChartId() == 1 && !builtOppositeChart {
-                #expect(atlas.build(atlas.cameraChartId(), 64) == 0)
-                builtOppositeChart = true
-            }
         }
-        #expect(visitedCharts == Set([Int32(0), Int32(1)]))
-        #expect(builtOppositeChart)
+        #expect(visitedCharts == Set([Int32(0)]))
         #expect(atlas.cameraChartId() == 0)
         #expect(abs(atlas.cameraFwd().x - initialForward.x) < 0.0001)
         #expect(abs(atlas.cameraFwd().y - initialForward.y) < 0.0001)
@@ -496,7 +497,7 @@ struct CurvedTracerTests {
         #expect(int32(bytes, at: 168) == 12)
         #expect(int32(bytes, at: 172) == 4)
         #expect(int32(bytes, at: 180) == 12)
-        #expect(int32(bytes, at: 184) == 48)
+        #expect(int32(bytes, at: 184) == 36)
 
         let firstObject = 192 + 32
         var colors: [Int32] = []
@@ -504,8 +505,8 @@ struct CurvedTracerTests {
             let object = firstObject + piece * 48
             #expect(int32(bytes, at: object + 20) == 2)
             colors.append(int32(bytes, at: object + 24))
-            #expect(int32(bytes, at: object + 28) == Int32(piece * 5))
-            #expect(int32(bytes, at: object + 32) == 5)
+            #expect(int32(bytes, at: object + 28) == Int32(piece * 4))
+            #expect(int32(bytes, at: object + 32) == 4)
             #expect(int32(bytes, at: object + 36) == Int32(piece))
         }
         #expect(Set(colors) == Set([Int32(0), Int32(1)]))
@@ -515,8 +516,8 @@ struct CurvedTracerTests {
             let object = firstObject + (8 + half) * 48
             #expect(int32(bytes, at: object + 20) == 2)
             #expect(int32(bytes, at: object + 24) == Int32(2 + half / 2))
-            #expect(int32(bytes, at: object + 28) == Int32(40 + half * 2))
-            #expect(int32(bytes, at: object + 32) == 2)
+            #expect(int32(bytes, at: object + 28) == Int32(32 + half))
+            #expect(int32(bytes, at: object + 32) == 1)
             #expect(int32(bytes, at: object + 36) == Int32(8 + half))
         }
 
@@ -546,7 +547,7 @@ struct CurvedTracerTests {
                 geo.vec3(forward.x * 0.01, forward.y * 0.01, forward.z * 0.01))
             visitedCharts.insert(atlas.cameraChartId())
         }
-        #expect(visitedCharts == Set([Int32(0), Int32(1)]))
+        #expect(visitedCharts == Set([Int32(0)]))
         #expect(atlas.build(atlas.cameraChartId(), 64) == 0)
     }
 
@@ -579,7 +580,8 @@ struct CurvedTracerTests {
         #expect(int32(bytes, at: 168) == 2)
         #expect(int32(bytes, at: 172) == 2)
         #expect(int32(bytes, at: 176) == 1)
-        #expect(float32(bytes, at: 192) > Float.pi / 2)
+        #expect(float32(bytes, at: 192) == 0)
+        #expect(float32(bytes, at: 196) == 0)
 
         let firstPortalOffset = 192 + 32
         let generator = matrix(bytes, at: firstPortalOffset)
@@ -643,7 +645,8 @@ struct CurvedTracerTests {
         _ = HyperbolicScene.seifertWeberAtlas(&atlas)
         bytes = [UInt8](atlas.packetBytes())
         #expect(abs(float32(bytes, at: 140) - 0.6) < 0.0001)
-        #expect(abs(float32(bytes, at: 192) - 2.05) < 0.0001)
+        #expect(float32(bytes, at: 192) == 0)
+        #expect(float32(bytes, at: 196) == 0)
         let seifertPortalCount = Int(int32(bytes, at: 164))
         let seifertObjectOffset = 192 + 32 + seifertPortalCount * 96
         let firstRadius = acosh(float32(bytes, at: seifertObjectOffset + 16))

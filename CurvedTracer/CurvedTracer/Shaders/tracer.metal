@@ -344,6 +344,8 @@ static float3 photoDirectLighting(
         int child = depth + 1;
         chartStack[child] = portal.neighborChart;
         nextPortal[child] = -1;
+        // The reverse record identifies the edge back to the parent and owns
+        // the inverse map from child-local coordinates to parent coordinates.
         incoming[child] = portal.reversePortal;
         toStart[child] =
         toStart[depth] * portals[portal.reversePortal].toNeighbor;

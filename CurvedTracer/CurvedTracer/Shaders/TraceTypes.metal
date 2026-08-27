@@ -21,7 +21,7 @@ BSDF_MODEL_DELTA_REFLECTION = 2, BSDF_MODEL_DELTA_DIELECTRIC = 3,
 BSDF_MODEL_GGX_CONDUCTOR = 4, BSDF_MODEL_GGX_DIELECTRIC = 5,
 BSDF_MODEL_GGX_OPAQUE_DIELECTRIC = 6, BSDF_MODEL_UNSUPPORTED = 7;
 constant int LIGHT_POINT = 0, LIGHT_SPHERE = 1;
-constant int CLIP_LINEAR = 0, CLIP_BALL = 1, CLIP_QUADRIC = 2;
+constant int CLIP_LINEAR = 0, CLIP_QUADRIC = 2;
 constant int FOG_DISABLED = 0, FOG_COMPACT = 1, FOG_EXPONENTIAL = 2;
 constant uint DIAGNOSTIC_INVALID_RAY_STATE = 4u;
 constant uint PHOTO_DIAGNOSTIC_INVALID_BSDF_SAMPLE = 128u;
@@ -39,7 +39,7 @@ struct PacketMeta {
 };
 struct CameraGPU {
     float4 position, right, up, fwd;
-    float fovTan, aspect, maxTraceDistance, maxTraceParameter;
+    float fovTan, aspect, maxTraceDistance, reservedFloat0;
     int chartId, pad0, pad1, pad2;
 };
 struct ControlsGPU {
@@ -59,7 +59,8 @@ struct HeaderGPU {
     CountsGPU counts;
 };
 struct ChartGPU {
-    float intrinsicRadius, tracingParameter;
+    // Reserved version-15 fields retained to preserve the 32-byte layout.
+    float reserved0, reserved1;
     int firstPortal, portalCount, firstObject, objectCount, firstLight,
     lightCount;
 };

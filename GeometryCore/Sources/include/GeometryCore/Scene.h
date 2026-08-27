@@ -27,7 +27,6 @@
 #define GEO_LIGHT_SPHERE 1
 
 #define GEO_CLIP_LINEAR 0
-#define GEO_CLIP_BALL 1
 #define GEO_CLIP_QUADRIC 2
 
 namespace geo {
@@ -47,7 +46,7 @@ struct Camera {
     float fovTan;
     float aspect;
     float maxTraceDistance;
-    float maxTraceParameter;
+    float reservedFloat0;
     int chartId;
     int pad0;
     int pad1;

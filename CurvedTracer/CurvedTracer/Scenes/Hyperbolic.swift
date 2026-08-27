@@ -158,8 +158,8 @@ enum HyperbolicScene {
         atlas.setCamera(1, 16.0 / 9.0, geo.vec3(1, 0, 0), geo.vec3(0, 1, 0), geo.vec3(0, 0, 1))
         atlas.setControls(6, 0.05, 0.25, 2, 0, 0)
         let cameraPosition = pointFromKlein(&atlas, [0.2668035, 0.2668035, 0.2668035])
-        let traceRadius = intrinsicRadius(fromCompactAngle: Float.pi * 0.99 / 2)
-        let camera = atlas.cameraChartAt(0, cameraPosition, traceRadius)
+        let viewDistance = intrinsicRadius(fromCompactAngle: Float.pi * 0.99 / 2)
+        let camera = atlas.cameraChartAt(0, cameraPosition, viewDistance)
         let result = atlas.build(camera, 64)
         if result != 0 { fatalError("H³ Poincaré-ball demo build failed: \(result)") }
         return camera
@@ -349,8 +349,8 @@ enum HyperbolicScene {
         atlas.setControls(10, 0.05, 0.25, 2, 0, 0)
 
         let cameraPosition = pointFromKlein(&atlas, [0.2668035, 0.2668035, 0.2668035])
-        let traceRadius: Float = 20
-        let camera = atlas.cameraChartAt(0, cameraPosition, traceRadius)
+        let viewDistance: Float = 20
+        let camera = atlas.cameraChartAt(0, cameraPosition, viewDistance)
         let result = atlas.build(camera, 64)
         if result != 0 { fatalError("H³ honeycomb build failed: \(result)") }
         return camera

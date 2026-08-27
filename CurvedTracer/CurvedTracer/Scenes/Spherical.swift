@@ -773,7 +773,7 @@ enum SphericalScene {
     @discardableResult static func cell600(_ atlas: inout geo.Atlas) -> Int32 {
         let chartRadius = Float.pi / 2
         let ballRadius = acos(Float(0.995))
-        let cameraRadius = Float.pi * 0.9
+        let viewDistance = Float.pi * 0.9
 
         atlas.start(1)
         let baseChart = atlas.seed(chartRadius)
@@ -865,7 +865,7 @@ enum SphericalScene {
         atlas.setControls(6, 0.05, 0.25, 2, 0, 0)
 
         let cameraPosition = positiveWPoint(lightCoordinates)
-        let camera = atlas.cameraChartAt(0, cameraPosition, cameraRadius)
+        let camera = atlas.cameraChartAt(0, cameraPosition, viewDistance)
         let result = atlas.build(camera, 64)
         if result != 0 {
             fatalError("S³ 600-cell build failed: \(result)")

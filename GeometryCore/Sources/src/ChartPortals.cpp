@@ -250,17 +250,17 @@ CameraPlacement Atlas::resolveCameraPlacement(int chart, const vec4 &start,
   return result;
 }
 
-int Atlas::cameraChartAt(int chart, const vec4 &raw, float radius) {
+int Atlas::cameraChartAt(int chart, const vec4 &raw, float viewDistance) {
   vec4 p;
   if (!validChartId(chart) || !canonicalizePoint(raw, p) ||
-      !validChartRadius(radius) ||
+      !validViewDistance(viewDistance) ||
       originDistance(p) > charts_[chart].radius + CONTAIN_TOL) {
     setError(4);
     return -1;
   }
   cameraChartId_ = chart;
   cameraPosition_ = p;
-  cameraTraceRadius_ = radius;
+  cameraViewDistance_ = viewDistance;
   setError(0);
   return chart;
 }

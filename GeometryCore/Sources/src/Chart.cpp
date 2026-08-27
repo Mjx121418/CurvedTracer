@@ -20,7 +20,7 @@ void Atlas::reset() {
   materials_.clear();
   cameraChartId_ = -1;
   cameraPosition_ = vec4(0, 0, 0, 1);
-  cameraTraceRadius_ = 1;
+  cameraViewDistance_ = 1;
   cameraRight_ = vec3(1, 0, 0);
   cameraUp_ = vec3(0, 1, 0);
   cameraFwd_ = vec3(0, 0, 1);
@@ -54,12 +54,25 @@ bool Atlas::validChartRadius(float r) const {
   return finite(r * 0.5f);
 }
 
-float Atlas::tracingParameter(float r) const {
+bool Atlas::validViewDistance(float distance) const {
+  // Keep the numerical restrictions shared with chart radii for now. The
+  // concepts are intentionally separate: a view distance limits ray travel,
+  // while a chart radius describes the authored chart domain.
+  if (!finite(distance) || distance <= 0)
+    return false;
   if (modelKind_ == GEO_MODEL_S3)
-    return std::tan(0.5f * r);
+    return distance < PI;
   if (modelKind_ == GEO_MODEL_H3)
-    return std::tanh(0.5f * r);
-  return 0.5f * r;
+    return finite(std::sinh(distance)) && finite(std::cosh(distance));
+  return finite(distance * 0.5f);
+}
+
+float Atlas::tracingParameter(float distance) const {
+  if (modelKind_ == GEO_MODEL_S3)
+    return std::tan(0.5f * distance);
+  if (modelKind_ == GEO_MODEL_H3)
+    return std::tanh(0.5f * distance);
+  return 0.5f * distance;
 }
 
 int Atlas::seed(float r) {

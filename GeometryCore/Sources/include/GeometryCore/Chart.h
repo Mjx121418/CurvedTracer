@@ -135,7 +135,7 @@ public:
 
   CameraPlacement resolveCameraPlacement(int startChart, const vec4 &startLocal,
                                          const vec3 &movement) const;
-  int cameraChartAt(int chart, const vec4 &position, float intrinsicRadius);
+  int cameraChartAt(int chart, const vec4 &position, float viewDistance);
   int cameraMove(const vec3 &movement);
   int cameraChartId() const { return cameraChartId_; }
 
@@ -162,7 +162,7 @@ private:
   std::vector<Material> materials_;
   int cameraChartId_ = -1;
   vec4 cameraPosition_ = vec4(0, 0, 0, 1);
-  float cameraTraceRadius_ = 1.0f;
+  float cameraViewDistance_ = 1.0f;
   vec3 cameraRight_ = vec3(1, 0, 0);
   vec3 cameraUp_ = vec3(0, 1, 0);
   vec3 cameraFwd_ = vec3(0, 0, 1);
@@ -182,11 +182,12 @@ private:
     return id >= 0 && id < int(charts_.size());
   }
   bool validChartRadius(float r) const;
+  bool validViewDistance(float distance) const;
   ModelKind kind() const { return static_cast<ModelKind>(modelKind_); }
   Isometry isometryFrom(const float m[16]) const;
   bool canonicalizePoint(const vec4 &in, vec4 &out) const;
   float originDistance(const vec4 &p) const;
-  float tracingParameter(float radius) const;
+  float tracingParameter(float distance) const;
   vec4 planeNormal(const vec3 &outward, float distance) const;
   bool normalizedLinearForm(const vec4 &normal, float offset,
                             vec4 &normalized, float &normalizedOffset) const;

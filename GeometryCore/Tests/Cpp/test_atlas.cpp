@@ -131,6 +131,7 @@ void test_atlas() {
     CHECK(h.meta.magic == GEO_PACKET_MAGIC);
     CHECK(h.meta.contractVersion == 14);
     CHECK(h.meta.packetHeaderSize == 192);
+    CHECK_NEAR(h.camera.maxTraceDistance, 2.5f, 1e-6);
     CHECK(h.controls.modelKind == model);
     CHECK(h.counts.chartCount == 1);
     CHECK(h.counts.portalCount == 0);
@@ -406,6 +407,18 @@ void test_atlas() {
     Atlas a;
     a.start(GEO_MODEL_S3);
     CHECK(a.seed(3.14159265f) < 0);
+  }
+  // The camera view distance has the same intrinsic S³ upper bound as a
+  // chart radius, but is validated independently from the authored chart
+  // domain. In particular, a camera may use a shorter distance than its chart
+  // radius without changing the chart itself.
+  {
+    Atlas a;
+    a.start(GEO_MODEL_S3);
+    CHECK(a.seed(2.0f) == 0);
+    a.setCamera(.8f, 1.6f, vec3(1, 0, 0), vec3(0, 1, 0), vec3(0, 0, 1));
+    CHECK(a.cameraChartAt(0, vec4(0, 0, 0, 1), 3.14159265f) < 0);
+    CHECK(a.cameraChartAt(0, vec4(0, 0, 0, 1), 1.5f) == 0);
   }
   {
     Atlas a;

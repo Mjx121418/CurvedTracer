@@ -177,8 +177,8 @@ int Atlas::emit(bool flatten, int cameraChart, int depth, int hops,
 
   if (flatten) {
     GPUChart c{};
-    c.intrinsicRadius = cameraTraceRadius_;
-    c.tracingParameter = tracingParameter(cameraTraceRadius_);
+    c.intrinsicRadius = cameraViewDistance_;
+    c.tracingParameter = tracingParameter(cameraViewDistance_);
     c.objectCount = int(objects_.size());
     c.lightCount = int(lights_.size());
     gpuCharts.push_back(c);
@@ -241,8 +241,8 @@ int Atlas::emit(bool flatten, int cameraChart, int depth, int hops,
   h.camera.position = flatten ? vec4(0, 0, 0, 1) : cameraPosition_;
   h.camera.fovTan = fovTan_;
   h.camera.aspect = aspect_;
-  h.camera.maxTraceDistance = cameraTraceRadius_;
-  h.camera.maxTraceParameter = tracingParameter(cameraTraceRadius_);
+  h.camera.maxTraceDistance = cameraViewDistance_;
+  h.camera.maxTraceParameter = tracingParameter(cameraViewDistance_);
   h.camera.chartId = flatten ? 0 : cameraChart;
   if (flatten) {
     h.camera.right = vec4(cameraRight_, 0);

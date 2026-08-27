@@ -22,7 +22,9 @@ Canonical points are `vec4`:
 `sin/cos`, `sinh/cosh`, or Euclidean addition. Input points are canonicalized
 only within a small tolerance; malformed points are rejected.
 
-Every chart radius and public distance is intrinsic. S³ requires `0 < R < π`.
+Every chart radius and camera view distance is intrinsic. S³ requires
+`0 < R < π` for both. A chart radius bounds an authored chart domain; the
+camera view distance is an independent maximum ray/path distance.
 H³ and R³ require positive finite values whose float32 derived parameters are
 finite. A ball must satisfy `distance(origin,center) + radius <= chart.radius`.
 
@@ -57,7 +59,7 @@ addMaterial(baseColor, roughness, metallic, IOR, transmission, emission)
 addLight(chart, vec4 position, color, intensity)
 addSphericalAreaLight(chart, vec4 center, intrinsicRadius,
                       color, emittedRadiance)
-cameraChartAt(chart, vec4 position, float intrinsicTraceRadius)
+cameraChartAt(chart, vec4 position, float viewDistance)
 addPortalPair(chartA, outwardA, distanceA,
               chartB, outwardB, distanceB, pairingAB)
 ```

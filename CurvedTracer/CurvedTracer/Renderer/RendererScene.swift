@@ -40,13 +40,22 @@ extension Renderer {
             case .pathTracingRoom:
                 cameraChart = EuclideanScene.pathTracingRoom(&atlas)
             }
-        case (.atlas, .sphere): cameraChart = SphericalScene.lensSpaceL52(&atlas)
+        case (.atlas, .sphere):
+            switch sphericalAtlasVariant {
+            case .lensSpace: cameraChart = SphericalScene.lensSpaceL52(&atlas)
+            case .towerTiling: cameraChart = TowerScene.spherical(&atlas)
+            }
         case (.atlas, .hyperbolic):
             switch hyperbolicAtlasVariant {
             case .oneChart: cameraChart = HyperbolicScene.seifertWeberAtlas(&atlas)
             case .multiChart: cameraChart = HyperbolicScene.seifertWeberMultiChartAtlas(&atlas)
+            case .towerTiling: cameraChart = TowerScene.hyperbolic(&atlas)
             }
-        case (.atlas, .euclidean): cameraChart = EuclideanScene.torus(&atlas)
+        case (.atlas, .euclidean):
+            switch euclideanAtlasVariant {
+            case .torus: cameraChart = EuclideanScene.torus(&atlas)
+            case .towerTiling: cameraChart = TowerScene.euclidean(&atlas)
+            }
         }
 
         // draw(in:) uploads into a frame slot only after that slot's previous
@@ -75,13 +84,16 @@ extension Renderer {
     @discardableResult
     func setRenderingMode(_ mode: RenderingMode) -> Bool {
         guard mode != renderingMode else { return true }
-        guard waitForAllFrames() else { return false }
 
         switch mode {
         case .realtime:
+            // Exiting does not mutate any resource used by an in-flight photo
+            // pass. Flip the CPU state immediately; each realtime frame will
+            // still wait for its own slot before reusing GPU resources.
             photoModeState.exit()
             return true
         case .photo:
+            guard waitForAllFrames() else { return false }
             let result = buildCurrentPacket()
             guard result == 0 else {
                 NSLog(

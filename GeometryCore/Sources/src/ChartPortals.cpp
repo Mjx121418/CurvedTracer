@@ -207,7 +207,7 @@ int Atlas::addCappedTubePortal(int exteriorChart, int interiorChart,
       upper - lower <= 2 * collar || !validSignedDistance(lower - collar) ||
       !validSignedDistance(upper + collar) ||
       portals_.size() + 6 > GEO_MAX_PORTALS ||
-      clips_.size() + 8 > GEO_MAX_CLIPS) {
+      clips_.size() + 12 > GEO_MAX_CLIPS) {
     setError(7);
     return -1;
   }
@@ -255,7 +255,8 @@ int Atlas::addCappedTubePortal(int exteriorChart, int interiorChart,
 
   int firstPortal = int(portals_.size());
   auto appendPair = [&](ChartPortal exterior, ChartPortal interior,
-                        const std::vector<ChartClip> &localClips) {
+                        const std::vector<ChartClip> &exteriorLocalClips,
+                        const std::vector<ChartClip> &interiorLocalClips) {
     int exteriorId = int(portals_.size());
     int interiorId = exteriorId + 1;
     exterior.chartId = exteriorChart;
@@ -266,8 +267,8 @@ int Atlas::addCappedTubePortal(int exteriorChart, int interiorChart,
     interior.neighborId = exteriorChart;
     interior.reversePortal = exteriorId;
     interior.toNeighbor = interiorToExterior;
-    appendPortalClips(exterior, localClips, true);
-    appendPortalClips(interior, localClips, false);
+    appendPortalClips(exterior, exteriorLocalClips, true);
+    appendPortalClips(interior, interiorLocalClips, false);
     portals_.push_back(exterior);
     portals_.push_back(interior);
     charts_[exteriorChart].portalIds.push_back(exteriorId);
@@ -284,13 +285,34 @@ int Atlas::addCappedTubePortal(int exteriorChart, int interiorChart,
       transformQuadric(interiorToExterior, exteriorSideLocal);
   interiorSidePortal.equationKind = GEO_EQUATION_QUADRIC;
   interiorSidePortal.quadric = interiorSide;
-  std::vector<ChartClip> sideClips = {
+  std::vector<ChartClip> exteriorSideClips = {
+      planeClip(axis, upper - collar),
+      planeClip(-axis, -(lower + collar))};
+  std::vector<ChartClip> interiorSideClips = {
       planeClip(axis, upper + collar),
       planeClip(-axis, -(lower - collar))};
-  appendPair(exteriorSide, interiorSidePortal, sideClips);
+  appendPair(exteriorSide, interiorSidePortal, exteriorSideClips,
+             interiorSideClips);
 
-  mat4 capClipQuadric = tubeQuadric(axis, radius + collar, modelKind_);
-  std::vector<ChartClip> capClips = {quadricClip(capClipQuadric)};
+  // The exterior of a capped tube is a union, not an intersection of the
+  // three component half-spaces. Restrict compound-reduction eligibility to
+  // each component's collar neighborhood. Otherwise a point that just left
+  // through the side can appear to violate a distant cap (or vice versa) and
+  // be paired straight back into the interior chart.
+  mat4 exteriorCapClip = tubeQuadric(axis, radius - collar, modelKind_);
+  mat4 interiorCapClip = tubeQuadric(axis, radius + collar, modelKind_);
+  std::vector<ChartClip> exteriorTopClips = {
+      quadricClip(exteriorCapClip),
+      planeClip(-axis, -(upper - collar))};
+  std::vector<ChartClip> interiorTopClips = {
+      quadricClip(interiorCapClip),
+      planeClip(-axis, -(upper - collar))};
+  std::vector<ChartClip> exteriorBottomClips = {
+      quadricClip(exteriorCapClip),
+      planeClip(axis, lower + collar)};
+  std::vector<ChartClip> interiorBottomClips = {
+      quadricClip(interiorCapClip),
+      planeClip(axis, lower + collar)};
 
   ChartPortal exteriorTop, interiorTop;
   exteriorTop.normal = planeNormal(-axis, -(upper - collar));
@@ -300,7 +322,7 @@ int Atlas::addCappedTubePortal(int exteriorChart, int interiorChart,
                                       exteriorTop.offset, modelKind_);
   interiorTop.normal = planeNormal(axis, upper + collar);
   interiorTop.offset = modelKind_ == GEO_MODEL_R3 ? upper + collar : 0;
-  appendPair(exteriorTop, interiorTop, capClips);
+  appendPair(exteriorTop, interiorTop, exteriorTopClips, interiorTopClips);
 
   ChartPortal exteriorBottom, interiorBottom;
   exteriorBottom.normal = planeNormal(axis, lower + collar);
@@ -312,7 +334,8 @@ int Atlas::addCappedTubePortal(int exteriorChart, int interiorChart,
   interiorBottom.normal = planeNormal(-axis, -(lower - collar));
   interiorBottom.offset =
       modelKind_ == GEO_MODEL_R3 ? -(lower - collar) : 0;
-  appendPair(exteriorBottom, interiorBottom, capClips);
+  appendPair(exteriorBottom, interiorBottom, exteriorBottomClips,
+             interiorBottomClips);
 
   setError(0);
   return firstPortal;

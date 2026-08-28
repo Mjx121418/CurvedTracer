@@ -483,7 +483,7 @@ void test_atlas() {
     CHECK(tubeHeader.counts.chartCount == 2);
     CHECK(tubeHeader.counts.portalCount == 6);
     CHECK(tubeHeader.counts.quadricCount == 6);
-    CHECK(tubeHeader.counts.clipCount == 8);
+    CHECK(tubeHeader.counts.clipCount == 12);
     GPUPortal side = atlasPortal(a, 0);
     GPUPortal top = atlasPortal(a, 1);
     CHECK(side.equationKind == GEO_EQUATION_QUADRIC);
@@ -492,11 +492,28 @@ void test_atlas() {
     CHECK(side.neighborChart == 1);
     CHECK(side.reversePortal == 3);
     CHECK(top.equationKind == GEO_EQUATION_LINEAR);
-    CHECK(top.clipCount == 1);
+    CHECK(top.clipCount == 2);
     CHECK(top.neighborChart == 1);
     CHECK(atlasClip(a, side.firstClip).kind == GEO_CLIP_LINEAR);
     CHECK(atlasClip(a, top.firstClip).kind == GEO_CLIP_QUADRIC);
+    CHECK(atlasClip(a, top.firstClip + 1).kind == GEO_CLIP_LINEAR);
     CHECK(atlasQuadric(a, side.quadricIndex).coefficients.m[0] < 0);
+    if (model == GEO_MODEL_R3) {
+      CHECK_NEAR(atlasClip(a, side.firstClip).parameter, .29f, 1e-6f);
+      const mat4 &cap = atlasQuadric(a, atlasClip(a, top.firstClip).pad0)
+                            .coefficients;
+      CHECK_NEAR(cap.m[15] / cap.m[0], -.19f * .19f, 1e-5f);
+      CHECK_NEAR(atlasClip(a, top.firstClip + 1).parameter, -.29f, 1e-6f);
+      GPUPortal interiorSide = atlasPortal(a, 3);
+      GPUPortal interiorTop = atlasPortal(a, 4);
+      CHECK_NEAR(atlasClip(a, interiorSide.firstClip).parameter, .31f,
+                 1e-6f);
+      const mat4 &expandedCap =
+          atlasQuadric(a, atlasClip(a, interiorTop.firstClip).pad0)
+              .coefficients;
+      CHECK_NEAR(expandedCap.m[15] / expandedCap.m[0], -.21f * .21f,
+                 1e-5f);
+    }
   }
   // Exterior portal equations and clips are transformed into the containing
   // chart; they are not restricted to volumes centered at that chart's origin.

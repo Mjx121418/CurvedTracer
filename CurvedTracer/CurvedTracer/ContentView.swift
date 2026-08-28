@@ -13,6 +13,8 @@ struct ContentView: View {
   @State private var euclideanFlatSceneVariant: EuclideanFlatSceneVariant = .objectDemo
   @State private var sphericalFlatSceneVariant: SphericalFlatSceneVariant = .cell600
   @State private var hyperbolicFlatSceneVariant: HyperbolicFlatSceneVariant = .honeycombCell
+  @State private var sphericalAtlasVariant: SphericalAtlasVariant = .lensSpace
+  @State private var euclideanAtlasVariant: EuclideanAtlasVariant = .torus
   @State private var hyperbolicAtlasVariant: HyperbolicAtlasVariant = .oneChart
   @State private var renderingMode: RenderingMode = .realtime
   @State private var exposure = 2.0
@@ -27,6 +29,8 @@ struct ContentView: View {
         euclideanFlatSceneVariant: $euclideanFlatSceneVariant,
         sphericalFlatSceneVariant: $sphericalFlatSceneVariant,
         hyperbolicFlatSceneVariant: $hyperbolicFlatSceneVariant,
+        sphericalAtlasVariant: $sphericalAtlasVariant,
+        euclideanAtlasVariant: $euclideanAtlasVariant,
         hyperbolicAtlasVariant: $hyperbolicAtlasVariant,
         renderingMode: $renderingMode,
         exposure: $exposure,
@@ -75,6 +79,20 @@ struct ContentView: View {
           if traversalMode == .atlas && ambienSpace == .hyperbolic {
             Picker("H^3 Atlas", selection: $hyperbolicAtlasVariant) {
               ForEach(HyperbolicAtlasVariant.allCases) { variant in
+                Text(variant.rawValue).tag(variant)
+              }
+            }
+          }
+          if traversalMode == .atlas && ambienSpace == .sphere {
+            Picker("S³ Atlas", selection: $sphericalAtlasVariant) {
+              ForEach(SphericalAtlasVariant.allCases) { variant in
+                Text(variant.rawValue).tag(variant)
+              }
+            }
+          }
+          if traversalMode == .atlas && ambienSpace == .euclidean {
+            Picker("R³ Atlas", selection: $euclideanAtlasVariant) {
+              ForEach(EuclideanAtlasVariant.allCases) { variant in
                 Text(variant.rawValue).tag(variant)
               }
             }

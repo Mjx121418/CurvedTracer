@@ -128,8 +128,11 @@ traveled geodesic segment.
 `addCappedTubePortal` creates a closed portal volume around the geodesic through
 the interior-chart origin in the supplied axis direction. It adds a quadric
 equidistant-cylinder pair clipped between the axial bounds and two geodesic cap
-pairs clipped to the cylinder interior. Inner and outer trigger surfaces are
-separated by the requested intrinsic collar and overlap at the circular seams.
+pairs clipped to the cylinder interior and their respective axial collar. The
+exterior records form a closed tube contracted by the requested collar, while
+the interior records form a closed tube expanded by it. Each set of component
+clips meets at its own circular seam, preventing both an unpaired cap annulus
+and compound reduction against a distant cap.
 All three exterior records transition to `interiorChart`; their reverse records
 transition back to `exteriorChart`. Equivalent parallel portal edges are
 deduplicated during bounded light-lift traversal so the three faces do not

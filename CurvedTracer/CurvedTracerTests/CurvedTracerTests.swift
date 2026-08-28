@@ -191,7 +191,9 @@ struct CurvedTracerTests {
         #expect(EuclideanFlatSceneVariant.allCases.count == 2)
         #expect(SphericalFlatSceneVariant.allCases.count == 7)
         #expect(HyperbolicFlatSceneVariant.allCases.count == 4)
-        #expect(HyperbolicAtlasVariant.allCases.count == 2)
+        #expect(SphericalAtlasVariant.allCases.count == 2)
+        #expect(EuclideanAtlasVariant.allCases.count == 2)
+        #expect(HyperbolicAtlasVariant.allCases.count == 3)
         var atlas = geo.Atlas()
         let builders: [(inout geo.Atlas) -> Int32] = [
             SphericalScene.cell600, SphericalScene.objectDemo,
@@ -207,6 +209,8 @@ struct CurvedTracerTests {
             HyperbolicScene.seifertWeberMultiChartAtlas,
             EuclideanScene.finite, EuclideanScene.pathTracingRoom,
             EuclideanScene.torus,
+            TowerScene.spherical, TowerScene.euclidean,
+            TowerScene.hyperbolic,
         ]
         for build in builders {
             _ = build(&atlas)

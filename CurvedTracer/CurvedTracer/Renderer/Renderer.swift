@@ -80,6 +80,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     var euclideanFlatSceneVariant: EuclideanFlatSceneVariant = .objectDemo
     var sphericalFlatSceneVariant: SphericalFlatSceneVariant = .cell600
     var hyperbolicFlatSceneVariant: HyperbolicFlatSceneVariant = .honeycombCell
+    var sphericalAtlasVariant: SphericalAtlasVariant = .lensSpace
+    var euclideanAtlasVariant: EuclideanAtlasVariant = .torus
     var hyperbolicAtlasVariant: HyperbolicAtlasVariant = .oneChart
     var exposure: Float = 2.0
     var renderingMode: RenderingMode { photoModeState.renderingMode }

@@ -10,13 +10,9 @@ import MetalFX
 
 extension Renderer {
     func draw(in view: MTKView) {
-        guard
-            let commandQueue,
-            let drawable = view.currentDrawable
-        else {
+        guard let commandQueue else {
             return
         }
-        performanceStats.recordFrame(at: ProcessInfo.processInfo.systemUptime)
 
         let index = frameIndex % maxFramesInFlight
         let commandAllocator = commandAllocators[index]
@@ -25,15 +21,21 @@ extension Renderer {
         let frameRenderingMode = renderingMode
 
         // A slot can be reused only after the queue signal placed after its
-        // previous commit has completed. Never continue after a timeout: doing
-        // so would let the CPU mutate resources that the GPU is still using.
+        // previous commit has completed. Do not block the UI thread while a
+        // long photo pass is running; MTKView will call us again for a later
+        // display refresh.
         let waitValue = frameCompletionValues[index]
-        if waitValue != 0,
-           !frameEvent.wait(untilSignaledValue: waitValue, timeoutMS: 1000)
-        {
-            NSLog("Timed out waiting for GPU frame slot %d", index)
+        if waitValue != 0, frameEvent.signaledValue < waitValue {
             return
         }
+
+        // Acquire a drawable only after we know this frame can be submitted.
+        // Holding or waiting for a drawable while the GPU slot is still busy
+        // can starve SwiftUI and WindowServer presentation.
+        guard let drawable = view.currentDrawable else {
+            return
+        }
+        performanceStats.recordFrame(at: ProcessInfo.processInfo.systemUptime)
 
         consumeTraceStats(from: statusBuffers[index])
 

@@ -13,6 +13,8 @@ struct MetalView: NSViewRepresentable {
     @Binding var euclideanFlatSceneVariant: EuclideanFlatSceneVariant
     @Binding var sphericalFlatSceneVariant: SphericalFlatSceneVariant
     @Binding var hyperbolicFlatSceneVariant: HyperbolicFlatSceneVariant
+    @Binding var sphericalAtlasVariant: SphericalAtlasVariant
+    @Binding var euclideanAtlasVariant: EuclideanAtlasVariant
     @Binding var hyperbolicAtlasVariant: HyperbolicAtlasVariant
     @Binding var renderingMode: RenderingMode
     @Binding var exposure: Double
@@ -59,6 +61,8 @@ struct MetalView: NSViewRepresentable {
         context.coordinator.euclideanFlatSceneVariant = euclideanFlatSceneVariant
         context.coordinator.sphericalFlatSceneVariant = sphericalFlatSceneVariant
         context.coordinator.hyperbolicFlatSceneVariant = hyperbolicFlatSceneVariant
+        context.coordinator.sphericalAtlasVariant = sphericalAtlasVariant
+        context.coordinator.euclideanAtlasVariant = euclideanAtlasVariant
         context.coordinator.hyperbolicAtlasVariant = hyperbolicAtlasVariant
         context.coordinator.exposure = Float(max(exposure, 0))
         context.coordinator.setScenePacket()
@@ -83,6 +87,8 @@ struct MetalView: NSViewRepresentable {
             || context.coordinator.euclideanFlatSceneVariant != euclideanFlatSceneVariant
             || context.coordinator.sphericalFlatSceneVariant != sphericalFlatSceneVariant
             || context.coordinator.hyperbolicFlatSceneVariant != hyperbolicFlatSceneVariant
+            || context.coordinator.sphericalAtlasVariant != sphericalAtlasVariant
+            || context.coordinator.euclideanAtlasVariant != euclideanAtlasVariant
             || context.coordinator.hyperbolicAtlasVariant != hyperbolicAtlasVariant
         {
             context.coordinator.ambientSpace = ambientSpace
@@ -90,6 +96,8 @@ struct MetalView: NSViewRepresentable {
             context.coordinator.euclideanFlatSceneVariant = euclideanFlatSceneVariant
             context.coordinator.sphericalFlatSceneVariant = sphericalFlatSceneVariant
             context.coordinator.hyperbolicFlatSceneVariant = hyperbolicFlatSceneVariant
+            context.coordinator.sphericalAtlasVariant = sphericalAtlasVariant
+            context.coordinator.euclideanAtlasVariant = euclideanAtlasVariant
             context.coordinator.hyperbolicAtlasVariant = hyperbolicAtlasVariant
             context.coordinator.setScenePacket()
         }

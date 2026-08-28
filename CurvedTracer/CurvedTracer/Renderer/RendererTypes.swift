@@ -53,6 +53,21 @@ struct PhotoModeState: Equatable {
 enum HyperbolicAtlasVariant: String, CaseIterable, Identifiable {
     case oneChart = "Seifert-Weber (1 chart)"
     case multiChart = "Seifert-Weber (14-state atlas)"
+    case towerTiling = "{3,7} tower observatory"
+
+    var id: Self { self }
+}
+
+enum SphericalAtlasVariant: String, CaseIterable, Identifiable {
+    case lensSpace = "Lens space L(5,2)"
+    case towerTiling = "{3,5} tower observatory"
+
+    var id: Self { self }
+}
+
+enum EuclideanAtlasVariant: String, CaseIterable, Identifiable {
+    case torus = "Three-torus"
+    case towerTiling = "{3,6} tower observatory"
 
     var id: Self { self }
 }

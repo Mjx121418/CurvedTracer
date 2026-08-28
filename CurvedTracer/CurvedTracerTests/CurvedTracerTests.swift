@@ -37,7 +37,7 @@ struct CurvedTracerTests {
         #expect(lightCount > 0)
         let lightOffset = 192
             + chartCount * 32
-            + portalCount * 96
+            + portalCount * 112
             + objectCount * 48
             + quadricCount * 64
             + clipCount * 32
@@ -55,7 +55,7 @@ struct CurvedTracerTests {
         #expect(index >= 0 && index < materialCount)
         return 192
             + chartCount * 32
-            + portalCount * 96
+            + portalCount * 112
             + objectCount * 48
             + quadricCount * 64
             + clipCount * 32
@@ -66,7 +66,7 @@ struct CurvedTracerTests {
         let chartCount = Int(int32(bytes, at: 160))
         let portalCount = Int(int32(bytes, at: 164))
         let objectCount = Int(int32(bytes, at: 168))
-        let firstObject = 192 + chartCount * 32 + portalCount * 96
+        let firstObject = 192 + chartCount * 32 + portalCount * 112
         return (0..<objectCount).contains {
             int32(bytes, at: firstObject + $0 * 48 + 24) == material
         }
@@ -185,7 +185,7 @@ struct CurvedTracerTests {
         #expect(stats.snapshot.hopLimitRays == 1)
     }
 
-    @Test func allSpaceTraversalScenesBuildV15MaterialPackets() {
+    @Test func allSpaceTraversalScenesBuildV16MaterialPackets() {
         #expect(AmbientSpace.allCases.count == 3)
         #expect(TraversalMode.allCases.count == 2)
         #expect(EuclideanFlatSceneVariant.allCases.count == 2)
@@ -212,7 +212,7 @@ struct CurvedTracerTests {
             _ = build(&atlas)
             let bytes = [UInt8](atlas.packetBytes())
             #expect(atlas.packetSize() >= 192)
-            #expect(int32(bytes, at: 4) == 15)
+            #expect(int32(bytes, at: 4) == 16)
             let materialCount = Int(int32(bytes, at: 172))
             #expect(materialCount > 0)
         }
@@ -567,7 +567,7 @@ struct CurvedTracerTests {
         let q: Float = 1 / sqrt(5)
         let inradius = asinh(sqrt((q + cos(2 * Float.pi / 5)) / (1 - q)))
         #expect(abs(abs(float32(bytes, at: firstPortalOffset + 64 + 12)) - sinh(inradius)) < 0.0001)
-        #expect(int32(bytes, at: firstPortalOffset + 84) == 1)
+        #expect(int32(bytes, at: firstPortalOffset + 100) == 1)
     }
 
     @Test func sphericalAtlasIsLensSpaceL52() {
@@ -587,8 +587,8 @@ struct CurvedTracerTests {
         let generator = matrix(bytes, at: firstPortalOffset)
         #expect(abs(generator[0] - cos(2 * Float.pi / 5)) < 0.0001)
         #expect(abs(generator[5] - cos(4 * Float.pi / 5)) < 0.0001)
-        #expect(int32(bytes, at: firstPortalOffset + 84) == 0)
-        #expect(int32(bytes, at: firstPortalOffset + 88) == 1)
+        #expect(int32(bytes, at: firstPortalOffset + 100) == 0)
+        #expect(int32(bytes, at: firstPortalOffset + 104) == 1)
 
         var fifthPower: [Float] = [
             1, 0, 0, 0,
@@ -633,7 +633,7 @@ struct CurvedTracerTests {
         #expect(int32(bytes, at: 176) == 2)
         let quadricCount = Int(int32(bytes, at: 180))
         let clipCount = Int(int32(bytes, at: 184))
-        let materialOffset = 192 + chartCount * 32 + portalCount * 96
+        let materialOffset = 192 + chartCount * 32 + portalCount * 112
             + objectCount * 48 + quadricCount * 64 + clipCount * 32
         let mirrorColorOffset = materialOffset + 6 * 48
         #expect(abs(float32(bytes, at: mirrorColorOffset) - 0.405) < 0.0001)
@@ -648,7 +648,7 @@ struct CurvedTracerTests {
         #expect(float32(bytes, at: 192) == 0)
         #expect(float32(bytes, at: 196) == 0)
         let seifertPortalCount = Int(int32(bytes, at: 164))
-        let seifertObjectOffset = 192 + 32 + seifertPortalCount * 96
+        let seifertObjectOffset = 192 + 32 + seifertPortalCount * 112
         let firstRadius = acosh(float32(bytes, at: seifertObjectOffset + 16))
         let secondRadius = acosh(float32(bytes, at: seifertObjectOffset + 48 + 16))
         #expect(abs(firstRadius - 0.1883983) < 0.0001)
@@ -681,7 +681,7 @@ struct CurvedTracerTests {
         #expect(objectCount == 11)
         #expect(materialCount == 8)
 
-        let objectOffset = 192 + chartCount * 32 + portalCount * 96
+        let objectOffset = 192 + chartCount * 32 + portalCount * 112
         let blueObjectOffset = objectOffset + 6 * 48
         #expect(int32(bytes, at: blueObjectOffset + 24) == 3)
         let mirrorObjectOffset = objectOffset + 7 * 48

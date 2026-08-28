@@ -9,7 +9,7 @@ using namespace metal;
 constant int SPACE_FORM [[function_constant(0)]]; // 0 H³, 1 S³, 2 R³
 constant bool ENABLE_PORTALS [[function_constant(1)]];
 
-constant int PACKET_MAGIC = 0x41545243, CONTRACT_VERSION = 15,
+constant int PACKET_MAGIC = 0x41545243, CONTRACT_VERSION = 16,
 HEADER_SIZE = 192, OBJECT_SIZE = 48, MAX_QUADRICS = 4096;
 constant int MODEL_H3 = 0, MODEL_S3 = 1, MODEL_R3 = 2;
 constant int EQUATION_LINEAR = 0, EQUATION_R3_SPHERE = 1, EQUATION_QUADRIC = 2;
@@ -66,8 +66,9 @@ struct ChartGPU {
 };
 struct PortalGPU {
     float4x4 toNeighbor;
-    float4 normal;
-    float offset;
+    float4 geometry;
+    float parameter;
+    int equationKind, firstClip, clipCount, quadricIndex;
     int neighborChart, reversePortal, pad0;
 };
 struct ObjectGPU {

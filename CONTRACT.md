@@ -1,7 +1,10 @@
-# GeometryCore contract, version 15
+# GeometryCore contract, version 16
 
-Version 15 adds homogeneous quadric object clips while preserving the 32-byte
-clip record and existing surface/portal packet layout. Version 14 removed the
+Version 16 adds clipped linear and homogeneous-quadric portal faces plus a
+model-aware capped equidistant-tube authoring operation. Portal records grow to
+112 bytes; objects and portals share the quadric and primitive-clip tables.
+Version 15 added homogeneous quadric object clips while preserving the 32-byte
+clip record. Version 14 removed the
 transitional legacy-material boundary. BSDF selection
 is exclusively material-driven; objects no longer carry opaque/mirror response
 state, and the packet no longer carries compatibility or Blinn–Phong fields.
@@ -68,6 +71,9 @@ addSphericalAreaLight(chart, vec4 center, intrinsicRadius,
 cameraChartAt(chart, vec4 position, float viewDistance)
 addPortalPair(chartA, outwardA, distanceA,
               chartB, outwardB, distanceB, pairingAB)
+addCappedTubePortal(exteriorChart, interiorChart, axis, radius,
+                    lowerAxialDistance, upperAxialDistance,
+                    exteriorToInterior, triggerCollar)
 ```
 
 Directions are normalized internally. A geodesic plane with outward unit `u`
@@ -112,17 +118,34 @@ triggers. Ordinary overlap edges develop chart coordinates during flattening;
 crossing a radial chart horizon does not select an overlap edge or clamp the
 camera.
 
+A portal face has either a linear or homogeneous-quadric equation and may
+carry up to four linear or quadric clips. Clips are tested at the candidate
+portal intersection and are invisible. This makes a portal a finite surface
+patch rather than the entire supporting plane or quadric. GPU rays and CPU
+camera motion both select the earliest outward, clip-valid crossing along the
+traveled geodesic segment.
+
+`addCappedTubePortal` creates a closed portal volume around the geodesic through
+the interior-chart origin in the supplied axis direction. It adds a quadric
+equidistant-cylinder pair clipped between the axial bounds and two geodesic cap
+pairs clipped to the cylinder interior. Inner and outer trigger surfaces are
+separated by the requested intrinsic collar and overlap at the circular seams.
+All three exterior records transition to `interiorChart`; their reverse records
+transition back to `exteriorChart`. Equivalent parallel portal edges are
+deduplicated during bounded light-lift traversal so the three faces do not
+multiply the same lifted lights.
+
 ## Packet
 
-`GEO_CONTRACT_VERSION` is 15 and `GEO_PACKET_MAGIC` is `0x41545243`. Both
+`GEO_CONTRACT_VERSION` is 16 and `GEO_PACKET_MAGIC` is `0x41545243`. Both
 `build()` and `buildAtlas()` emit:
 
 ```text
 ScenePacketHeader (192)
 GPUChart[chartCount] (32 each)
-GPUPortal[portalCount] (96 each)
+GPUPortal[portalCount] (112 each)
 Object[objectCount] (48 each)
-Quadric[quadricCount] (64 each; surface and quadric-clip matrices share this table)
+Quadric[quadricCount] (64 each; object, portal, and clip matrices share this table)
 PrimitiveClip[clipCount] (32 each)
 Material[materialCount] (48 each)
 PointLight[lightCount] (48 each)
@@ -158,6 +181,11 @@ objects to a chart domain. Surface extent and overlap ownership are defined by
 the object's authored linear and quadric clips. In atlas traversal, an explicit
 portal changes the coordinate state before any farther object can be hit, and
 camera view distance terminates traversal.
+
+A portal descriptor stores its directed transition, equation kind, inline
+linear coefficients or quadric index, clip range, destination chart, and
+reverse-record index. Linear portals without clips retain their version-15
+behavior.
 
 `Camera.reservedFloat0` and `GPUChart.reserved0/reserved1` are zeroed
 compatibility fields that preserve the version-15 packet sizes. Shaders do not

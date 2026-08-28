@@ -336,6 +336,9 @@ static float3 photoDirectLighting(
         int portalIndex = chart.firstPortal + nextPortal[depth]++;
         if (portalIndex == incoming[depth])
             continue;
+        if (duplicateParallelLightLift(
+                chart, portalIndex, incoming[depth], portals))
+            continue;
         if (stateCount++ >= h->controls.maxLightStates) {
             result.errorBits |= 16u;
             break;

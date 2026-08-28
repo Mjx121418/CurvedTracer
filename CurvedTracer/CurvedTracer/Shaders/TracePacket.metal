@@ -16,13 +16,15 @@ static uint validatePacket(device const uchar *packet) {
         error |= 1;
     if (h->controls.modelKind != SPACE_FORM)
         error |= 2;
-    if (h->counts.chartCount <= 0 || h->counts.chartCount > 256 ||
-        h->counts.portalCount < 0 || h->counts.portalCount > 1024 ||
-        h->counts.objectCount < 0 || h->counts.objectCount > 4096 ||
-        h->counts.materialCount < 0 || h->counts.materialCount > 256 ||
-        h->counts.lightCount < 0 || h->counts.lightCount > 16 ||
-        h->counts.quadricCount < 0 || h->counts.quadricCount > MAX_QUADRICS ||
-        h->counts.clipCount < 0 || h->counts.clipCount > 65536)
+    bool countsValid =
+    h->counts.chartCount > 0 && h->counts.chartCount <= 256 &&
+    h->counts.portalCount >= 0 && h->counts.portalCount <= 1024 &&
+    h->counts.objectCount >= 0 && h->counts.objectCount <= 4096 &&
+    h->counts.materialCount >= 0 && h->counts.materialCount <= 256 &&
+    h->counts.lightCount >= 0 && h->counts.lightCount <= 16 &&
+    h->counts.quadricCount >= 0 && h->counts.quadricCount <= MAX_QUADRICS &&
+    h->counts.clipCount >= 0 && h->counts.clipCount <= 65536;
+    if (!countsValid)
         error |= 1;
     if (h->camera.chartId < 0 || h->camera.chartId >= h->counts.chartCount ||
         h->controls.maxChartHops <= 0 || h->controls.maxChartHops > 128 ||

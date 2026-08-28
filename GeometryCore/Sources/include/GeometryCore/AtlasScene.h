@@ -20,8 +20,13 @@ struct GPUChart {
 
 struct GPUPortal {
     mat4 toNeighbor;
-    vec4 normal;
-    float offset;
+    // LINEAR uses geometry/parameter. QUADRIC uses quadricIndex.
+    vec4 geometry;
+    float parameter;
+    int equationKind;
+    int firstClip;
+    int clipCount;
+    int quadricIndex;
     int neighborChart;
     // Light-lift traversal uses this as both its parent back-edge and the
     // source of the neighbor-to-current inverse map. Primary rays do not.
@@ -36,7 +41,7 @@ using AtlasPacketHeader = ScenePacketHeader;
 
 #if !defined(__METAL_VERSION__)
 static_assert(sizeof(GPUChart) == 32, "GPUChart must be 32 bytes");
-static_assert(sizeof(GPUPortal) == 96, "GPUPortal must be 96 bytes");
+static_assert(sizeof(GPUPortal) == 112, "GPUPortal must be 112 bytes");
 #endif
 
 } // namespace geo

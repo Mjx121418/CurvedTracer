@@ -1,8 +1,8 @@
 #pragma once
-// Version-15 scene packet shared verbatim by C++ and Metal.
+// Version-16 scene packet shared verbatim by C++ and Metal.
 #include "GeometryCore/Math.h"
 
-#define GEO_CONTRACT_VERSION 15
+#define GEO_CONTRACT_VERSION 16
 #define GEO_PACKET_MAGIC 0x41545243
 
 #define GEO_MAX_OBJECTS 4096
@@ -14,6 +14,7 @@
 #define GEO_MAX_QUADRICS 4096
 #define GEO_MAX_CLIPS 65536
 #define GEO_MAX_CLIPS_PER_OBJECT 16
+#define GEO_MAX_CLIPS_PER_PORTAL 4
 
 #define GEO_MODEL_H3 0
 #define GEO_MODEL_S3 1

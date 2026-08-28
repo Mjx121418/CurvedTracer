@@ -3,7 +3,7 @@ import XCTest
 
 final class GeometryCoreTests: XCTestCase {
   func testPacketLayoutAndNativePoints() {
-    XCTAssertEqual(geo.geometryCoreName(), "Geometry Core v15")
+    XCTAssertEqual(geo.geometryCoreName(), "Geometry Core v16")
     XCTAssertEqual(MemoryLayout<geo.Camera>.size, 96)
     XCTAssertEqual(MemoryLayout<geo.RenderControls>.size, 48)
     XCTAssertEqual(MemoryLayout<geo.Counts>.size, 32)
@@ -12,7 +12,7 @@ final class GeometryCoreTests: XCTestCase {
     XCTAssertEqual(MemoryLayout<geo.Quadric>.size, 64)
     XCTAssertEqual(MemoryLayout<geo.PrimitiveClip>.size, 32)
     XCTAssertEqual(MemoryLayout<geo.GPUChart>.size, 32)
-    XCTAssertEqual(MemoryLayout<geo.GPUPortal>.size, 96)
+    XCTAssertEqual(MemoryLayout<geo.GPUPortal>.size, 112)
     XCTAssertEqual(MemoryLayout<geo.Material>.size, 48)
     XCTAssertEqual(MemoryLayout<geo.PointLight>.size, 48)
 
@@ -54,7 +54,7 @@ final class GeometryCoreTests: XCTestCase {
     XCTAssertEqual(atlas.build(0, 64), 0)
     let flat = [UInt8](atlas.packetBytes())
     XCTAssertEqual(flat.count, 192 + 32 + 2 * 48 + 2 * 48 + 2 * 48)
-    XCTAssertEqual(flat[4], 15)
+    XCTAssertEqual(flat[4], 16)
 
     XCTAssertEqual(atlas.buildAtlas(0, 64, 1, 32), 0)
     let authored = [UInt8](atlas.packetBytes())
@@ -80,6 +80,29 @@ final class GeometryCoreTests: XCTestCase {
     XCTAssertEqual(atlas.portalCount(), 2)
     XCTAssertEqual(atlas.cameraChartAt(0, geo.vec4(0.99, 0, 0, 1), 5), 0)
     XCTAssertEqual(atlas.cameraMove(geo.vec3(0.03, 0, 0)), 0)
+    XCTAssertEqual(atlas.buildAtlas(0, 64, 1, 32), 0)
+  }
+
+  func testCappedTubePortalAuthoring() {
+    var atlas = geo.Atlas()
+    atlas.start(2)
+    XCTAssertEqual(atlas.seed(), 0)
+    var identity = [Float](repeating: 0, count: 16)
+    identity[0] = 1
+    identity[5] = 1
+    identity[10] = 1
+    identity[15] = 1
+    XCTAssertEqual(atlas.addChart(0, identity, true), 1)
+    XCTAssertEqual(
+      atlas.addCappedTubePortal(
+        0, 1, geo.vec3(0, 0, 1), 0.2, -0.3, 0.3, identity, 0.01),
+      0
+    )
+    XCTAssertEqual(atlas.portalCount(), 6)
+    let entered = atlas.resolveCameraPlacement(
+      0, geo.vec4(0.3, 0, 0, 1), geo.vec3(-0.2, 0, 0))
+    XCTAssertEqual(entered.chartId, 1)
+    XCTAssertEqual(atlas.cameraChartAt(0, geo.vec4(0.3, 0, 0, 1), 2.5), 0)
     XCTAssertEqual(atlas.buildAtlas(0, 64, 1, 32), 0)
   }
 

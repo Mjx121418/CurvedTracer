@@ -31,12 +31,39 @@ static GPUChart packetChart(const Atlas &a, int index) {
   return chart;
 }
 static GPUPortal atlasPortal(const Atlas &a, int index) {
+  ScenePacketHeader h = header(a);
   GPUPortal portal{};
   std::memcpy(&portal,
-              a.packet().data() + sizeof(ScenePacketHeader) + sizeof(GPUChart) +
+              a.packet().data() + sizeof(ScenePacketHeader) +
+                  h.counts.chartCount * sizeof(GPUChart) +
                   index * sizeof(GPUPortal),
               sizeof(portal));
   return portal;
+}
+static Quadric atlasQuadric(const Atlas &a, int index) {
+  ScenePacketHeader h = header(a);
+  Quadric quadric{};
+  std::memcpy(&quadric,
+              a.packet().data() + sizeof(ScenePacketHeader) +
+                  h.counts.chartCount * sizeof(GPUChart) +
+                  h.counts.portalCount * sizeof(GPUPortal) +
+                  h.counts.objectCount * sizeof(Object) +
+                  index * sizeof(Quadric),
+              sizeof(quadric));
+  return quadric;
+}
+static PrimitiveClip atlasClip(const Atlas &a, int index) {
+  ScenePacketHeader h = header(a);
+  PrimitiveClip clip{};
+  std::memcpy(&clip,
+              a.packet().data() + sizeof(ScenePacketHeader) +
+                  h.counts.chartCount * sizeof(GPUChart) +
+                  h.counts.portalCount * sizeof(GPUPortal) +
+                  h.counts.objectCount * sizeof(Object) +
+                  h.counts.quadricCount * sizeof(Quadric) +
+                  index * sizeof(PrimitiveClip),
+              sizeof(clip));
+  return clip;
 }
 static Quadric flatQuadric(const Atlas &a, int index) {
   ScenePacketHeader h = header(a);
@@ -87,7 +114,7 @@ static PointLight flatLight(const Atlas &a, int index) {
 }
 
 void test_atlas() {
-  CHECK(GEO_CONTRACT_VERSION == 15);
+  CHECK(GEO_CONTRACT_VERSION == 16);
   CHECK(sizeof(ScenePacketHeader) == 192);
   CHECK(sizeof(Object) == 48);
   CHECK(offsetof(Object, equationKind) == 20);
@@ -97,7 +124,15 @@ void test_atlas() {
   CHECK(offsetof(Object, quadricIndex) == 36);
   CHECK(sizeof(Quadric) == 64);
   CHECK(sizeof(PrimitiveClip) == 32);
-  CHECK(sizeof(GPUPortal) == 96);
+  CHECK(sizeof(GPUPortal) == 112);
+  CHECK(offsetof(GPUPortal, geometry) == 64);
+  CHECK(offsetof(GPUPortal, parameter) == 80);
+  CHECK(offsetof(GPUPortal, equationKind) == 84);
+  CHECK(offsetof(GPUPortal, firstClip) == 88);
+  CHECK(offsetof(GPUPortal, clipCount) == 92);
+  CHECK(offsetof(GPUPortal, quadricIndex) == 96);
+  CHECK(offsetof(GPUPortal, neighborChart) == 100);
+  CHECK(offsetof(GPUPortal, reversePortal) == 104);
   CHECK(sizeof(Material) == 48);
   CHECK(offsetof(Material, baseColor) == 0);
   CHECK(offsetof(Material, emission) == 16);
@@ -137,7 +172,7 @@ void test_atlas() {
     CHECK(a.build(0, 64) == 0);
     auto h = header(a);
     CHECK(h.meta.magic == GEO_PACKET_MAGIC);
-    CHECK(h.meta.contractVersion == 15);
+    CHECK(h.meta.contractVersion == 16);
     CHECK(h.meta.packetHeaderSize == 192);
     CHECK_NEAR(h.camera.maxTraceDistance, 2.5f, 1e-6);
     CHECK(h.controls.modelKind == model);
@@ -405,6 +440,105 @@ void test_atlas() {
     CHECK_NEAR(a.intrinsicDistance(header(a).camera.position, expectedCamera),
                0, distanceTolerance);
   }
+  // A capped equidistant tube is a closed three-face portal volume. The side
+  // is quadric, the caps are linear, and their clips reject the infinite
+  // extensions of all three supporting surfaces.
+  for (int model = GEO_MODEL_H3; model <= GEO_MODEL_R3; ++model) {
+    Atlas a;
+    a.start(model);
+    CHECK(a.seed() == 0);
+    float identityMatrix[16];
+    identity(identityMatrix);
+    CHECK(a.addChart(0, identityMatrix, true) == 1);
+    CHECK(a.addCappedTubePortal(0, 1, vec3(0, 0, 1), .2f, -.3f, .3f,
+                                identityMatrix, .01f) == 0);
+    CHECK(a.portalCount() == 6);
+
+    CameraPlacement sideEntry = a.resolveCameraPlacement(
+        0, a.pointFromOriginTangent(vec3(.3f, 0, 0)), vec3(-.2f, 0, 0));
+    CHECK(sideEntry.chartId == 1);
+    CameraPlacement sideExit = a.resolveCameraPlacement(
+        1, a.pointFromOriginTangent(vec3(.1f, 0, 0)), vec3(.2f, 0, 0));
+    CHECK(sideExit.chartId == 0);
+    CameraPlacement topEntry = a.resolveCameraPlacement(
+        0, a.pointFromOriginTangent(vec3(0, 0, .4f)), vec3(0, 0, -.2f));
+    CHECK(topEntry.chartId == 1);
+    CameraPlacement bottomEntry = a.resolveCameraPlacement(
+        0, a.pointFromOriginTangent(vec3(0, 0, -.4f)), vec3(0, 0, .2f));
+    CHECK(bottomEntry.chartId == 1);
+
+    if (model == GEO_MODEL_R3) {
+      CameraPlacement rejectedSide = a.resolveCameraPlacement(
+          0, vec4(.3f, 0, .5f, 1), vec3(-.2f, 0, 0));
+      CHECK(rejectedSide.chartId == 0);
+      CHECK(a.addCappedTubePortal(0, 1, vec3(0, 0, 1), .005f, -.3f,
+                                  .3f, identityMatrix, .01f) < 0);
+      CHECK(a.portalCount() == 6);
+    }
+
+    CHECK(a.cameraChartAt(0, a.pointFromOriginTangent(vec3(.3f, 0, 0)),
+                          2.4f) == 0);
+    CHECK(a.buildAtlas(0, 64, 1, 32) == 0);
+    ScenePacketHeader tubeHeader = header(a);
+    CHECK(tubeHeader.counts.chartCount == 2);
+    CHECK(tubeHeader.counts.portalCount == 6);
+    CHECK(tubeHeader.counts.quadricCount == 6);
+    CHECK(tubeHeader.counts.clipCount == 8);
+    GPUPortal side = atlasPortal(a, 0);
+    GPUPortal top = atlasPortal(a, 1);
+    CHECK(side.equationKind == GEO_EQUATION_QUADRIC);
+    CHECK(side.quadricIndex >= 0);
+    CHECK(side.clipCount == 2);
+    CHECK(side.neighborChart == 1);
+    CHECK(side.reversePortal == 3);
+    CHECK(top.equationKind == GEO_EQUATION_LINEAR);
+    CHECK(top.clipCount == 1);
+    CHECK(top.neighborChart == 1);
+    CHECK(atlasClip(a, side.firstClip).kind == GEO_CLIP_LINEAR);
+    CHECK(atlasClip(a, top.firstClip).kind == GEO_CLIP_QUADRIC);
+    CHECK(atlasQuadric(a, side.quadricIndex).coefficients.m[0] < 0);
+  }
+  // Exterior portal equations and clips are transformed into the containing
+  // chart; they are not restricted to volumes centered at that chart's origin.
+  for (int model = GEO_MODEL_H3; model <= GEO_MODEL_R3; ++model) {
+    Atlas a;
+    a.start(model);
+    CHECK(a.seed() == 0);
+    float exteriorToInterior[16];
+    identity(exteriorToInterior);
+    constexpr float centerDistance = .5f;
+    if (model == GEO_MODEL_R3) {
+      exteriorToInterior[12] = -centerDistance;
+    } else {
+      float c = model == GEO_MODEL_S3 ? std::cos(centerDistance)
+                                      : std::cosh(centerDistance);
+      float s = model == GEO_MODEL_S3 ? std::sin(centerDistance)
+                                      : std::sinh(centerDistance);
+      exteriorToInterior[0] = c;
+      exteriorToInterior[12] = -s;
+      exteriorToInterior[3] = model == GEO_MODEL_S3 ? s : -s;
+      exteriorToInterior[15] = c;
+    }
+    CHECK(a.addChart(0, exteriorToInterior, true) == 1);
+    CHECK(a.addCappedTubePortal(0, 1, vec3(0, 0, 1), .2f, -.3f, .3f,
+                                exteriorToInterior, .01f) == 0);
+    CameraPlacement entered = a.resolveCameraPlacement(
+        0,
+        a.pointFromOriginTangent(
+            vec3(centerDistance + .3f, 0, 0)),
+        vec3(-.2f, 0, 0));
+    CHECK(entered.chartId == 1);
+    CHECK_NEAR(a.intrinsicDistance(
+                   entered.localPosition,
+                   a.pointFromOriginTangent(vec3(.1f, 0, 0))),
+               0, 6e-4);
+    if (model == GEO_MODEL_R3) {
+      CameraPlacement rejected = a.resolveCameraPlacement(
+          0, vec4(.8f, 0, .5f, 1), vec3(-.2f, 0, 0));
+      CHECK(rejected.chartId == 0);
+      CHECK_NEAR(rejected.localPosition.x, .6f, 2e-5);
+    }
+  }
   // Pair validation is transactional: a mismatched face map cannot leave a
   // partial directed portal in the atlas.
   {
@@ -431,7 +565,7 @@ void test_atlas() {
     CHECK(a.cameraChartAt(0, vec4(.99f, 0, 0, 1), 2) == 0);
     CHECK(a.cameraMove(vec3(.02f, 0, 0)) == 0);
     CHECK(a.buildAtlas(0, 64, 1, 32) == 0);
-    CHECK_NEAR(atlasPortal(a, 0).offset, 1.0f, 1e-6);
+    CHECK_NEAR(atlasPortal(a, 0).parameter, 1.0f, 1e-6);
     CHECK_NEAR(header(a).camera.position.x, -.99f, 2e-5);
   }
   // Repeated forward steps follow the same geodesic as one combined step in
@@ -641,7 +775,7 @@ void test_atlas() {
     CHECK(a.buildAtlas(0, 64, 1, 32) == 0);
     auto h = header(a);
     CHECK(h.counts.portalCount == 6);
-    CHECK_NEAR(atlasPortal(a, 0).offset, 1.01f, 1e-5);
+    CHECK_NEAR(atlasPortal(a, 0).parameter, 1.01f, 1e-5);
     CHECK_NEAR(h.camera.position.x, -.98f, 3e-3);
     CHECK_NEAR(h.camera.position.y, -.98f, 3e-3);
     CHECK_NEAR(h.camera.position.z, -.98f, 3e-3);

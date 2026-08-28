@@ -124,7 +124,7 @@ extension Renderer {
         }
         self.commandQueue.addResidencySet(self.residencySet)
 
-        // Covers the v15 packet maxima, including 48-byte material records.
+        // Covers the v16 packet maxima, including clipped quadric portals.
         guard let photoSceneBuffer = device.makeBuffer(
             length: Self.maxScenePacketSize,
             options: .storageModeShared)

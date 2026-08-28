@@ -18,7 +18,7 @@
 
 namespace geo {
 
-inline std::string geometryCoreName() { return "Geometry Core v15"; }
+inline std::string geometryCoreName() { return "Geometry Core v16"; }
 
 struct ChartObject {
   int chartId = -1;
@@ -69,8 +69,11 @@ struct Chart {
 struct ChartPortal {
   int chartId = -1;
   int neighborId = -1;
+  int equationKind = GEO_EQUATION_LINEAR;
   vec4 normal;
   float offset = 0.0f;
+  mat4 quadric;
+  std::vector<int> clipIds;
   // Camera and ray crossings use toNeighbor directly. The reverse index is
   // retained only for bounded GPU light-lift traversal, which needs the
   // incoming portal and the inverse coordinate map without inverting a matrix.
@@ -124,6 +127,12 @@ public:
       int chartA, const vec3 &outwardA, float faceDistanceA, int chartB,
       const vec3 &outwardB, float faceDistanceB, const float pairingAB[16],
       float triggerCollar);
+  int addCappedTubePortal(int exteriorChart, int interiorChart,
+                          const vec3 &axis, float radius,
+                          float lowerAxialDistance,
+                          float upperAxialDistance,
+                          const float exteriorToInterior[16],
+                          float triggerCollar);
   int addMaterial(const vec4 &baseColor, float roughness, float metallic,
                   float ior, float transmission, const vec3 &emission);
 
@@ -197,9 +206,15 @@ private:
   bool normalizedLinearForm(const vec4 &normal, float offset,
                             vec4 &normalized, float &normalizedOffset) const;
   bool normalizedQuadric(const float coefficients[16], mat4 &normalized) const;
-  float planeValue(const ChartPortal &p, const vec4 &x) const;
+  bool insideClip(const ChartClip &clip, const vec4 &point) const;
+  bool insidePortalClips(const ChartPortal &portal,
+                         const vec4 &point) const;
+  float portalRoot(const ChartPortal &portal, const vec4 &point,
+                   const vec4 &direction, float maximum) const;
+  bool moveThroughPortals(int &chart, vec4 &point, vec4 &direction,
+                          float distance, vec4 *right, vec4 *up,
+                          vec4 *forward) const;
   Isometry movePointToOrigin(const vec4 &p) const;
-  vec4 expMap(const vec4 &p, const vec4 &tangent) const;
   vec4 parallelTransportAlong(const vec4 &point, const vec4 &displacement,
                               const vec4 &tangent) const;
   void reset();

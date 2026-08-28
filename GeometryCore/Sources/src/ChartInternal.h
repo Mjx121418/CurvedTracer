@@ -12,7 +12,6 @@ namespace geo::chart_detail {
 constexpr float PI = 3.14159265358979323846f;
 constexpr float POINT_TOL = 2e-3f;
 constexpr float CONTAIN_TOL = 2e-4f;
-constexpr float PORTAL_REDUCTION_TOL = 1e-6f;
 // Keep portal hits well separated from both the reverse trigger and the
 // float32 self-hit tolerance. This also provides enough overlap for stable
 // compound reductions near quotient-domain edges and vertices.

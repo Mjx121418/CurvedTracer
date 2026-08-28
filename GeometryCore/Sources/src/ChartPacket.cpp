@@ -61,10 +61,25 @@ bool Atlas::validateScene() const {
         !finite(clip.quadric) || matrixScale(clip.quadric) == 0)
       return false;
   }
-  for (const auto &p : portals_)
+  for (int portalId = 0; portalId < int(portals_.size()); ++portalId) {
+    const auto &p = portals_[portalId];
     if (!p.toNeighbor.validate() || !validChartId(p.neighborId) ||
-        p.reversePortal < 0 || p.reversePortal >= int(portals_.size()))
+        !validChartId(p.chartId) ||
+        p.reversePortal < 0 || p.reversePortal >= int(portals_.size()) ||
+        (p.equationKind != GEO_EQUATION_LINEAR &&
+         p.equationKind != GEO_EQUATION_QUADRIC) ||
+        p.clipIds.size() > GEO_MAX_CLIPS_PER_PORTAL ||
+        (p.equationKind == GEO_EQUATION_QUADRIC &&
+         (!finite(p.quadric) || matrixScale(p.quadric) == 0)))
       return false;
+    for (int clipId : p.clipIds)
+      if (clipId < 0 || clipId >= int(clips_.size()))
+        return false;
+    const auto &reverse = portals_[p.reversePortal];
+    if (reverse.reversePortal != portalId || reverse.chartId != p.neighborId ||
+        reverse.neighborId != p.chartId)
+      return false;
+  }
   return true;
 }
 
@@ -134,6 +149,26 @@ int Atlas::emit(bool flatten, int cameraChart, int depth, int hops,
   localIdentity.kind = kind();
   localIdentity.m = mat4Identity();
 
+  auto appendClip = [&](const ChartClip &clip, const Isometry &transform,
+                        bool developed) {
+    PrimitiveClip emitted{};
+    emitted.kind = clip.kind;
+    if (clip.kind == GEO_CLIP_QUADRIC) {
+      emitted.pad0 = int(gpuQuadrics.size());
+      emitted.pad1 = clip.keepPositive;
+      gpuQuadrics.push_back(
+          Quadric{developed ? transformQuadric(transform, clip.quadric)
+                            : clip.quadric});
+    } else {
+      emitted.parameter = clip.offset;
+      emitted.geometry = developed
+                             ? transformPlane(transform, clip.normal,
+                                              emitted.parameter, modelKind_)
+                             : clip.normal;
+    }
+    gpuClips.push_back(emitted);
+  };
+
   auto appendObject = [&](const ChartObject &o, const Isometry &transform,
                           bool developed) {
     Object x{};
@@ -157,25 +192,8 @@ int Atlas::emit(bool flatten, int cameraChart, int depth, int hops,
     }
 
     x.firstClip = int(gpuClips.size());
-    for (int clipId : o.clipIds) {
-      const auto &clip = clips_[clipId];
-      PrimitiveClip emitted{};
-      emitted.kind = clip.kind;
-      if (clip.kind == GEO_CLIP_QUADRIC) {
-        emitted.pad0 = int(gpuQuadrics.size());
-        emitted.pad1 = clip.keepPositive;
-        gpuQuadrics.push_back(
-            Quadric{developed ? transformQuadric(transform, clip.quadric)
-                              : clip.quadric});
-      } else {
-        emitted.parameter = clip.offset;
-        emitted.geometry = developed
-                               ? transformPlane(transform, clip.normal,
-                                                emitted.parameter, modelKind_)
-                               : clip.normal;
-      }
-      gpuClips.push_back(emitted);
-    }
+    for (int clipId : o.clipIds)
+      appendClip(clips_[clipId], transform, developed);
     x.clipCount = int(gpuClips.size()) - x.firstClip;
     gpuObjects.push_back(x);
   };
@@ -213,8 +231,18 @@ int Atlas::emit(bool flatten, int cameraChart, int depth, int hops,
         const auto &p = portals_[id];
         GPUPortal x{};
         x.toNeighbor = p.toNeighbor.m;
-        x.normal = p.normal;
-        x.offset = p.offset;
+        x.geometry = p.normal;
+        x.parameter = p.offset;
+        x.equationKind = p.equationKind;
+        x.quadricIndex = -1;
+        if (p.equationKind == GEO_EQUATION_QUADRIC) {
+          x.quadricIndex = int(gpuQuadrics.size());
+          gpuQuadrics.push_back(Quadric{p.quadric});
+        }
+        x.firstClip = int(gpuClips.size());
+        for (int clipId : p.clipIds)
+          appendClip(clips_[clipId], localIdentity, false);
+        x.clipCount = int(gpuClips.size()) - x.firstClip;
         x.neighborChart = p.neighborId;
         // Packet portals are regrouped by chart, so translate the authoring
         // index used by bounded light-lift traversal into packet order.

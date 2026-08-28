@@ -6,6 +6,47 @@
 #include "TraceBSDF.metal"
 #include "TraceIntersection.metal"
 
+static bool lightLiftMatricesEqual(float4x4 first, float4x4 second) {
+    float largestDifference = 0.0f;
+    for (int column = 0; column < 4; ++column)
+        largestDifference = max(
+            largestDifference,
+            max(max(abs(first[column].x - second[column].x),
+                    abs(first[column].y - second[column].y)),
+                max(abs(first[column].z - second[column].z),
+                    abs(first[column].w - second[column].w))));
+    return largestDifference <= 1e-5f;
+}
+
+static bool duplicateParallelLightLift(
+    ChartGPU chart,
+    int candidateIndex,
+    int incomingPortal,
+    device const PortalGPU *portals
+) {
+    PortalGPU candidate = portals[candidateIndex];
+    float4x4 candidateMap = portals[candidate.reversePortal].toNeighbor;
+    if (incomingPortal >= 0) {
+        PortalGPU incoming = portals[incomingPortal];
+        if (incoming.neighborChart == candidate.neighborChart &&
+            lightLiftMatricesEqual(
+                portals[incoming.reversePortal].toNeighbor, candidateMap))
+            return true;
+    }
+    int candidateLocal = candidateIndex - chart.firstPortal;
+    for (int local = 0; local < candidateLocal; ++local) {
+        int previousIndex = chart.firstPortal + local;
+        if (previousIndex == incomingPortal)
+            continue;
+        PortalGPU previous = portals[previousIndex];
+        if (previous.neighborChart == candidate.neighborChart &&
+            lightLiftMatricesEqual(
+                portals[previous.reversePortal].toNeighbor, candidateMap))
+            return true;
+    }
+    return false;
+}
+
 static float3 shade(Event hit, MaterialGPU material, int chartId,
              float4 view, device const ChartGPU *charts,
              device const PortalGPU *portals,
@@ -96,6 +137,9 @@ static float3 shade(Event hit, MaterialGPU material, int chartId,
         }
         int portalIndex = chart.firstPortal + nextPortal[depth]++;
         if (portalIndex == incoming[depth])
+            continue;
+        if (duplicateParallelLightLift(
+                chart, portalIndex, incoming[depth], portals))
             continue;
         if (stateCount++ >= maxLightStates) {
             errorBits |= 16;

@@ -70,8 +70,8 @@ static TraceResult traceDeterministicSample(
             break;
         if (e.portal) {
             if (!advancePortal(e, p, v, chartId, hops, h->controls.maxChartHops,
-                               charts, portals, error, compoundPortalHops,
-                               portalTests, hitHopLimit))
+                               charts, portals, quadrics, clips, error,
+                               compoundPortalHops, portalTests, hitHopLimit))
                 break;
             continue;
         }

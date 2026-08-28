@@ -29,23 +29,6 @@ static int roots(float a, float b, float c, thread float &r0, thread float &r1) 
     return disc <= discTolerance ? 1 : 2;
 }
 
-static float curvedRoot(float A, float B, float q, float minimum, float maximum) {
-    float r0, r1;
-    int count = roots(-kappa() * (A + q), 2 * B, A - q, r0, r1);
-    float best = INF;
-    if (count > 0 && r0 >= 0) {
-        float d = distanceFromU(r0);
-        if (d >= minimum && d <= maximum)
-            best = d;
-    }
-    if (count > 1 && r1 >= 0) {
-        float d = distanceFromU(r1);
-        if (d >= minimum && d <= maximum)
-            best = min(best, d);
-    }
-    return best;
-}
-
 static void insertCandidate(float distance, float minimum, float maximum,
                      thread float &first, thread float &second,
                      thread int &count) {
@@ -222,27 +205,70 @@ static float objectRoot(ObjectGPU o, float4 p, float4 v, float minimum,
     }
     return INF;
 }
-static float portalRoot(PortalGPU portal, float4 p, float4 v, float minimum,
-                 float maximum) {
-    if (SPACE_FORM == MODEL_R3) {
-        float den = dot(portal.normal.xyz, v.xyz);
-        if (abs(den) < EPS)
-            return INF;
-        float d = (portal.offset - dot(portal.normal.xyz, p.xyz)) / den;
-        return den > 0 && d >= minimum && d <= maximum ? d : INF;
+static float4 portalNormal(PortalGPU portal, float4 hit,
+                    device const QuadricGPU *quadrics) {
+    float4 normal;
+    if (portal.equationKind == EQUATION_LINEAR) {
+        normal = portal.geometry;
+    } else {
+        float4 covector = quadrics[portal.quadricIndex].coefficients * hit;
+        normal = SPACE_FORM == MODEL_H3
+        ? float4(covector.xyz, -covector.w) : covector;
     }
-    float A = mdot(portal.normal, p), B = mdot(portal.normal, v);
-    float d = curvedRoot(A, B, portal.offset, minimum, maximum);
-    if (d < INF && mdot(portal.normal, rayTangent(p, v, d)) <= 0)
-        return INF;
-    return d;
+    if (SPACE_FORM == MODEL_R3)
+        return float4(normalize(normal.xyz), 0);
+    return tangentNormalize(normal - kappa() * mdot(normal, hit) * hit);
 }
 
-static float4 portalNormal(PortalGPU o, float4 hit) {
-    if (SPACE_FORM == MODEL_R3)
-        return float4(normalize(o.normal.xyz), 0);
-    float q = mdot(o.normal, hit);
-    return tangentNormalize(o.normal - kappa() * q * hit);
+static bool insidePortalClips(PortalGPU portal, float4 point,
+                       device const QuadricGPU *quadrics,
+                       device const PrimitiveClipGPU *clips) {
+    for (int local = 0; local < portal.clipCount; ++local)
+        if (!insideClip(clips[portal.firstClip + local], point, quadrics))
+            return false;
+    return true;
+}
+
+static float portalRoot(PortalGPU portal, float4 p, float4 v, float minimum,
+                 float maximum, device const QuadricGPU *quadrics,
+                 device const PrimitiveClipGPU *clips,
+                 thread uint &errorBits) {
+    float first = INF, second = INF;
+    int count = 0;
+    if (portal.equationKind == EQUATION_LINEAR) {
+        if (SPACE_FORM == MODEL_R3) {
+            float denominator = dot(portal.geometry.xyz, v.xyz);
+            if (abs(denominator) >= EPS)
+                insertCandidate(
+                    (portal.parameter - dot(portal.geometry.xyz, p.xyz)) /
+                    denominator, minimum, maximum, first, second, count);
+        } else {
+            count = curvedCandidates(mdot(portal.geometry, p),
+                                     mdot(portal.geometry, v),
+                                     portal.parameter, minimum, maximum,
+                                     first, second);
+        }
+    } else if (portal.equationKind == EQUATION_QUADRIC &&
+               portal.quadricIndex >= 0) {
+        count = quadricCandidates(
+            quadrics[portal.quadricIndex].coefficients, p, v,
+            minimum, maximum, first, second);
+    }
+
+    for (int candidate = 0; candidate < count; ++candidate) {
+        float distance = candidate == 0 ? first : second;
+        float4 point = rayPoint(p, v, distance);
+        if (!insidePortalClips(portal, point, quadrics, clips))
+            continue;
+        float4 normal = portalNormal(portal, point, quadrics);
+        if (all(isfinite(normal)) && mdot(normal, normal) > 0.5f) {
+            if (mdot(normal, rayTangent(p, v, distance)) > EPS)
+                return distance;
+            continue;
+        }
+        errorBits |= 32u;
+    }
+    return INF;
 }
 
 static Event nearestEvent(float4 p, float4 v, int chartId, float maximum,
@@ -278,7 +304,8 @@ static Event nearestEvent(float4 p, float4 v, int chartId, float maximum,
             // Portal crossings are directional transitions, not reflective
             // surfaces. Accept a zero-distance outward crossing so a camera on or
             // immediately inside a face cannot fall into an untraceable dead band.
-            float d = portalRoot(portals[i], p, v, 0.0f, localMaximum);
+            float d = portalRoot(portals[i], p, v, 0.0f, localMaximum,
+                                 quadrics, clips, errorBits);
             if (d < e.distance) {
                 e.valid = true;
                 e.portal = true;
@@ -290,17 +317,29 @@ static Event nearestEvent(float4 p, float4 v, int chartId, float maximum,
     if (e.valid) {
         e.point = rayPoint(p, v, e.distance);
         e.tangent = tangentNormalize(rayTangent(p, v, e.distance));
-        e.normal = e.portal ? portalNormal(portals[e.index], e.point)
+        e.normal = e.portal ? portalNormal(portals[e.index], e.point, quadrics)
         : objectNormal(objects[e.index], e.point, quadrics);
     }
     return e;
 }
 
-static float normalizedPortalViolation(PortalGPU portal, float4 point) {
-    float violation = mdot(portal.normal, point) - portal.offset;
-    float normalSquared = mdot(portal.normal, portal.normal) -
-    kappa() * portal.offset * portal.offset;
-    return violation / sqrt(max(abs(normalSquared), EPS * EPS));
+static float normalizedPortalViolation(PortalGPU portal, float4 point,
+                                device const QuadricGPU *quadrics) {
+    if (portal.equationKind == EQUATION_LINEAR) {
+        float violation = mdot(portal.geometry, point) - portal.parameter;
+        float normalSquared = mdot(portal.geometry, portal.geometry) -
+        kappa() * portal.parameter * portal.parameter;
+        return violation / sqrt(max(abs(normalSquared), EPS * EPS));
+    }
+    float4x4 q = quadrics[portal.quadricIndex].coefficients;
+    float4 qPoint = q * point;
+    float violation = dot(point, qPoint);
+    float4 gradient = SPACE_FORM == MODEL_H3
+    ? float4(qPoint.xyz, -qPoint.w) : qPoint;
+    if (SPACE_FORM != MODEL_R3)
+        gradient -= kappa() * mdot(gradient, point) * point;
+    float gradientLength = sqrt(max(mdot(gradient, gradient), EPS * EPS));
+    return violation / (2 * gradientLength);
 }
 
 static bool applyPortalPairing(int portalIndex, thread float4 &point,
@@ -330,7 +369,10 @@ static bool applyPortalPairing(int portalIndex, thread float4 &point,
 static bool advancePortal(Event event, thread float4 &point, thread float4 &tangent,
                    thread int &chartId, thread int &portalHops,
                    int maxPortalHops, device const ChartGPU *charts,
-                   device const PortalGPU *portals, thread uint &errorBits,
+                   device const PortalGPU *portals,
+                   device const QuadricGPU *quadrics,
+                   device const PrimitiveClipGPU *clips,
+                   thread uint &errorBits,
                    thread uint &compoundPortalHops,
                    thread uint &portalTests, thread bool &hitHopLimit) {
     point = event.point;
@@ -351,8 +393,12 @@ static bool advancePortal(Event event, thread float4 &point, thread float4 &tang
 
         for (int local = 0; local < chart.portalCount; ++local) {
             int candidateIndex = chart.firstPortal + local;
+            if (!insidePortalClips(portals[candidateIndex], point,
+                                   quadrics, clips))
+                continue;
             float violation =
-            normalizedPortalViolation(portals[candidateIndex], point);
+            normalizedPortalViolation(portals[candidateIndex], point,
+                                      quadrics);
             if (violation > strongestViolation) {
                 selectedPortal = candidateIndex;
                 strongestViolation = violation;
@@ -406,7 +452,8 @@ static SurfaceTraceResult traceToSurface(
 
         if (!advancePortal(
                 event, ray.point, ray.tangent, ray.chartId, hops,
-                maxPortalHops, charts, portals, result.errorBits,
+                maxPortalHops, charts, portals, quadrics, clips,
+                result.errorBits,
                 result.compoundPortalHops, result.portalTests,
                 result.hitHopLimit))
             break;

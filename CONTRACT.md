@@ -251,6 +251,14 @@ also tests the cosine-weighted diffuse continuation direction against finite
 emitters. Emitter-area and BSDF samples use their corresponding solid-angle
 PDFs and the power heuristic for multiple importance sampling.
 
+Photo Mode guarantees the first three scattering continuations, then applies
+Russian roulette after each BSDF throughput update. The survival probability is
+`clamp(max(throughput.r, throughput.g, throughput.b), 0.05, 0.95)`. A surviving
+path divides its throughput by that probability before tracing the next
+segment, so its conditional expected throughput is unchanged. Roulette is not
+applied to portal hops or visibility rays, and the authored maximum bounce
+count remains a hard safety bound.
+
 Both kernels use the shared `evaluateBSDF` and `sampleBSDF` interface. Neither
 interface accepts object response state. An evaluation returns the BSDF value
 and directional PDF. A sample returns the

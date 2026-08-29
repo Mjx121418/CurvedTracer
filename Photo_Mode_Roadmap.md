@@ -309,9 +309,10 @@ Only after correctness should light-lift selection become stochastic.
 
 ## Milestone G — Russian roulette and convergence controls
 
-After a few fixed bounces, derive a survival probability from path throughput,
-cap it below one, terminate rejected paths, and divide surviving throughput by
-the probability. Keep the fixed maximum depth as a safety bound.
+Status: unbiased throughput-based Russian roulette is implemented. The first
+three scattering continuations are guaranteed. Later continuations survive
+with probability `clamp(max(throughput), 0.05, 0.95)` and divide surviving
+throughput by that probability. The fixed maximum depth remains a safety bound.
 
 Later convergence work may add:
 
@@ -501,7 +502,7 @@ C. Add reusable visibility rays and Photo Mode hard shadows
 D. Add Euclidean Lambertian GI and physical mirror handling
 E. Extend the integrator to Flat S³ and H³
 F. Extend it through quotient portals
-G. Add Russian roulette and convergence improvements
+G. Add Russian roulette; continue convergence improvements
 H. Add radiometrically correct finite lights and MIS
 I. Redesign materials
 J. Profile and optimize

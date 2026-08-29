@@ -84,6 +84,30 @@ static float photoRandom(thread uint &state) {
     return photoUnitFloat(state);
 }
 
+static bool photoRussianRoulette(
+    int continuationDepth,
+    thread float3 &throughput,
+    thread uint &randomState
+) {
+    const int guaranteedContinuations = 3;
+    const float minimumSurvival = 0.05f;
+    const float maximumSurvival = 0.95f;
+    if (continuationDepth <= guaranteedContinuations)
+        return true;
+
+    float maximumThroughput = max(
+        max(throughput.r, throughput.g), throughput.b);
+    float survivalProbability = clamp(
+        maximumThroughput, minimumSurvival, maximumSurvival);
+    if (photoRandom(randomState) >= survivalProbability)
+        return false;
+
+    // Conditional expectation is unchanged:
+    // p * (throughput / p) + (1 - p) * 0 = throughput.
+    throughput /= survivalProbability;
+    return true;
+}
+
 static float2 photoSubpixelOffset(thread uint &state) {
     return float2(
         photoRandom(state),
@@ -517,6 +541,9 @@ static TraceResult tracePathSample(
             result.errorBits |= DIAGNOSTIC_INVALID_RAY_STATE;
             break;
         }
+        if (!photoRussianRoulette(
+                depth + 1, throughput, randomState))
+            break;
     }
 
     result.radiance = radiance;

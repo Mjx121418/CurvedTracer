@@ -36,7 +36,7 @@ looking along the fiber.
 
 #### Pentagonal tube
 
-We lift the 5 edges of pentagon face in the regular dodecahedron.
+We lift the 5 edges of a face in the regular dodecahedron.
 They form a pentagonal tube enclosed by 5 patches of the Clifford torus.
 
 ![Pentagonal tube](<Images/Hopf-pentagonal-tube.jpg>)
@@ -47,7 +47,7 @@ A cell of the honeycomb {4,3,5} is a hyperbolic cube.
 The faces of the cube are treated as mirrors.
 A ball is placed at the center of the cube.
 
-![Hyperbolic {4,3,5} honeycomb scene](<Images/{4,3,5}.png>)
+![Hyperbolic {4,3,5} honeycomb scene](<Images/{4,3,5}.jpg>)
 
 ### Euclidean 3-torus
 
@@ -56,6 +56,18 @@ Three balls are put into the 3-torus.
 Rays wrap continuously through identified faces.
 
 ![Euclidean cubic 3-torus scene](<Images/T^3.png>)
+
+### Rhythmic towers
+
+This is a collection of scenes built for all 3 space forms.
+A central tower is surrounded by many lower towers placed at the vertices of the tiling {3,p}, where p=5,6,7 according to the ambient space.
+The camera is placed at the top of the central tower.
+
+![Spherical towers](<Images/tower-S^3.jpg>)
+
+![Euclidean towers](<Images/tower-R^3.jpg>)
+
+![Hyperbolic towers](<Images/tower-H^3.jpg>)
 
 ## Camera controls
 

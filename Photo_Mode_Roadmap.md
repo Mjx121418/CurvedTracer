@@ -113,7 +113,7 @@ mode.
 ### Accumulation
 
 Use one persistent private `rgba32Float` accumulation texture at the fixed
-1280×720 tracing resolution. Keep the existing ring of BGRA8 display textures.
+960×540 tracing resolution. Keep the existing ring of BGRA8 display textures.
 
 One display callback submits one sample per pixel. For sample index `N`:
 
@@ -162,7 +162,7 @@ only for viewport placement and copying the selected display texture to the
 drawable.
 
 Window resizing may reconfigure MetalFX, but it does not reset accumulation
-because the tracing resolution remains 1280×720. If MetalFX is unavailable or
+because the tracing resolution remains 960×540. If MetalFX is unavailable or
 the drawable is not a compatible upscale target, retain the existing direct
 presentation fallback.
 
@@ -284,16 +284,18 @@ primary-ray horizon from becoming an unintended total path-length cutoff.
 
 ## Milestone F — Quotient and GPU Atlas path tracing
 
-Status: implemented. All atlas specializations use the stochastic Lambertian
-integrator. Diffuse and mirror segments continue through `traceToSurface`, and
-direct lighting deterministically enumerates the existing bounded light-lift
-tree with one portal-aware visibility query per lift. Bounce depth, light-hop,
-light-state, and chart-hop controls remain explicit safety limits.
+Status: implemented. All atlas specializations use the stochastic integrator.
+Diffuse and specular segments continue through `traceToSurface`. Direct
+lighting traverses the existing bounded light-lift tree to form a candidate
+set, then stochastically selects one candidate for its portal-aware visibility
+query. Bounce depth, light-hop, light-state, and chart-hop controls remain
+explicit safety limits.
 
 Extend diffuse and mirror continuation through existing portal transport.
-For direct lighting, enumerate the current bounded set of light lifts, trace a
-visibility ray toward each lift, and retain the existing light-state and
-portal-hop safety limits.
+The initial implementation enumerated the current bounded set of light lifts
+and traced a visibility ray toward each lift. Retain that candidate definition
+and the existing light-state and portal-hop safety limits as light selection
+becomes stochastic.
 
 Validate in this order:
 
@@ -303,7 +305,8 @@ Lens space
 Seifert–Weber space
 ```
 
-Only after correctness should light-lift selection become stochastic.
+Stochastic light-lift selection follows the validated deterministic reference
+and preserves its mean radiance through the selection PMF.
 
 ---
 
@@ -323,6 +326,19 @@ Later convergence work may add:
 
 These are optimizations rather than correctness prerequisites.
 
+The next convergence sequence should be:
+
+1. decouple Photo Mode's high safety depth from the smaller real-time bounce
+   limit, relying on roulette to control average work;
+2. replace variable-dimension hash sampling with a scrambled low-discrepancy
+   sequence whose dimensions are assigned to pixels, lights, BSDFs, dielectric
+   lobes, and roulette decisions; and
+3. add per-pixel variance estimates and adaptive dispatch only after the sample
+   sequence is stable.
+
+The fixed depth, near-zero-throughput cutoff, and bounded light-lift tree remain
+explicit truncations even though the roulette decision itself is unbiased.
+
 ---
 
 ## Milestone H — Finite area lights and radiometry
@@ -333,6 +349,21 @@ the curvature-aware area-to-solid-angle Jacobian below. Direct lighting uses
 both emitter-area samples and the diffuse continuation direction, combined by
 the power heuristic. Emitter intersections are evaluated as light events for
 MIS without making the light records ordinary scene geometry.
+
+Photo Mode selects one uniformly distributed light/lift candidate per surface
+instead of launching a visibility ray for every bounded candidate. If the
+candidate set has size `N`, its selection probability is `q = 1/N`: explicit
+light samples divide their contribution by `q`, and both sides of MIS use the
+full directional density `q * p(direction | candidate)`. The candidate is
+chosen with online reservoir sampling so no packet-side light distribution is
+required. The BSDF-sampled branch still checks all finite emitter lifts to find
+the first emitter reached along its direction; those root tests are cheaper
+than launching one visibility ray per candidate.
+
+A later weighted distribution may replace uniform selection. Its PMF should be
+based on stable, nonnegative quantities such as emitted power and intrinsic
+emitter area, must be included in both MIS densities, and must retain a fallback
+for zero-total-power packets.
 
 Real-time and Photo Mode share an interactive exposure multiplier and the same
 Reinhard display transform. Point-light diffuse response is normalized by
@@ -379,12 +410,11 @@ contract explicitly while preserving existing record sizes where possible.
 
 ## Milestone I — Physical materials
 
-Status: complete for the supported endpoint materials. The version-13 packet
-now carries base color, emission, roughness, metallic, IOR, and transmission. A
-transitional compatibility marker and legacy-specular field preserve external
-callers and packet tests. The application scene catalog now uses physical
-materials exclusively. Physical materials select their BSDF independently of
-the object's legacy response: metallic one with zero roughness is an ideal conductor, while
+Status: complete for the supported endpoint materials. Version 13 introduced
+base color, emission, roughness, metallic, IOR, and transmission; version 14
+removed the compatibility marker, legacy-specular fields, and object response
+semantics. The application scene catalog now uses physical materials
+exclusively. Metallic one with zero roughness is an ideal conductor, while
 metallic zero with zero transmission is Lambertian. The path-tracing-room
 mirror balls exercise this dispatch while authored as opaque objects.
 Real-time and Photo Mode share the selection, Lambertian
@@ -465,6 +495,12 @@ bytes and BSDF dispatch is exclusively material-driven.
 
 ## Milestone J — Profiling and acceleration
 
+Status: in progress. Uniform stochastic light/lift selection is the first
+measured-risk optimization: candidate discovery is unchanged, but explicit
+visibility work is reduced from one ray per candidate to at most one ray per
+surface. macOS GPU measurements and long-run image comparisons are still
+required before choosing a geometry acceleration structure.
+
 Do not add acceleration structures before measuring the working path tracer.
 The current per-chart linear object scan may eventually need:
 
@@ -475,6 +511,44 @@ The current per-chart linear object scan may eventually need:
 
 Profile first. Retain the simpler one-thread-per-pixel path loop until
 divergence or intersection cost is demonstrated to be the limiting factor.
+
+### Profiling phase
+
+Record average scattering depth, roulette termination depth, visibility rays,
+light candidates, object/quadric/clip tests, portal tests, and portal hops per
+camera sample. Retain GPU timestamps around tracing, MetalFX, and presentation.
+Use the three path-tracing rooms, Hopf fibration, all three tower observatories,
+and a many-state quotient as the standard benchmark set.
+
+### Optimization decision tree
+
+- If visibility rays dominate, improve light/lift selection before changing
+  geometry traversal.
+- If object tests dominate, add conservative per-chart bounds and then a
+  per-chart BVH without changing exact primitive intersection routines.
+- If portal tests dominate, group or bound portal faces while preserving
+  compound collar reduction and hop ordering.
+- If long-path divergence dominates, evaluate queue compaction or a wavefront
+  integrator only after the simpler changes are measured.
+
+Every optimization must compare GPU time, tests per sample, diagnostics, and
+long-run mean radiance against the reference implementation. A faster image
+with systematically changed brightness is not an acceptable result.
+
+### Near-term work order
+
+1. Validate uniform light/lift selection on macOS: compare GPU time and
+   converged mean luminance against the previous all-lights estimator in a
+   one-light room, a multi-light room, Hopf fibration, and an atlas scene.
+2. Add counters for the profiling phase above and capture the standard
+   benchmark set at 960×540 with fixed camera snapshots and sample counts.
+3. Increase Photo Mode's safety depth independently of real-time mode and use
+   the new depth/roulette counters to select a practical default.
+4. Introduce a dimensioned, scrambled low-discrepancy sampler, then add
+   per-pixel variance tracking and adaptive work allocation.
+5. Choose BVH, portal pruning, or wavefront scheduling only from the resulting
+   measurements. Preserve the current exact intersection and transport paths
+   as a reference configuration during that work.
 
 ---
 
@@ -490,6 +564,12 @@ Leave these features until the core renderer is correct and stable:
 - denoising;
 - environment maps; and
 - physically modeled cameras and image export.
+
+Nearer-term quality extensions, in recommended order, are direct sampling of
+supported emissive primitives, importance-sampled environment lighting, mixed
+metallic/partial-transmission lobes with matched PDFs, and a bounded medium
+stack for nested dielectric objects. Denoising should follow variance tracking
+rather than becoming a substitute for correct sampling.
 
 ---
 
@@ -508,6 +588,8 @@ I. Redesign materials
 J. Profile and optimize
 ```
 
-The first major finish line is Milestone F: progressive HDR transport with
-antialiasing, hard shadows, diffuse global illumination, perfect reflections,
-and portal-aware paths in S³, H³, and R³.
+Milestones A–I are complete for the currently supported endpoint materials and
+light types. Milestone J is the active phase. The next finish line is a
+profiled Photo Mode whose stochastic light selection, roulette depth, and
+converged mean radiance have been validated across S³, H³, R³, and atlas
+scenes.

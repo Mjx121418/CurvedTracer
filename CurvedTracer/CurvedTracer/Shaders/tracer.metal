@@ -244,6 +244,9 @@ static float3 photoDirectLighting(
     incoming[0] = -1;
     toStart[0] = float4x4(1);
     int depth = 0, stateCount = 1;
+    int lightCandidateCount = 0;
+    LightGPU selectedLight{};
+    float4 selectedLightCenter = float4(0);
     float nearestBSDFDistance = INF;
     LightGPU nearestBSDFLight{};
     float4 nearestBSDFCenter = float4(0);
@@ -253,14 +256,9 @@ static float3 photoDirectLighting(
             for (int local = 0; local < chart.lightCount; ++local) {
                 LightGPU light = lights[chart.firstLight + local];
                 float4 lightCenter = toStart[depth] * light.position;
-                float4 lightPosition = lightCenter;
-                float4 lightNormal = float4(0);
                 if (light.kind == LIGHT_SPHERE) {
                     if (light.radius <= 0.0f ||
-                        !photoCanonicalPoint(lightCenter) ||
-                        !photoSampleSphericalEmitter(
-                            lightCenter, light.radius, randomState,
-                            lightPosition, lightNormal)) {
+                        !photoCanonicalPoint(lightCenter)) {
                         result.errorBits |=
                         PHOTO_DIAGNOSTIC_INVALID_EMITTER_SAMPLE;
                         continue;
@@ -286,69 +284,15 @@ static float3 photoDirectLighting(
                     result.errorBits |= 1u;
                     continue;
                 }
-                float distanceToLight = intrinsicDistance(
-                    hit.point, lightPosition);
-                if (!isfinite(distanceToLight) || distanceToLight < EPS)
-                    continue;
-
-                float4 lightDirection = directionTo(
-                    hit.point, lightPosition, distanceToLight);
-                float cosine = clamp(
-                    mdot(normal, lightDirection), 0.0f, 1.0f);
-                if (cosine <= 0.0f)
-                    continue;
-                BSDFEvaluation evaluation = evaluateBSDF(
-                    material, normal, frontFace, -hit.tangent, lightDirection);
-                if (!evaluation.valid || evaluation.pdf <= 0.0f)
-                    continue;
-
-                RayState shadowRay;
-                shadowRay.point = hit.point;
-                shadowRay.tangent = lightDirection;
-                shadowRay.chartId = chartId;
-                VisibilityResult visibility = traceAny(
-                    shadowRay, distanceToLight - SELF_EPS,
-                    h->controls.maxChartHops, charts, portals, objects,
-                    quadrics, clips);
-                result.errorBits |= visibility.errorBits;
-                result.portalHops += visibility.portalHops;
-                result.compoundPortalHops += visibility.compoundPortalHops;
-                result.portalTests += visibility.portalTests;
-                result.hitHopLimit =
-                result.hitHopLimit || visibility.hitHopLimit;
-                if (visibility.blocked)
-                    continue;
-
-                float propagationRadius =
-                max(areaRadius(distanceToLight), 1e-3f);
-                float attenuation;
-                if (light.kind == LIGHT_POINT) {
-                    attenuation = light.intensity /
-                    (1.0f + h->controls.falloffK *
-                     propagationRadius * propagationRadius);
-                } else {
-                    float4 directionFromLight = directionTo(
-                        lightPosition, hit.point, distanceToLight);
-                    float emitterCosine = clamp(
-                        mdot(lightNormal, directionFromLight), 0.0f, 1.0f);
-                    if (emitterCosine <= 0.0f)
-                        continue;
-                    float emitterRadius = areaRadius(light.radius);
-                    float emitterArea =
-                    2.0f * TWO_PI * emitterRadius * emitterRadius;
-                    float lightPDF =
-                    propagationRadius * propagationRadius /
-                    max(emitterArea * emitterCosine, EPS);
-                    float bsdfPDF = evaluation.pdf;
-                    float misWeight = hasBSDFSample
-                    ? photoPowerHeuristic(lightPDF, bsdfPDF)
-                    : 1.0f;
-                    attenuation = light.intensity * emitterCosine *
-                    emitterArea * misWeight /
-                    (propagationRadius * propagationRadius);
+                ++lightCandidateCount;
+                // Online reservoir sampling selects every bounded light lift
+                // with probability 1 / lightCandidateCount.
+                if (lightCandidateCount == 1 ||
+                    photoRandom(randomState) <
+                    1.0f / float(lightCandidateCount)) {
+                    selectedLight = light;
+                    selectedLightCenter = lightCenter;
                 }
-                direct += float3(light.color) * attenuation *
-                evaluation.value * cosine;
             }
             nextPortal[depth] = 0;
         }
@@ -378,7 +322,87 @@ static float3 photoDirectLighting(
         toStart[depth] * portals[portal.reversePortal].toNeighbor;
         depth = child;
     }
-    if (hasBSDFSample && nearestBSDFDistance < INF) {
+    float lightSelectionPMF = lightCandidateCount > 0
+    ? 1.0f / float(lightCandidateCount) : 0.0f;
+    // Only the selected lift launches an explicit visibility ray. Its
+    // contribution and MIS density both include the discrete selection PMF.
+    if (lightCandidateCount > 0) {
+        float4 lightPosition = selectedLightCenter;
+        float4 lightNormal = float4(0);
+        bool validSample = true;
+        if (selectedLight.kind == LIGHT_SPHERE) {
+            validSample = photoSampleSphericalEmitter(
+                selectedLightCenter, selectedLight.radius, randomState,
+                lightPosition, lightNormal);
+            if (!validSample)
+                result.errorBits |= PHOTO_DIAGNOSTIC_INVALID_EMITTER_SAMPLE;
+        }
+        float distanceToLight = validSample
+        ? intrinsicDistance(hit.point, lightPosition) : INF;
+        if (isfinite(distanceToLight) && distanceToLight >= EPS) {
+            float4 lightDirection = directionTo(
+                hit.point, lightPosition, distanceToLight);
+            float cosine = clamp(
+                mdot(normal, lightDirection), 0.0f, 1.0f);
+            BSDFEvaluation evaluation = evaluateBSDF(
+                material, normal, frontFace, -hit.tangent, lightDirection);
+            if (cosine > 0.0f && evaluation.valid && evaluation.pdf > 0.0f) {
+                RayState shadowRay;
+                shadowRay.point = hit.point;
+                shadowRay.tangent = lightDirection;
+                shadowRay.chartId = chartId;
+                VisibilityResult visibility = traceAny(
+                    shadowRay, distanceToLight - SELF_EPS,
+                    h->controls.maxChartHops, charts, portals, objects,
+                    quadrics, clips);
+                result.errorBits |= visibility.errorBits;
+                result.portalHops += visibility.portalHops;
+                result.compoundPortalHops += visibility.compoundPortalHops;
+                result.portalTests += visibility.portalTests;
+                result.hitHopLimit =
+                result.hitHopLimit || visibility.hitHopLimit;
+                if (!visibility.blocked) {
+                    float propagationRadius =
+                    max(areaRadius(distanceToLight), 1e-3f);
+                    float attenuation;
+                    if (selectedLight.kind == LIGHT_POINT) {
+                        attenuation = selectedLight.intensity /
+                        (lightSelectionPMF *
+                         (1.0f + h->controls.falloffK *
+                          propagationRadius * propagationRadius));
+                    } else {
+                        float4 directionFromLight = directionTo(
+                            lightPosition, hit.point, distanceToLight);
+                        float emitterCosine = clamp(
+                            mdot(lightNormal, directionFromLight),
+                            0.0f, 1.0f);
+                        float emitterRadius = areaRadius(selectedLight.radius);
+                        float emitterArea =
+                        2.0f * TWO_PI * emitterRadius * emitterRadius;
+                        float conditionalLightPDF =
+                        propagationRadius * propagationRadius /
+                        max(emitterArea * emitterCosine, EPS);
+                        float lightPDF =
+                        lightSelectionPMF * conditionalLightPDF;
+                        float misWeight = emitterCosine > 0.0f
+                        ? (hasBSDFSample
+                           ? photoPowerHeuristic(
+                               lightPDF, evaluation.pdf)
+                           : 1.0f)
+                        : 0.0f;
+                        attenuation = selectedLight.intensity *
+                        emitterCosine * emitterArea * misWeight /
+                        (lightSelectionPMF * propagationRadius *
+                         propagationRadius);
+                    }
+                    direct += float3(selectedLight.color) * attenuation *
+                    evaluation.value * cosine;
+                }
+            }
+        }
+    }
+    if (hasBSDFSample && lightCandidateCount > 0 &&
+        nearestBSDFDistance < INF) {
         float4 emitterPoint = geodesicPoint(
             hit.point, bsdfSample.direction, nearestBSDFDistance);
         float4 emitterNormal = directionTo(
@@ -410,9 +434,11 @@ static float3 photoDirectLighting(
                 float emitterRadius = areaRadius(nearestBSDFLight.radius);
                 float emitterArea =
                 2.0f * TWO_PI * emitterRadius * emitterRadius;
-                float lightPDF =
+                float conditionalLightPDF =
                 propagationRadius * propagationRadius /
                 max(emitterArea * emitterCosine, EPS);
+                float lightPDF =
+                lightSelectionPMF * conditionalLightPDF;
                 float bsdfPDF = bsdfSample.pdf;
                 float misWeight =
                 photoPowerHeuristic(bsdfPDF, lightPDF);

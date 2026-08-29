@@ -241,15 +241,23 @@ Lambertian path integrator with a black environment and physical perfect-mirror
 continuation. S³ and H³ construct the sampling frame with their induced tangent
 metrics and re-canonicalize every continued ray. Atlas Photo Mode continues
 diffuse and mirror paths through the same portal transport as primary rays.
-Its direct-light estimator deterministically enumerates the packet's bounded
-light-lift tree and traces a portal-aware visibility ray toward every lift.
+Its direct-light estimator enumerates the packet's bounded light-lift tree as a
+candidate set and uses online reservoir sampling to choose one candidate
+uniformly. For `N` candidates the selection probability is `q = 1/N`; the
+selected candidate is the only one that launches an explicit-light visibility
+ray, and its contribution is divided by `q`. This changes variance and GPU
+work, but not expected radiance.
 Finite spherical emitters are sampled uniformly in surface area. For intrinsic
 radius `a`, their area is `4π Sκ(a)²`; a sample at distance `r` contributes the
 Jacobian `abs(cos(thetaLight)) / Sκ(r)²`. This produces curvature-aware soft
 shadows without applying the empirical point-light falloff. The direct estimator
 also tests the cosine-weighted diffuse continuation direction against finite
 emitters. Emitter-area and BSDF samples use their corresponding solid-angle
-PDFs and the power heuristic for multiple importance sampling.
+PDFs and the power heuristic for multiple importance sampling. Both MIS sides
+use the complete light-technique density `q * p(direction | candidate)`. The
+BSDF branch still tests every finite-emitter candidate to identify the nearest
+emitter reached by its already-sampled direction; it does not launch an
+explicit visibility ray for every candidate.
 
 Photo Mode guarantees the first three scattering continuations, then applies
 Russian roulette after each BSDF throughput update. The survival probability is

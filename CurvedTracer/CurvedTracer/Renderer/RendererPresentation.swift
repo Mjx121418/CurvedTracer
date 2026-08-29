@@ -139,7 +139,11 @@ extension Renderer {
             compoundHops: words[3],
             maximumHops: words[4],
             hopLimitRays: words[5],
-            portalTests: words[6])
+            portalTests: words[6],
+            totalScatteringDepth: words[7],
+            maximumScatteringDepth: words[8],
+            rouletteTerminations: words[9],
+            depthBoundTerminations: words[10])
 
         if errorBits != lastAtlasStatus {
             if errorBits == 0 {

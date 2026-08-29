@@ -499,20 +499,30 @@ static VisibilityResult traceAny(
 
 static void recordTraceStats(device TraceStatsGPU *stats, uint portalHops,
                       uint compoundPortalHops, uint portalTests,
-                      bool hitHopLimit, uint laneInSIMDGroup,
+                      bool hitHopLimit, uint scatteringDepth,
+                      bool rouletteTerminated, bool hitDepthBound,
+                      uint laneInSIMDGroup,
                       uint simdGroupIndex, uint threadIndex,
                       uint simdGroupCount, threadgroup uint *rayPartials,
                       threadgroup uint *hopPartials,
                       threadgroup uint *compoundPartials,
                       threadgroup uint *maximumPartials,
                       threadgroup uint *limitedPartials,
-                      threadgroup uint *testPartials) {
+                      threadgroup uint *testPartials,
+                      threadgroup uint *depthPartials,
+                      threadgroup uint *maximumDepthPartials,
+                      threadgroup uint *roulettePartials,
+                      threadgroup uint *depthBoundPartials) {
     uint rays = simd_sum(1u);
     uint hops = simd_sum(portalHops);
     uint compound = simd_sum(compoundPortalHops);
     uint maximum = simd_max(portalHops);
     uint limited = simd_sum(hitHopLimit ? 1u : 0u);
     uint tests = simd_sum(portalTests);
+    uint totalDepth = simd_sum(scatteringDepth);
+    uint maximumDepth = simd_max(scatteringDepth);
+    uint roulette = simd_sum(rouletteTerminated ? 1u : 0u);
+    uint depthBound = simd_sum(hitDepthBound ? 1u : 0u);
     if (laneInSIMDGroup == 0) {
         rayPartials[simdGroupIndex] = rays;
         hopPartials[simdGroupIndex] = hops;
@@ -520,12 +530,17 @@ static void recordTraceStats(device TraceStatsGPU *stats, uint portalHops,
         maximumPartials[simdGroupIndex] = maximum;
         limitedPartials[simdGroupIndex] = limited;
         testPartials[simdGroupIndex] = tests;
+        depthPartials[simdGroupIndex] = totalDepth;
+        maximumDepthPartials[simdGroupIndex] = maximumDepth;
+        roulettePartials[simdGroupIndex] = roulette;
+        depthBoundPartials[simdGroupIndex] = depthBound;
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
     if (threadIndex != 0)
         return;
 
     rays = hops = compound = maximum = limited = tests = 0;
+    totalDepth = maximumDepth = roulette = depthBound = 0;
     for (uint group = 0; group < simdGroupCount; ++group) {
         rays += rayPartials[group];
         hops += hopPartials[group];
@@ -533,6 +548,10 @@ static void recordTraceStats(device TraceStatsGPU *stats, uint portalHops,
         maximum = max(maximum, maximumPartials[group]);
         limited += limitedPartials[group];
         tests += testPartials[group];
+        totalDepth += depthPartials[group];
+        maximumDepth = max(maximumDepth, maximumDepthPartials[group]);
+        roulette += roulettePartials[group];
+        depthBound += depthBoundPartials[group];
     }
     atomic_fetch_add_explicit(&stats->rayCount, rays, memory_order_relaxed);
     atomic_fetch_add_explicit(&stats->totalPortalHops, hops,
@@ -544,6 +563,14 @@ static void recordTraceStats(device TraceStatsGPU *stats, uint portalHops,
     atomic_fetch_add_explicit(&stats->hopLimitRays, limited,
                               memory_order_relaxed);
     atomic_fetch_add_explicit(&stats->totalPortalTests, tests,
+                              memory_order_relaxed);
+    atomic_fetch_add_explicit(&stats->totalScatteringDepth, totalDepth,
+                              memory_order_relaxed);
+    atomic_fetch_max_explicit(&stats->maximumScatteringDepth, maximumDepth,
+                              memory_order_relaxed);
+    atomic_fetch_add_explicit(&stats->rouletteTerminations, roulette,
+                              memory_order_relaxed);
+    atomic_fetch_add_explicit(&stats->depthBoundTerminations, depthBound,
                               memory_order_relaxed);
 }
 

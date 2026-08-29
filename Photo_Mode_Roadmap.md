@@ -312,10 +312,13 @@ and preserves its mean radiance through the selection PMF.
 
 ## Milestone G — Russian roulette and convergence controls
 
-Status: unbiased throughput-based Russian roulette is implemented. The first
-three scattering continuations are guaranteed. Later continuations survive
-with probability `clamp(max(throughput), 0.05, 0.95)` and divide surviving
-throughput by that probability. The fixed maximum depth remains a safety bound.
+Status: implemented. Photo Mode has a renderer-owned maximum depth independent
+of scene-authored real-time depth. Pre-photo integer controls default to 64
+maximum continuations and three guaranteed continuations and are frozen during
+accumulation. Later continuations survive with probability
+`clamp(max(throughput), 0.05, 0.95)` and divide surviving throughput by that
+probability. Exact-zero throughput terminates directly; tiny nonzero paths are
+handled by roulette.
 
 Later convergence work may add:
 
@@ -326,18 +329,17 @@ Later convergence work may add:
 
 These are optimizations rather than correctness prerequisites.
 
-The next convergence sequence should be:
+The remaining convergence sequence is:
 
-1. decouple Photo Mode's high safety depth from the smaller real-time bounce
-   limit, relying on roulette to control average work;
-2. replace variable-dimension hash sampling with a scrambled low-discrepancy
+1. replace variable-dimension hash sampling with a scrambled low-discrepancy
    sequence whose dimensions are assigned to pixels, lights, BSDFs, dielectric
    lobes, and roulette decisions; and
-3. add per-pixel variance estimates and adaptive dispatch only after the sample
+2. add per-pixel variance estimates and adaptive dispatch only after the sample
    sequence is stable.
 
-The fixed depth, near-zero-throughput cutoff, and bounded light-lift tree remain
-explicit truncations even though the roulette decision itself is unbiased.
+The fixed depth and bounded light-lift tree remain explicit truncations even
+though the roulette decision itself is unbiased. The terminal surface is
+shaded before the depth guard prevents another continuation.
 
 ---
 
@@ -514,9 +516,10 @@ divergence or intersection cost is demonstrated to be the limiting factor.
 
 ### Profiling phase
 
-Record average scattering depth, roulette termination depth, visibility rays,
-light candidates, object/quadric/clip tests, portal tests, and portal hops per
-camera sample. Retain GPU timestamps around tracing, MetalFX, and presentation.
+Average and maximum scattering depth plus roulette- and depth-bound-termination
+fractions are now recorded. Add visibility-ray, light-candidate,
+object/quadric/clip-test, portal-test, and portal-hop metrics per camera sample.
+Retain GPU timestamps around tracing, MetalFX, and presentation.
 Use the three path-tracing rooms, Hopf fibration, all three tower observatories,
 and a many-state quotient as the standard benchmark set.
 
@@ -540,13 +543,12 @@ with systematically changed brightness is not an acceptable result.
 1. Validate uniform light/lift selection on macOS: compare GPU time and
    converged mean luminance against the previous all-lights estimator in a
    one-light room, a multi-light room, Hopf fibration, and an atlas scene.
-2. Add counters for the profiling phase above and capture the standard
-   benchmark set at 960×540 with fixed camera snapshots and sample counts.
-3. Increase Photo Mode's safety depth independently of real-time mode and use
-   the new depth/roulette counters to select a practical default.
-4. Introduce a dimensioned, scrambled low-discrepancy sampler, then add
+2. Complete the remaining profiling counters and capture the standard benchmark
+   set at 960×540 with fixed camera snapshots and sample counts. Depth and
+   roulette counters are implemented; validate the 64/3 default on Metal.
+3. Introduce a dimensioned, scrambled low-discrepancy sampler, then add
    per-pixel variance tracking and adaptive work allocation.
-5. Choose BVH, portal pruning, or wavefront scheduling only from the resulting
+4. Choose BVH, portal pruning, or wavefront scheduling only from the resulting
    measurements. Preserve the current exact intersection and transport paths
    as a reference configuration during that work.
 

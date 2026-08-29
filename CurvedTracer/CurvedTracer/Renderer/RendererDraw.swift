@@ -62,7 +62,10 @@ extension Renderer {
         }
         var parameters = FrameParameters(
             sampleIndex: sampleIndex,
-            exposure: max(exposure, 0))
+            exposure: max(exposure, 0),
+            photoMaxBounces: photoModeState.convergenceSettings.maximumBounces,
+            photoGuaranteedBounces:
+                photoModeState.convergenceSettings.guaranteedBounces)
         _ = withUnsafeBytes(of: &parameters) { bytes in
             memcpy(
                 frameParameterBuffers[index].contents(),

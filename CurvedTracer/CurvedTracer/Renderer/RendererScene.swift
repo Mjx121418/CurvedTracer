@@ -94,6 +94,13 @@ extension Renderer {
             return true
         case .photo:
             guard waitForAllFrames() else { return false }
+            for statusBuffer in statusBuffers {
+                memset(
+                    statusBuffer.contents(),
+                    0,
+                    Self.traceStatsByteCount)
+            }
+            performanceStats.resetPhotoConvergence()
             let result = buildCurrentPacket()
             guard result == 0 else {
                 NSLog(
@@ -106,7 +113,8 @@ extension Renderer {
             pendingMouseDX = 0
             pendingMouseDY = 0
             pressedKeys.removeAll()
-            photoModeState.enter()
+            photoModeState.enter(
+                convergenceSettings: photoConvergenceSettings)
             return true
         }
     }

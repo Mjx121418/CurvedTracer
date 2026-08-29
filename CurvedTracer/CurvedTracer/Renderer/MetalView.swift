@@ -18,6 +18,8 @@ struct MetalView: NSViewRepresentable {
     @Binding var hyperbolicAtlasVariant: HyperbolicAtlasVariant
     @Binding var renderingMode: RenderingMode
     @Binding var exposure: Double
+    @Binding var photoMaximumBounces: Int
+    @Binding var photoGuaranteedBounces: Int
     let performanceStats: PerformanceStats
     let renderResolution: RenderResolution
 
@@ -65,6 +67,9 @@ struct MetalView: NSViewRepresentable {
         context.coordinator.euclideanAtlasVariant = euclideanAtlasVariant
         context.coordinator.hyperbolicAtlasVariant = hyperbolicAtlasVariant
         context.coordinator.exposure = Float(max(exposure, 0))
+        context.coordinator.photoConvergenceSettings = PhotoConvergenceSettings(
+            maximumBounces: photoMaximumBounces,
+            guaranteedBounces: photoGuaranteedBounces)
         context.coordinator.setScenePacket()
         if renderingMode == .photo,
            !context.coordinator.setRenderingMode(.photo)
@@ -82,6 +87,9 @@ struct MetalView: NSViewRepresentable {
     }
 
     func updateNSView(_ view: MTKView, context: Context) {
+        context.coordinator.photoConvergenceSettings = PhotoConvergenceSettings(
+            maximumBounces: photoMaximumBounces,
+            guaranteedBounces: photoGuaranteedBounces)
         if context.coordinator.ambientSpace != ambientSpace
             || context.coordinator.traversalMode != traversalMode
             || context.coordinator.euclideanFlatSceneVariant != euclideanFlatSceneVariant

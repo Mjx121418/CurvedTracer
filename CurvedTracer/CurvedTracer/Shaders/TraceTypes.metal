@@ -115,6 +115,10 @@ struct TraceStatsGPU {
     atomic_uint maximumPortalHops;
     atomic_uint hopLimitRays;
     atomic_uint totalPortalTests;
+    atomic_uint totalScatteringDepth;
+    atomic_uint maximumScatteringDepth;
+    atomic_uint rouletteTerminations;
+    atomic_uint depthBoundTerminations;
     atomic_uint reserved;
 };
 

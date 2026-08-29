@@ -3,8 +3,8 @@
 struct FrameGPU {
     uint sampleIndex;
     float exposure;
-    uint pad1;
-    uint pad2;
+    uint photoMaxBounces;
+    uint photoGuaranteedBounces;
 };
 
 kernel void raytrace(device const uchar *packet [[buffer(0)]],
@@ -23,6 +23,10 @@ kernel void raytrace(device const uchar *packet [[buffer(0)]],
     threadgroup uint maximumPartials[32];
     threadgroup uint limitedPartials[32];
     threadgroup uint testPartials[32];
+    threadgroup uint depthPartials[32];
+    threadgroup uint maximumDepthPartials[32];
+    threadgroup uint roulettePartials[32];
+    threadgroup uint depthBoundPartials[32];
     if (pixel.x >= output.get_width() || pixel.y >= output.get_height())
         return;
 
@@ -55,10 +59,12 @@ kernel void raytrace(device const uchar *packet [[buffer(0)]],
     (threadsInGroup + threadsPerSIMDGroup - 1) / threadsPerSIMDGroup;
     recordTraceStats(
         stats, result.portalHops, result.compoundPortalHops,
-        result.portalTests, result.hitHopLimit, laneInSIMDGroup,
+        result.portalTests, result.hitHopLimit, result.scatteringDepth,
+        result.rouletteTerminated, result.hitDepthBound, laneInSIMDGroup,
         simdGroupIndex, threadIndex, simdGroupCount, rayPartials,
         hopPartials, compoundPartials, maximumPartials, limitedPartials,
-        testPartials);
+        testPartials, depthPartials, maximumDepthPartials,
+        roulettePartials, depthBoundPartials);
     output.write(
         float4(toneMapRadiance(result.radiance, frame.exposure), 1), pixel);
 }
@@ -86,10 +92,10 @@ static float photoRandom(thread uint &state) {
 
 static bool photoRussianRoulette(
     int continuationDepth,
+    int guaranteedContinuations,
     thread float3 &throughput,
     thread uint &randomState
 ) {
-    const int guaranteedContinuations = 3;
     const float minimumSurvival = 0.05f;
     const float maximumSurvival = 0.95f;
     if (continuationDepth <= guaranteedContinuations)
@@ -461,7 +467,9 @@ static TraceResult tracePathSample(
     device const LightGPU *lights,
     float2 samplePosition,
     uint2 renderSize,
-    thread uint &randomState
+    thread uint &randomState,
+    int maxBounces,
+    int guaranteedBounces
 ) {
     TraceResult result{};
     RayState ray;
@@ -473,7 +481,6 @@ static TraceResult tracePathSample(
 
     float3 radiance = 0;
     float3 throughput = 1;
-    int maxBounces = clamp(h->controls.maxBounces, 0, 64);
     for (int depth = 0; depth <= maxBounces; ++depth) {
         SurfaceTraceResult surface = traceToSurface(
             ray, h->camera.maxTraceDistance, h->controls.maxChartHops,
@@ -553,23 +560,28 @@ static TraceResult tracePathSample(
                 portals, objects, quadrics, clips, lights, result, randomState,
                 hasBSDFSample, bsdfSample);
         }
-        if (!hasBSDFSample)
+        if (!hasBSDFSample) {
+            result.hitDepthBound = true;
             break;
+        }
 
         throughput *= bsdfSample.weight;
         ray.point = hit.point;
         ray.tangent = bsdfSample.direction;
         ray.chartId = surface.chartId;
 
-        if (max(max(throughput.r, throughput.g), throughput.b) <= EPS)
+        if (max(max(throughput.r, throughput.g), throughput.b) <= 0.0f)
             break;
         if (!canonicalizeRayState(ray)) {
             result.errorBits |= DIAGNOSTIC_INVALID_RAY_STATE;
             break;
         }
         if (!photoRussianRoulette(
-                depth + 1, throughput, randomState))
+                depth + 1, guaranteedBounces, throughput, randomState)) {
+            result.rouletteTerminated = true;
             break;
+        }
+        ++result.scatteringDepth;
     }
 
     result.radiance = radiance;
@@ -595,6 +607,10 @@ kernel void photoTrace(
     threadgroup uint maximumPartials[32];
     threadgroup uint limitedPartials[32];
     threadgroup uint testPartials[32];
+    threadgroup uint depthPartials[32];
+    threadgroup uint maximumDepthPartials[32];
+    threadgroup uint roulettePartials[32];
+    threadgroup uint depthBoundPartials[32];
     if (pixel.x >= output.get_width() || pixel.y >= output.get_height())
         return;
 
@@ -619,10 +635,14 @@ kernel void photoTrace(
     device const PrimitiveClipGPU *clips = packetClips(packet, h);
     device const MaterialGPU *materials = packetMaterials(packet, h);
     device const LightGPU *lights = packetLights(packet, h);
+    int maxBounces = clamp(int(frame.photoMaxBounces), 1, 64);
+    int guaranteedBounces = clamp(
+        int(frame.photoGuaranteedBounces), 0, min(maxBounces, 16));
     TraceResult result = tracePathSample(
         h, charts, portals, objects, quadrics, clips, materials, lights,
         float2(pixel) + offset,
-        uint2(output.get_width(), output.get_height()), randomState);
+        uint2(output.get_width(), output.get_height()), randomState,
+        maxBounces, guaranteedBounces);
 
     float3 sample = result.radiance;
     if (!all(isfinite(sample))) {
@@ -647,8 +667,10 @@ kernel void photoTrace(
     (threadsInGroup + threadsPerSIMDGroup - 1) / threadsPerSIMDGroup;
     recordTraceStats(
         stats, result.portalHops, result.compoundPortalHops,
-        result.portalTests, result.hitHopLimit, laneInSIMDGroup,
+        result.portalTests, result.hitHopLimit, result.scatteringDepth,
+        result.rouletteTerminated, result.hitDepthBound, laneInSIMDGroup,
         simdGroupIndex, threadIndex, simdGroupCount, rayPartials,
         hopPartials, compoundPartials, maximumPartials, limitedPartials,
-        testPartials);
+        testPartials, depthPartials, maximumDepthPartials,
+        roulettePartials, depthBoundPartials);
 }

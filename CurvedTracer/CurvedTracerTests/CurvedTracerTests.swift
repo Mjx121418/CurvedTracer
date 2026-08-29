@@ -146,9 +146,13 @@ struct CurvedTracerTests {
         state.recordSubmittedSample()
         #expect(state.sampleIndex == 0)
 
-        state.enter()
+        let settings = PhotoConvergenceSettings(
+            maximumBounces: 32,
+            guaranteedBounces: 5)
+        state.enter(convergenceSettings: settings)
         #expect(state.renderingMode == .photo)
         #expect(state.sampleIndex == 0)
+        #expect(state.convergenceSettings == settings)
         state.recordSubmittedSample()
         state.recordSubmittedSample()
         #expect(state.sampleIndex == 2)
@@ -160,6 +164,31 @@ struct CurvedTracerTests {
         state.enter()
         #expect(state.renderingMode == .photo)
         #expect(state.sampleIndex == 0)
+        #expect(state.convergenceSettings == .default)
+    }
+
+    @Test func photoConvergenceSettingsNormalizeUserInput() {
+        #expect(MemoryLayout<Renderer.FrameParameters>.stride == 16)
+        #expect(PhotoConvergenceSettings.default.maximumBounces == 64)
+        #expect(PhotoConvergenceSettings.default.guaranteedBounces == 3)
+
+        let upper = PhotoConvergenceSettings(
+            maximumBounces: 100,
+            guaranteedBounces: 100)
+        #expect(upper.maximumBounces == 64)
+        #expect(upper.guaranteedBounces == 16)
+
+        let lower = PhotoConvergenceSettings(
+            maximumBounces: -4,
+            guaranteedBounces: -2)
+        #expect(lower.maximumBounces == 1)
+        #expect(lower.guaranteedBounces == 0)
+
+        let boundedByDepth = PhotoConvergenceSettings(
+            maximumBounces: 4,
+            guaranteedBounces: 12)
+        #expect(boundedByDepth.maximumBounces == 4)
+        #expect(boundedByDepth.guaranteedBounces == 4)
     }
 
     @Test func performanceStatisticsNormalizeAndPublishSamples() {
@@ -172,7 +201,11 @@ struct CurvedTracerTests {
             compoundHops: 5,
             maximumHops: 7,
             hopLimitRays: 1,
-            portalTests: 1_200)
+            portalTests: 1_200,
+            totalScatteringDepth: 350,
+            maximumScatteringDepth: 9,
+            rouletteTerminations: 40,
+            depthBoundTerminations: 2)
         stats.recordFrame(at: 10.5)
 
         #expect(abs(stats.snapshot.framesPerSecond - 2) < 0.0001)
@@ -183,6 +216,10 @@ struct CurvedTracerTests {
         #expect(abs(stats.snapshot.portalTestsPerRay - 12) < 0.0001)
         #expect(stats.snapshot.maximumPortalHops == 7)
         #expect(stats.snapshot.hopLimitRays == 1)
+        #expect(abs(stats.snapshot.averageScatteringDepth - 3.5) < 0.0001)
+        #expect(stats.snapshot.maximumScatteringDepth == 9)
+        #expect(abs(stats.snapshot.rouletteTerminationFraction - 0.4) < 0.0001)
+        #expect(abs(stats.snapshot.depthBoundTerminationFraction - 0.02) < 0.0001)
     }
 
     @Test func allSpaceTraversalScenesBuildV16MaterialPackets() {

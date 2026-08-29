@@ -26,14 +26,25 @@ final class CurvedTracerUITests: XCTestCase {
         app.launch()
 
         let toggle = app.buttons["photo-mode-toggle"]
+        let maximumBounces = app.steppers["photo-max-bounces-control"]
+        let guaranteedBounces = app.steppers[
+            "photo-guaranteed-bounces-control"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        XCTAssertTrue(maximumBounces.exists)
+        XCTAssertTrue(guaranteedBounces.exists)
         XCTAssertEqual(toggle.label, "Start Photo Mode")
+        XCTAssertTrue(maximumBounces.isEnabled)
+        XCTAssertTrue(guaranteedBounces.isEnabled)
 
         toggle.click()
         XCTAssertEqual(toggle.label, "Stop Photo Mode")
+        XCTAssertFalse(maximumBounces.isEnabled)
+        XCTAssertFalse(guaranteedBounces.isEnabled)
 
         toggle.click()
         XCTAssertEqual(toggle.label, "Start Photo Mode")
+        XCTAssertTrue(maximumBounces.isEnabled)
+        XCTAssertTrue(guaranteedBounces.isEnabled)
     }
 
     @MainActor

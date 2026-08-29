@@ -259,13 +259,23 @@ BSDF branch still tests every finite-emitter candidate to identify the nearest
 emitter reached by its already-sampled direction; it does not launch an
 explicit visibility ray for every candidate.
 
-Photo Mode guarantees the first three scattering continuations, then applies
-Russian roulette after each BSDF throughput update. The survival probability is
+Photo Mode receives its maximum and guaranteed continuation counts in the
+per-frame uniform rather than reading the scene-authored real-time bounce
+count. The UI defaults to 64 maximum continuations and three guaranteed
+continuations and freezes both values for an accumulation. After the guaranteed
+count, Russian roulette uses
 `clamp(max(throughput.r, throughput.g, throughput.b), 0.05, 0.95)`. A surviving
 path divides its throughput by that probability before tracing the next
-segment, so its conditional expected throughput is unchanged. Roulette is not
-applied to portal hops or visibility rays, and the authored maximum bounce
-count remains a hard safety bound.
+segment, so its conditional expected throughput is unchanged. Exact-zero
+throughput terminates directly; nonzero throughput is left to roulette.
+Roulette is not applied to portal hops or visibility rays. The selected maximum
+is a hard truncation guard: its terminal surface still contributes emission and
+direct light, but cannot launch another BSDF continuation.
+
+Photo Mode trace statistics include total and maximum scattering depth plus
+roulette- and depth-bound-termination counts. The renderer normalizes these by
+camera sample count for the performance overlay. A depth-bound termination is
+diagnostic evidence of possible truncation rather than a tracing error.
 
 Both kernels use the shared `evaluateBSDF` and `sampleBSDF` interface. Neither
 interface accepts object response state. An evaluation returns the BSDF value

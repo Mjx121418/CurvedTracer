@@ -11,14 +11,14 @@ import MetalFX
 import MetalKit
 
 final class Renderer: NSObject, MTKViewDelegate {
-    static let traceStatsWordCount = 8
+    static let traceStatsWordCount = 12
     static let traceStatsByteCount = traceStatsWordCount * MemoryLayout<UInt32>.size
     static let maxScenePacketSize = 3_000_000
     struct FrameParameters {
         var sampleIndex: UInt32
         var exposure: Float
-        var pad1: UInt32 = 0
-        var pad2: UInt32 = 0
+        var photoMaxBounces: UInt32
+        var photoGuaranteedBounces: UInt32
     }
 
     let performanceStats: PerformanceStats
@@ -84,6 +84,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     var euclideanAtlasVariant: EuclideanAtlasVariant = .torus
     var hyperbolicAtlasVariant: HyperbolicAtlasVariant = .oneChart
     var exposure: Float = 2.0
+    var photoConvergenceSettings: PhotoConvergenceSettings = .default
     var renderingMode: RenderingMode { photoModeState.renderingMode }
 
     init(performanceStats: PerformanceStats) {

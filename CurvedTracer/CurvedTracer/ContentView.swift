@@ -18,6 +18,10 @@ struct ContentView: View {
   @State private var hyperbolicAtlasVariant: HyperbolicAtlasVariant = .oneChart
   @State private var renderingMode: RenderingMode = .realtime
   @State private var exposure = 2.0
+  @State private var photoMaximumBounces = Int(
+    PhotoConvergenceSettings.default.maximumBounces)
+  @State private var photoGuaranteedBounces = Int(
+    PhotoConvergenceSettings.default.guaranteedBounces)
   @StateObject private var performanceStats = PerformanceStats()
   private let renderResolution: RenderResolution = .qhd540
 
@@ -34,6 +38,8 @@ struct ContentView: View {
         hyperbolicAtlasVariant: $hyperbolicAtlasVariant,
         renderingMode: $renderingMode,
         exposure: $exposure,
+        photoMaximumBounces: $photoMaximumBounces,
+        photoGuaranteedBounces: $photoGuaranteedBounces,
         performanceStats: performanceStats,
         renderResolution: renderResolution
       )
@@ -42,7 +48,9 @@ struct ContentView: View {
       .ignoresSafeArea()
 
       if showsPerformanceOverlay {
-        PerformanceOverlay(stats: performanceStats)
+        PerformanceOverlay(
+          stats: performanceStats,
+          showsPhotoConvergence: renderingMode == .photo)
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
           .padding(12)
       }
@@ -107,6 +115,44 @@ struct ContentView: View {
         }
         .accessibilityIdentifier("photo-mode-toggle")
 
+        VStack(alignment: .trailing, spacing: 4) {
+          Stepper(
+            "Photo max bounces: \(photoMaximumBounces)",
+            value: Binding(
+              get: { photoMaximumBounces },
+              set: { value in
+                photoMaximumBounces = min(
+                  max(value, 1),
+                  Int(PhotoConvergenceSettings.maximumSupportedBounces))
+                photoGuaranteedBounces = min(
+                  photoGuaranteedBounces,
+                  photoMaximumBounces)
+              }),
+            in: 1...Int(PhotoConvergenceSettings.maximumSupportedBounces))
+          .accessibilityIdentifier("photo-max-bounces-control")
+          .help(
+            "Maximum rays continued after surface scattering in Photo Mode")
+
+          Stepper(
+            "Guaranteed bounces: \(photoGuaranteedBounces)",
+            value: Binding(
+              get: { photoGuaranteedBounces },
+              set: { value in
+                photoGuaranteedBounces = min(
+                  max(value, 0),
+                  min(
+                    photoMaximumBounces,
+                    Int(PhotoConvergenceSettings.maximumGuaranteedBounces)))
+              }),
+            in: 0...min(
+              photoMaximumBounces,
+              Int(PhotoConvergenceSettings.maximumGuaranteedBounces)))
+          .accessibilityIdentifier("photo-guaranteed-bounces-control")
+          .help(
+            "Number of continuations completed before Russian roulette begins")
+        }
+        .disabled(renderingMode == .photo)
+
         HStack {
           Text("Exposure")
           Slider(value: $exposure, in: 0.0...8.0, step: 0.1)
@@ -127,11 +173,11 @@ struct ContentView: View {
 
 private struct PerformanceOverlay: View {
   @ObservedObject var stats: PerformanceStats
+  let showsPhotoConvergence: Bool
 
   var body: some View {
     let value = stats.snapshot
-    Text(
-      String(
+    let tracingText = String(
         format:
           "FPS %5.1f   Frame %6.2f ms   GPU %6.2f ms\n"
           + "Hops/ray %6.3f   Max %2u   Capped %u\n"
@@ -145,7 +191,16 @@ private struct PerformanceOverlay: View {
         value.compoundHopsPerRay,
         value.portalTestsPerRay
       )
-    )
+    let convergenceText = showsPhotoConvergence
+    ? String(
+        format:
+          "\nDepth avg %5.2f   max %2u   RR %5.1f%%   Bound %5.2f%%",
+        value.averageScatteringDepth,
+        value.maximumScatteringDepth,
+        100 * value.rouletteTerminationFraction,
+        100 * value.depthBoundTerminationFraction)
+    : ""
+    Text(tracingText + convergenceText)
     .font(.system(size: 12, weight: .medium, design: .monospaced))
     .foregroundStyle(.white)
     .padding(8)

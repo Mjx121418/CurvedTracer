@@ -30,13 +30,37 @@ enum RenderingMode: Equatable {
     case photo
 }
 
+struct PhotoConvergenceSettings: Equatable {
+    static let maximumSupportedBounces: UInt32 = 64
+    static let maximumGuaranteedBounces: UInt32 = 16
+    static let `default` = PhotoConvergenceSettings(
+        maximumBounces: 64,
+        guaranteedBounces: 3)
+
+    let maximumBounces: UInt32
+    let guaranteedBounces: UInt32
+
+    init(maximumBounces: Int, guaranteedBounces: Int) {
+        let normalizedMaximum = min(
+            max(maximumBounces, 1),
+            Int(Self.maximumSupportedBounces))
+        let normalizedGuaranteed = min(
+            max(guaranteedBounces, 0),
+            min(normalizedMaximum, Int(Self.maximumGuaranteedBounces)))
+        self.maximumBounces = UInt32(normalizedMaximum)
+        self.guaranteedBounces = UInt32(normalizedGuaranteed)
+    }
+}
+
 struct PhotoModeState: Equatable {
     private(set) var renderingMode: RenderingMode = .realtime
     private(set) var sampleIndex: UInt32 = 0
+    private(set) var convergenceSettings: PhotoConvergenceSettings = .default
 
-    mutating func enter() {
+    mutating func enter(convergenceSettings: PhotoConvergenceSettings = .default) {
         renderingMode = .photo
         sampleIndex = 0
+        self.convergenceSettings = convergenceSettings
     }
 
     mutating func exit() {
@@ -109,6 +133,10 @@ struct PerformanceSnapshot {
     var portalTestsPerRay: Double = 0
     var maximumPortalHops: UInt32 = 0
     var hopLimitRays: UInt32 = 0
+    var averageScatteringDepth: Double = 0
+    var maximumScatteringDepth: UInt32 = 0
+    var rouletteTerminationFraction: Double = 0
+    var depthBoundTerminationFraction: Double = 0
 }
 
 final class PerformanceStats: ObservableObject {
@@ -121,6 +149,10 @@ final class PerformanceStats: ObservableObject {
     private var portalTestsPerRay = 0.0
     private var maximumPortalHops: UInt32 = 0
     private var hopLimitRays: UInt32 = 0
+    private var averageScatteringDepth = 0.0
+    private var maximumScatteringDepth: UInt32 = 0
+    private var rouletteTerminationFraction = 0.0
+    private var depthBoundTerminationFraction = 0.0
     private var lastFrameTime = 0.0
     private var lastPublishTime = 0.0
     private var hasTraceSample = false
@@ -145,12 +177,23 @@ final class PerformanceStats: ObservableObject {
             compoundHopsPerRay: compoundHopsPerRay,
             portalTestsPerRay: portalTestsPerRay,
             maximumPortalHops: maximumPortalHops,
-            hopLimitRays: hopLimitRays)
+            hopLimitRays: hopLimitRays,
+            averageScatteringDepth: averageScatteringDepth,
+            maximumScatteringDepth: maximumScatteringDepth,
+            rouletteTerminationFraction: rouletteTerminationFraction,
+            depthBoundTerminationFraction: depthBoundTerminationFraction)
     }
 
     func recordGPUTime(seconds: Double) {
         guard seconds > 0, seconds.isFinite else { return }
         gpuDuration = smooth(gpuDuration, seconds, alpha: 0.1)
+    }
+
+    func resetPhotoConvergence() {
+        averageScatteringDepth = 0
+        maximumScatteringDepth = 0
+        rouletteTerminationFraction = 0
+        depthBoundTerminationFraction = 0
     }
 
     func recordTrace(
@@ -159,7 +202,11 @@ final class PerformanceStats: ObservableObject {
         compoundHops: UInt32,
         maximumHops: UInt32,
         hopLimitRays: UInt32,
-        portalTests: UInt32
+        portalTests: UInt32,
+        totalScatteringDepth: UInt32,
+        maximumScatteringDepth: UInt32,
+        rouletteTerminations: UInt32,
+        depthBoundTerminations: UInt32
     ) {
         guard rayCount > 0 else { return }
         let rays = Double(rayCount)
@@ -170,7 +217,20 @@ final class PerformanceStats: ObservableObject {
             compoundHopsPerRay, Double(compoundHops) / rays, alpha: alpha)
         portalTestsPerRay = smooth(
             portalTestsPerRay, Double(portalTests) / rays, alpha: alpha)
+        averageScatteringDepth = smooth(
+            averageScatteringDepth,
+            Double(totalScatteringDepth) / rays,
+            alpha: alpha)
+        rouletteTerminationFraction = smooth(
+            rouletteTerminationFraction,
+            Double(rouletteTerminations) / rays,
+            alpha: alpha)
+        depthBoundTerminationFraction = smooth(
+            depthBoundTerminationFraction,
+            Double(depthBoundTerminations) / rays,
+            alpha: alpha)
         maximumPortalHops = maximumHops
+        self.maximumScatteringDepth = maximumScatteringDepth
         self.hopLimitRays = hopLimitRays
         hasTraceSample = true
     }

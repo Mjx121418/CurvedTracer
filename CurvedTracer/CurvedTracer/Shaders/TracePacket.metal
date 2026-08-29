@@ -102,6 +102,9 @@ struct TraceResult {
     uint compoundPortalHops;
     uint portalTests;
     bool hitHopLimit;
+    uint scatteringDepth;
+    bool rouletteTerminated;
+    bool hitDepthBound;
 };
 
 static bool makeCameraRay(

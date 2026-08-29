@@ -2,6 +2,22 @@ import GeometryCore
 import XCTest
 
 final class GeometryCoreTests: XCTestCase {
+  func testGenericGeodesicInterop() {
+    var geodesic = geo.Geodesic(
+      geo.vec4(0, 0, 0, 1),
+      geo.vec4(0.6, -0.3, 0.2, 0)
+    )
+    XCTAssertTrue(geo.canonicalizeGeodesic(&geodesic, 1))
+    let point = geo.geodesicPointAt(geodesic, 0.4, 1)
+    let tangent = geo.geodesicTangentAt(geodesic, 0.4, 1)
+    XCTAssertEqual(point.x * tangent.x + point.y * tangent.y +
+                   point.z * tangent.z + point.w * tangent.w,
+                   0, accuracy: 0.0001)
+    XCTAssertTrue(geo.advanceGeodesic(&geodesic, 0.4, 1))
+    XCTAssertEqual(geodesic.point.x, point.x, accuracy: 0.0001)
+    XCTAssertEqual(geodesic.point.w, point.w, accuracy: 0.0001)
+  }
+
   func testPacketLayoutAndNativePoints() {
     XCTAssertEqual(geo.geometryCoreName(), "Geometry Core v16")
     XCTAssertEqual(MemoryLayout<geo.Camera>.size, 96)
@@ -103,6 +119,26 @@ final class GeometryCoreTests: XCTestCase {
       0, geo.vec4(0.3, 0, 0, 1), geo.vec3(-0.2, 0, 0))
     XCTAssertEqual(entered.chartId, 1)
     XCTAssertEqual(atlas.cameraChartAt(0, geo.vec4(0.3, 0, 0, 1), 2.5), 0)
+    XCTAssertEqual(atlas.buildAtlas(0, 64, 1, 32), 0)
+  }
+
+  func testGeodesicBallPortalAuthoring() {
+    var atlas = geo.Atlas()
+    atlas.start(2)
+    XCTAssertEqual(atlas.seed(), 0)
+    var identity = [Float](repeating: 0, count: 16)
+    identity[0] = 1
+    identity[5] = 1
+    identity[10] = 1
+    identity[15] = 1
+    XCTAssertEqual(atlas.addChart(0, identity, true), 1)
+    XCTAssertEqual(
+      atlas.addGeodesicBallPortal(
+        0, 1, geo.vec4(0, 0, 0.1, 1), 0.3, identity, 0.01),
+      0
+    )
+    XCTAssertEqual(atlas.portalCount(), 2)
+    XCTAssertEqual(atlas.cameraChartAt(0, geo.vec4(0.5, 0, 0.1, 1), 2.5), 0)
     XCTAssertEqual(atlas.buildAtlas(0, 64, 1, 32), 0)
   }
 

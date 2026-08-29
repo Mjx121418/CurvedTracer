@@ -112,6 +112,22 @@ static PointLight flatLight(const Atlas &a, int index) {
       sizeof(light));
   return light;
 }
+static PointLight packetLight(const Atlas &a, int index) {
+  ScenePacketHeader h = header(a);
+  PointLight light{};
+  std::memcpy(
+      &light,
+      a.packet().data() + sizeof(ScenePacketHeader) +
+          h.counts.chartCount * sizeof(GPUChart) +
+          h.counts.portalCount * sizeof(GPUPortal) +
+          h.counts.objectCount * sizeof(Object) +
+          h.counts.quadricCount * sizeof(Quadric) +
+          h.counts.clipCount * sizeof(PrimitiveClip) +
+          h.counts.materialCount * sizeof(Material) +
+          index * sizeof(PointLight),
+      sizeof(light));
+  return light;
+}
 
 void test_atlas() {
   CHECK(GEO_CONTRACT_VERSION == 16);
@@ -440,6 +456,60 @@ void test_atlas() {
     CHECK_NEAR(a.intrinsicDistance(header(a).camera.position, expectedCamera),
                0, distanceTolerance);
   }
+  // A geodesic-ball portal is one closed face in every model. The exterior
+  // trigger is contracted and inward-facing; the interior trigger is expanded
+  // and outward-facing.
+  for (int model = GEO_MODEL_H3; model <= GEO_MODEL_R3; ++model) {
+    Atlas a;
+    a.start(model);
+    CHECK(a.seed() == 0);
+    float identityMatrix[16];
+    identity(identityMatrix);
+    CHECK(a.addChart(0, identityMatrix, true) == 1);
+    vec4 center = a.pointFromOriginTangent(vec3(0, 0, .1f));
+    CHECK(a.addGeodesicBallPortal(0, 1, center, .3f, identityMatrix,
+                                  .01f) == 0);
+    CHECK(a.portalCount() == 2);
+
+    CameraPlacement entry = a.resolveCameraPlacement(
+        0, a.pointFromOriginTangent(vec3(.5f, 0, .1f)),
+        vec3(-.3f, 0, 0));
+    CHECK(entry.chartId == 1);
+    CameraPlacement exit = a.resolveCameraPlacement(
+        1, a.pointFromOriginTangent(vec3(.1f, 0, .1f)),
+        vec3(.3f, 0, 0));
+    CHECK(exit.chartId == 0);
+
+    CHECK(a.cameraChartAt(0, a.pointFromOriginTangent(vec3(.5f, 0, .1f)),
+                          2.4f) == 0);
+    CHECK(a.buildAtlas(0, 64, 1, 32) == 0);
+    ScenePacketHeader ballHeader = header(a);
+    CHECK(ballHeader.counts.chartCount == 2);
+    CHECK(ballHeader.counts.portalCount == 2);
+    CHECK(ballHeader.counts.clipCount == 0);
+    GPUPortal exterior = atlasPortal(a, 0);
+    GPUPortal interior = atlasPortal(a, 1);
+    CHECK(exterior.neighborChart == 1);
+    CHECK(exterior.reversePortal == 1);
+    CHECK(interior.neighborChart == 0);
+    CHECK(interior.reversePortal == 0);
+    if (model == GEO_MODEL_R3) {
+      CHECK(exterior.equationKind == GEO_EQUATION_QUADRIC);
+      CHECK(interior.equationKind == GEO_EQUATION_QUADRIC);
+      CHECK(ballHeader.counts.quadricCount == 2);
+      CHECK(atlasQuadric(a, exterior.quadricIndex).coefficients.m[0] < 0);
+      CHECK(atlasQuadric(a, interior.quadricIndex).coefficients.m[0] > 0);
+    } else {
+      CHECK(exterior.equationKind == GEO_EQUATION_LINEAR);
+      CHECK(interior.equationKind == GEO_EQUATION_LINEAR);
+      CHECK(ballHeader.counts.quadricCount == 0);
+    }
+
+    int countBeforeFailure = a.portalCount();
+    CHECK(a.addGeodesicBallPortal(0, 1, center, .005f, identityMatrix,
+                                  .01f) < 0);
+    CHECK(a.portalCount() == countBeforeFailure);
+  }
   // A capped equidistant tube is a closed three-face portal volume. The side
   // is quadric, the caps are linear, and their clips reject the infinite
   // extensions of all three supporting surfaces.
@@ -692,6 +762,37 @@ void test_atlas() {
     float packetTolerance = model == GEO_MODEL_H3 ? 6e-4f : 2e-5f;
     CHECK_NEAR(a.intrinsicDistance(header(a).camera.position, remote), 0,
                packetTolerance);
+  }
+  // Flattening may recenter the packet, but it preserves intrinsic geometry.
+  // Atlas packets retain the same authored off-origin camera and light.
+  for (int model = GEO_MODEL_H3; model <= GEO_MODEL_R3; ++model) {
+    Atlas a;
+    a.start(model);
+    CHECK(a.seed() == 0);
+    vec4 camera = a.pointFromOriginTangent(vec3(.35f, -.2f, .1f));
+    vec4 light = a.pointFromOriginTangent(vec3(.7f, .1f, -.2f));
+    CHECK(a.addLight(0, light, vec3(1, 1, 1), 1) == 0);
+    CHECK(a.cameraChartAt(0, camera, 2) == 0);
+
+    CHECK(a.build(0, 64) == 0);
+    ScenePacketHeader flatHeader = header(a);
+    PointLight flattenedLight = packetLight(a, 0);
+    CHECK_NEAR(a.intrinsicDistance(flatHeader.camera.position,
+                                   vec4(0, 0, 0, 1)),
+               0, 2e-5);
+    float flattenedDistance = a.intrinsicDistance(flatHeader.camera.position,
+                                                   flattenedLight.position);
+
+    CHECK(a.buildAtlas(0, 64, 1, 32) == 0);
+    ScenePacketHeader atlasHeader = header(a);
+    PointLight atlasLight = packetLight(a, 0);
+    float atlasDistance =
+        a.intrinsicDistance(atlasHeader.camera.position, atlasLight.position);
+    float tolerance = model == GEO_MODEL_H3 ? 8e-4f : 3e-5f;
+    CHECK_NEAR(flattenedDistance, atlasDistance, tolerance);
+    CHECK_NEAR(a.intrinsicDistance(atlasHeader.camera.position, camera), 0,
+               tolerance);
+    CHECK_NEAR(a.intrinsicDistance(atlasLight.position, light), 0, tolerance);
   }
   // Ordinary overlap edges do not change camera coordinates; only explicit
   // portals do.

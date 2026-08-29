@@ -1,5 +1,6 @@
 #pragma once
 #include "GeometryCore/AtlasScene.h"
+#include "GeometryCore/Geodesic.h"
 #include "GeometryCore/Isometry.h"
 #include "GeometryCore/Scene.h"
 #include <cstddef>
@@ -127,6 +128,10 @@ public:
       int chartA, const vec3 &outwardA, float faceDistanceA, int chartB,
       const vec3 &outwardB, float faceDistanceB, const float pairingAB[16],
       float triggerCollar);
+  int addGeodesicBallPortal(int exteriorChart, int interiorChart,
+                            const vec4 &interiorCenter, float radius,
+                            const float exteriorToInterior[16],
+                            float triggerCollar);
   int addCappedTubePortal(int exteriorChart, int interiorChart,
                           const vec3 &axis, float radius,
                           float lowerAxialDistance,
@@ -209,13 +214,12 @@ private:
   bool insideClip(const ChartClip &clip, const vec4 &point) const;
   bool insidePortalClips(const ChartPortal &portal,
                          const vec4 &point) const;
-  float portalRoot(const ChartPortal &portal, const vec4 &point,
-                   const vec4 &direction, float maximum) const;
-  bool moveThroughPortals(int &chart, vec4 &point, vec4 &direction,
-                          float distance, vec4 *right, vec4 *up,
-                          vec4 *forward) const;
+  float portalRoot(const ChartPortal &portal, const Geodesic &geodesic,
+                   float maximum) const;
+  bool moveThroughPortals(int &chart, Geodesic &geodesic, float distance,
+                          vec4 *right, vec4 *up, vec4 *forward) const;
   Isometry movePointToOrigin(const vec4 &p) const;
-  vec4 parallelTransportAlong(const vec4 &point, const vec4 &displacement,
+  vec4 parallelTransportAlong(const Geodesic &geodesic, float distance,
                               const vec4 &tangent) const;
   void reset();
   void setError(int e) { lastError_ = e; }

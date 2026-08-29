@@ -35,6 +35,7 @@ extern std::vector<std::string> g_failmsgs;
 // test suites (each translation unit defines its own)
 void test_math();
 void test_stereo();
+void test_geodesic();
 void test_isometry();
 void test_intersect();
 void test_atlas();

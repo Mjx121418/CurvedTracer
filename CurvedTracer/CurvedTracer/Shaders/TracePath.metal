@@ -21,15 +21,12 @@ static TraceResult traceDeterministicSample(
 ) {
     TraceResult result{};
 
-    RayState cameraRay;
-    if (!makeCameraRay(h, samplePosition, renderSize, cameraRay)) {
+    RayState ray;
+    if (!makeCameraRay(h, samplePosition, renderSize, ray)) {
         result.errorBits = 4;
         result.radiance = float3(1, 0, 1);
         return result;
     }
-    float4 p = cameraRay.point;
-    float4 v = cameraRay.tangent;
-    int chartId = cameraRay.chartId;
     float remaining = h->camera.maxTraceDistance, path = 0;
     float3 throughput = 1, radiance = 0;
     int hops = 0;
@@ -47,8 +44,9 @@ static TraceResult traceDeterministicSample(
     ? exp(-density * h->camera.maxTraceDistance)
     : 0.0f;
     for (int bounce = 0; bounce <= maxBounces;) {
-        Event e = nearestEvent(p, v, chartId, remaining, SELF_EPS, charts, portals,
-                               objects, quadrics, clips, portalTests, error);
+        Event e = nearestEvent(ray.point, ray.tangent, ray.chartId, remaining,
+                               SELF_EPS, charts, portals, objects, quadrics,
+                               clips, portalTests, error);
         if (!e.valid) {
             // The remaining transmitted light terminates in the homogeneous
             // fog color. Together with the segment contributions below, this
@@ -69,7 +67,7 @@ static TraceResult traceDeterministicSample(
         if (pathVisibility <= EPS)
             break;
         if (e.portal) {
-            if (!advancePortal(e, p, v, chartId, hops, h->controls.maxChartHops,
+            if (!advancePortal(e, ray, hops, h->controls.maxChartHops,
                                charts, portals, quadrics, clips, error,
                                compoundPortalHops, portalTests, hitHopLimit))
                 break;
@@ -91,7 +89,7 @@ static TraceResult traceDeterministicSample(
             bsdfModel == BSDF_MODEL_GGX_CONDUCTOR ||
             bsdfModel == BSDF_MODEL_GGX_OPAQUE_DIELECTRIC) {
             radiance +=
-            throughput * shade(e, m, chartId, -e.tangent, charts, portals,
+            throughput * shade(e, m, ray.chartId, -e.tangent, charts, portals,
                                objects, quadrics, clips, lights,
                                h->controls.ambient, h->controls.falloffK,
                                clamp(h->controls.maxLightHops, 0, 4),
@@ -103,7 +101,7 @@ static TraceResult traceDeterministicSample(
         }
         if (bsdfModel == BSDF_MODEL_GGX_DIELECTRIC) {
             radiance +=
-            throughput * shade(e, m, chartId, -e.tangent, charts, portals,
+            throughput * shade(e, m, ray.chartId, -e.tangent, charts, portals,
                                objects, quadrics, clips, lights,
                                h->controls.ambient, h->controls.falloffK,
                                clamp(h->controls.maxLightHops, 0, 4),
@@ -140,9 +138,9 @@ static TraceResult traceDeterministicSample(
         (bsdfModel == BSDF_MODEL_DELTA_DIELECTRIC ||
          bsdfModel == BSDF_MODEL_GGX_DIELECTRIC) ? bsdf.pdf : 1.0f;
         throughput *= bsdf.weight * deterministicLobeWeight;
-        v = bsdf.direction;
-        p = e.point;
-        if (!canonicalizeRayState(p, v)) {
+        ray.point = e.point;
+        ray.tangent = bsdf.direction;
+        if (!canonicalizeRayState(ray)) {
             error |= 4u;
             break;
         }

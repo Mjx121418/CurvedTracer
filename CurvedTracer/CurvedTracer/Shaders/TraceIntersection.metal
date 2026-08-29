@@ -191,7 +191,7 @@ static float objectRoot(ObjectGPU o, float4 p, float4 v, float minimum,
 
     for (int candidate = 0; candidate < count; ++candidate) {
         float distance = candidate == 0 ? first : second;
-        float4 point = rayPoint(p, v, distance);
+        float4 point = geodesicPoint(p, v, distance);
         bool accepted = true;
         for (int local = 0; local < o.clipCount; ++local)
             accepted = accepted &&
@@ -257,12 +257,12 @@ static float portalRoot(PortalGPU portal, float4 p, float4 v, float minimum,
 
     for (int candidate = 0; candidate < count; ++candidate) {
         float distance = candidate == 0 ? first : second;
-        float4 point = rayPoint(p, v, distance);
+        float4 point = geodesicPoint(p, v, distance);
         if (!insidePortalClips(portal, point, quadrics, clips))
             continue;
         float4 normal = portalNormal(portal, point, quadrics);
         if (all(isfinite(normal)) && mdot(normal, normal) > 0.5f) {
-            if (mdot(normal, rayTangent(p, v, distance)) > EPS)
+            if (mdot(normal, geodesicTangent(p, v, distance)) > EPS)
                 return distance;
             continue;
         }
@@ -315,8 +315,17 @@ static Event nearestEvent(float4 p, float4 v, int chartId, float maximum,
         }
     }
     if (e.valid) {
-        e.point = rayPoint(p, v, e.distance);
-        e.tangent = tangentNormalize(rayTangent(p, v, e.distance));
+        RayState advanced;
+        advanced.point = p;
+        advanced.tangent = v;
+        advanced.chartId = chartId;
+        if (!advanceRayState(advanced, e.distance)) {
+            errorBits |= 4u;
+            e.valid = false;
+            return e;
+        }
+        e.point = advanced.point;
+        e.tangent = advanced.tangent;
         e.normal = e.portal ? portalNormal(portals[e.index], e.point, quadrics)
         : objectNormal(objects[e.index], e.point, quadrics);
     }
@@ -342,8 +351,7 @@ static float normalizedPortalViolation(PortalGPU portal, float4 point,
     return violation / (2 * gradientLength);
 }
 
-static bool applyPortalPairing(int portalIndex, thread float4 &point,
-                        thread float4 &tangent, thread int &chartId,
+static bool applyPortalPairing(int portalIndex, thread RayState &ray,
                         thread int &portalHops, int maxPortalHops,
                         device const PortalGPU *portals,
                         thread uint &errorBits, thread bool &hitHopLimit) {
@@ -354,20 +362,20 @@ static bool applyPortalPairing(int portalIndex, thread float4 &point,
     }
 
     PortalGPU portal = portals[portalIndex];
-    point = portal.toNeighbor * point;
-    tangent = portal.toNeighbor * tangent;
-    chartId = portal.neighborChart;
+    ray.point = portal.toNeighbor * ray.point;
+    ray.tangent = portal.toNeighbor * ray.tangent;
+    ray.chartId = portal.neighborChart;
     ++portalHops;
 
-    if (!canonicalizeRayState(point, tangent)) {
+    if (!canonicalizeRayState(ray)) {
         errorBits |= 4u;
         return false;
     }
     return true;
 }
 
-static bool advancePortal(Event event, thread float4 &point, thread float4 &tangent,
-                   thread int &chartId, thread int &portalHops,
+static bool advancePortal(Event event, thread RayState &ray,
+                   thread int &portalHops,
                    int maxPortalHops, device const ChartGPU *charts,
                    device const PortalGPU *portals,
                    device const QuadricGPU *quadrics,
@@ -375,9 +383,9 @@ static bool advancePortal(Event event, thread float4 &point, thread float4 &tang
                    thread uint &errorBits,
                    thread uint &compoundPortalHops,
                    thread uint &portalTests, thread bool &hitHopLimit) {
-    point = event.point;
-    tangent = event.tangent;
-    if (!applyPortalPairing(event.index, point, tangent, chartId, portalHops,
+    ray.point = event.point;
+    ray.tangent = event.tangent;
+    if (!applyPortalPairing(event.index, ray, portalHops,
                             maxPortalHops, portals, errorBits, hitHopLimit))
         return false;
 
@@ -386,18 +394,18 @@ static bool advancePortal(Event event, thread float4 &point, thread float4 &tang
     // or more adjacent faces. Reduce those violations immediately without
     // consuming geometric path distance.
     while (true) {
-        ChartGPU chart = charts[chartId];
+        ChartGPU chart = charts[ray.chartId];
         int selectedPortal = -1;
         float strongestViolation = 4.0f * EPS;
         portalTests += uint(chart.portalCount);
 
         for (int local = 0; local < chart.portalCount; ++local) {
             int candidateIndex = chart.firstPortal + local;
-            if (!insidePortalClips(portals[candidateIndex], point,
+            if (!insidePortalClips(portals[candidateIndex], ray.point,
                                    quadrics, clips))
                 continue;
             float violation =
-            normalizedPortalViolation(portals[candidateIndex], point,
+            normalizedPortalViolation(portals[candidateIndex], ray.point,
                                       quadrics);
             if (violation > strongestViolation) {
                 selectedPortal = candidateIndex;
@@ -407,7 +415,7 @@ static bool advancePortal(Event event, thread float4 &point, thread float4 &tang
 
         if (selectedPortal < 0)
             return true;
-        if (!applyPortalPairing(selectedPortal, point, tangent, chartId, portalHops,
+        if (!applyPortalPairing(selectedPortal, ray, portalHops,
                                 maxPortalHops, portals, errorBits, hitHopLimit))
             return false;
         ++compoundPortalHops;
@@ -429,7 +437,7 @@ static SurfaceTraceResult traceToSurface(
     int hops = 0;
     result.chartId = ray.chartId;
 
-    if (!canonicalizeRayState(ray.point, ray.tangent)) {
+    if (!canonicalizeRayState(ray)) {
         result.errorBits = 4u;
         return result;
     }
@@ -451,7 +459,7 @@ static SurfaceTraceResult traceToSurface(
         }
 
         if (!advancePortal(
-                event, ray.point, ray.tangent, ray.chartId, hops,
+                event, ray, hops,
                 maxPortalHops, charts, portals, quadrics, clips,
                 result.errorBits,
                 result.compoundPortalHops, result.portalTests,

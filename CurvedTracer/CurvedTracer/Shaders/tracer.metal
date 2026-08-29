@@ -149,7 +149,7 @@ static bool photoSampleSphericalEmitter(
     radial(radius, C, S);
     samplePoint = C * center + S * radialDirection;
     sampleNormal = -kappa() * S * center + C * radialDirection;
-    return canonicalizeRayState(samplePoint, sampleNormal);
+    return canonicalizeGeodesic(samplePoint, sampleNormal);
 }
 
 static float photoSphericalEmitterRoot(
@@ -355,7 +355,7 @@ static float3 photoDirectLighting(
         depth = child;
     }
     if (hasBSDFSample && nearestBSDFDistance < INF) {
-        float4 emitterPoint = rayPoint(
+        float4 emitterPoint = geodesicPoint(
             hit.point, bsdfSample.direction, nearestBSDFDistance);
         float4 emitterNormal = directionTo(
             nearestBSDFCenter, emitterPoint, nearestBSDFLight.radius);
@@ -448,8 +448,7 @@ static TraceResult tracePathSample(
         canonicalHit.point = hit.point;
         canonicalHit.tangent = hit.tangent;
         canonicalHit.chartId = surface.chartId;
-        if (!canonicalizeRayState(
-                canonicalHit.point, canonicalHit.tangent)) {
+        if (!canonicalizeRayState(canonicalHit)) {
             result.errorBits |= DIAGNOSTIC_INVALID_RAY_STATE;
             break;
         }
@@ -514,7 +513,7 @@ static TraceResult tracePathSample(
 
         if (max(max(throughput.r, throughput.g), throughput.b) <= EPS)
             break;
-        if (!canonicalizeRayState(ray.point, ray.tangent)) {
+        if (!canonicalizeRayState(ray)) {
             result.errorBits |= DIAGNOSTIC_INVALID_RAY_STATE;
             break;
         }

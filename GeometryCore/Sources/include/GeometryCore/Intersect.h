@@ -5,9 +5,7 @@
 
 namespace geo {
 
-// Ray: p(t) = rayOrigin + t*dir.  The ray origin is almost always the camera
-// chart origin (0,0,0) per CONTRACT.md §7.1, but keeping the origin explicit
-// makes the function harmless to reuse.  Returns the nearest t > tMin, or -1.
+// Ray: p(t) = rayOrigin + t*dir. Returns the nearest t > tMin, or -1.
 inline float raySphere(const vec3& rayOrigin, const vec3& dir,
                        const vec3& center, float radius, float tMin) {
     vec3 oc = rayOrigin - center;
@@ -25,13 +23,14 @@ inline float raySphere(const vec3& rayOrigin, const vec3& dir,
     return -1.0f;
 }
 
-// Ray from the chart origin: p(t) = t*dir.  Plane: dot(normal, p) = offset.
+// Ray: p(t) = rayOrigin + t*dir. Plane: dot(normal, p) = offset.
 // Returns t, or -1 if the ray is parallel (no unique hit).  The caller applies
 // the CONTRACT.md t > eps test.
-inline float rayPlane(const vec3& dir, const vec3& normal, float offset) {
+inline float rayPlane(const vec3& rayOrigin, const vec3& dir,
+                      const vec3& normal, float offset) {
     float denom = dot(normal, dir);
     if (mhAbs(denom) < 1e-20f) return -1.0f;
-    return offset / denom;
+    return (offset - dot(normal, rayOrigin)) / denom;
 }
 
 // Sphere inversion across a mirror sphere (center mirrorCenter, radius mirrorRadius).

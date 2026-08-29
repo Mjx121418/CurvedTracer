@@ -7,6 +7,7 @@ std::vector<std::string> g_failmsgs;
 int main() {
     test_math();
     test_stereo();
+    test_geodesic();
     test_isometry();
     test_intersect();
     test_atlas();

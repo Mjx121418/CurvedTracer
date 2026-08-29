@@ -17,6 +17,17 @@ mat4 scaled(const mat4 &m, float scale) {
   return out;
 }
 
+mat4 euclideanSphereQuadric(const vec4 &center, float radius) {
+  mat4 q;
+  q.m[0] = q.m[5] = q.m[10] = 1.0f;
+  q.m[3] = q.m[12] = -center.x;
+  q.m[7] = q.m[13] = -center.y;
+  q.m[11] = q.m[14] = -center.z;
+  q.m[15] = center.x * center.x + center.y * center.y +
+            center.z * center.z - radius * radius;
+  return normalizedMatrix(q);
+}
+
 mat4 tubeQuadric(const vec3 &axis, float radius, int model) {
   mat4 q;
   float transverse = 1.0f;
@@ -81,33 +92,6 @@ void insertCandidate(float candidate, float maximum, float &first,
     second = candidate;
     count = 2;
   }
-}
-
-vec4 rayPointAt(const vec4 &point, const vec4 &direction, float distance,
-                int model) {
-  if (model == GEO_MODEL_S3)
-    return point * std::cos(distance) + direction * std::sin(distance);
-  if (model == GEO_MODEL_H3)
-    return point * std::cosh(distance) + direction * std::sinh(distance);
-  return vec4(point.xyz() + direction.xyz() * distance, 1);
-}
-
-vec4 rayTangentAt(const vec4 &point, const vec4 &direction, float distance,
-                  int model) {
-  if (model == GEO_MODEL_S3)
-    return point * -std::sin(distance) + direction * std::cos(distance);
-  if (model == GEO_MODEL_H3)
-    return point * std::sinh(distance) + direction * std::cosh(distance);
-  return direction;
-}
-
-float tangentLength(const vec4 &tangent, int model) {
-  return std::sqrt(std::max(metricDot(tangent, tangent, model), 0.0f));
-}
-
-vec4 canonicalTangent(const vec4 &tangent, int model) {
-  float magnitude = tangentLength(tangent, model);
-  return magnitude > 1e-8f ? tangent / magnitude : vec4();
 }
 
 float quadricValue(const mat4 &quadric, const vec4 &a, const vec4 &b) {
@@ -189,6 +173,75 @@ int Atlas::addPortalPairWithCollar(int ca, const vec3 &da, float fa, int cb,
   charts_[cb].portalIds.push_back(ib);
   setError(0);
   return ia;
+}
+
+int Atlas::addGeodesicBallPortal(int exteriorChart, int interiorChart,
+                                 const vec4 &rawCenter, float radius,
+                                 const float raw[16], float collar) {
+  packet_.clear();
+  vec4 center;
+  float contractedRadius = radius - collar;
+  float expandedRadius = radius + collar;
+  if (!validChartId(exteriorChart) || !validChartId(interiorChart) || !raw ||
+      !canonicalizePoint(rawCenter, center) || !finite(radius) ||
+      !finite(collar) || collar < 0 || contractedRadius <= 0 ||
+      !validGeodesicRadius(contractedRadius) ||
+      !validGeodesicRadius(expandedRadius) ||
+      portals_.size() + 2 > GEO_MAX_PORTALS) {
+    setError(7);
+    return -1;
+  }
+
+  Isometry exteriorToInterior = isometryFrom(raw);
+  if (!exteriorToInterior.validate()) {
+    setError(7);
+    return -1;
+  }
+  Isometry interiorToExterior = exteriorToInterior.inverse();
+
+  auto localSphere = [&](float sphereRadius, bool outward) {
+    ChartPortal portal;
+    if (modelKind_ == GEO_MODEL_R3) {
+      portal.equationKind = GEO_EQUATION_QUADRIC;
+      portal.quadric = euclideanSphereQuadric(center, sphereRadius);
+      if (!outward)
+        portal.quadric = scaled(portal.quadric, -1.0f);
+    } else {
+      float level = modelKind_ == GEO_MODEL_S3
+                        ? std::cos(sphereRadius)
+                        : -std::cosh(sphereRadius);
+      portal.normal = outward ? -center : center;
+      portal.offset = outward ? -level : level;
+    }
+    return portal;
+  };
+
+  int exteriorId = int(portals_.size());
+  int interiorId = exteriorId + 1;
+  ChartPortal exterior = localSphere(contractedRadius, false);
+  ChartPortal interior = localSphere(expandedRadius, true);
+  if (exterior.equationKind == GEO_EQUATION_QUADRIC) {
+    exterior.quadric =
+        transformQuadric(interiorToExterior, exterior.quadric);
+  } else {
+    exterior.normal = transformPlane(interiorToExterior, exterior.normal,
+                                     exterior.offset, modelKind_);
+  }
+  exterior.chartId = exteriorChart;
+  exterior.neighborId = interiorChart;
+  exterior.reversePortal = interiorId;
+  exterior.toNeighbor = exteriorToInterior;
+  interior.chartId = interiorChart;
+  interior.neighborId = exteriorChart;
+  interior.reversePortal = exteriorId;
+  interior.toNeighbor = interiorToExterior;
+
+  portals_.push_back(exterior);
+  portals_.push_back(interior);
+  charts_[exteriorChart].portalIds.push_back(exteriorId);
+  charts_[interiorChart].portalIds.push_back(interiorId);
+  setError(0);
+  return exteriorId;
 }
 
 int Atlas::addCappedTubePortal(int exteriorChart, int interiorChart,
@@ -450,23 +503,18 @@ Isometry Atlas::movePointToOrigin(const vec4 &p) const {
   return out;
 }
 
-vec4 Atlas::parallelTransportAlong(const vec4 &point, const vec4 &displacement,
+vec4 Atlas::parallelTransportAlong(const Geodesic &geodesic, float distance,
                                    const vec4 &tangent) const {
   if (modelKind_ == GEO_MODEL_R3)
     return tangent;
-
-  float distance = std::sqrt(
-      std::max(metricDot(displacement, displacement, modelKind_), 0.0f));
   if (distance < 1e-8f)
     return tangent;
 
-  vec4 direction = displacement / distance;
   vec4 transportedDirection =
-      modelKind_ == GEO_MODEL_S3
-          ? point * -std::sin(distance) + direction * std::cos(distance)
-          : point * std::sinh(distance) + direction * std::cosh(distance);
-  float component = metricDot(tangent, direction, modelKind_);
-  return tangent + (transportedDirection - direction) * component;
+      geodesicTangentAt(geodesic, distance, modelKind_);
+  float component = metricDot(tangent, geodesic.tangent, modelKind_);
+  return tangent +
+         (transportedDirection - geodesic.tangent) * component;
 }
 
 bool Atlas::insideClip(const ChartClip &clip, const vec4 &point) const {
@@ -497,8 +545,10 @@ bool Atlas::insidePortalClips(const ChartPortal &portal,
   return true;
 }
 
-float Atlas::portalRoot(const ChartPortal &portal, const vec4 &point,
-                        const vec4 &direction, float maximum) const {
+float Atlas::portalRoot(const ChartPortal &portal,
+                        const Geodesic &geodesic, float maximum) const {
+  const vec4 &point = geodesic.point;
+  const vec4 &direction = geodesic.tangent;
   float first = INFINITY, second = INFINITY;
   int count = 0;
   if (portal.equationKind == GEO_EQUATION_LINEAR) {
@@ -568,7 +618,7 @@ float Atlas::portalRoot(const ChartPortal &portal, const vec4 &point,
 
   for (int candidate = 0; candidate < count; ++candidate) {
     float distance = candidate == 0 ? first : second;
-    vec4 hit = rayPointAt(point, direction, distance, modelKind_);
+    vec4 hit = geodesicPointAt(geodesic, distance, modelKind_);
     if (!insidePortalClips(portal, hit))
       continue;
     vec4 normal;
@@ -590,22 +640,24 @@ float Atlas::portalRoot(const ChartPortal &portal, const vec4 &point,
                               (kappa * metricDot(normal, hit, modelKind_));
       }
     }
-    vec4 tangent = rayTangentAt(point, direction, distance, modelKind_);
+    vec4 tangent = geodesicTangentAt(geodesic, distance, modelKind_);
     if (metricDot(normal, tangent, modelKind_) > 1e-6f)
       return distance;
   }
   return INFINITY;
 }
 
-bool Atlas::moveThroughPortals(int &chart, vec4 &point, vec4 &direction,
+bool Atlas::moveThroughPortals(int &chart, Geodesic &geodesic,
                                float distance, vec4 *right, vec4 *up,
                                vec4 *forward) const {
+  if (!canonicalizeGeodesic(geodesic, modelKind_))
+    return false;
   float remaining = distance;
   for (int hop = 0; hop < 128; ++hop) {
     int selected = -1;
     float nearest = remaining + 1;
     for (int id : charts_[chart].portalIds) {
-      float root = portalRoot(portals_[id], point, direction, remaining);
+      float root = portalRoot(portals_[id], geodesic, remaining);
       if (root < nearest) {
         nearest = root;
         selected = id;
@@ -614,26 +666,24 @@ bool Atlas::moveThroughPortals(int &chart, vec4 &point, vec4 &direction,
 
     float advance = selected >= 0 ? nearest : remaining;
     if (advance > 0) {
-      vec4 displacement = direction * advance;
       if (right)
-        *right = parallelTransportAlong(point, displacement, *right);
+        *right = parallelTransportAlong(geodesic, advance, *right);
       if (up)
-        *up = parallelTransportAlong(point, displacement, *up);
+        *up = parallelTransportAlong(geodesic, advance, *up);
       if (forward)
-        *forward = parallelTransportAlong(point, displacement, *forward);
-      vec4 nextDirection =
-          rayTangentAt(point, direction, advance, modelKind_);
-      point = rayPointAt(point, direction, advance, modelKind_);
-      direction = canonicalTangent(nextDirection, modelKind_);
+        *forward = parallelTransportAlong(geodesic, advance, *forward);
+      if (!advanceGeodesic(geodesic, advance, modelKind_))
+        return false;
       remaining = std::max(remaining - advance, 0.0f);
     }
     if (selected < 0)
       return true;
 
     const ChartPortal &portal = portals_[selected];
-    point = portal.toNeighbor.applyPoint(point);
-    direction = canonicalTangent(portal.toNeighbor.applyTangent(direction),
-                                 modelKind_);
+    geodesic.point = portal.toNeighbor.applyPoint(geodesic.point);
+    geodesic.tangent = portal.toNeighbor.applyTangent(geodesic.tangent);
+    if (!canonicalizeGeodesic(geodesic, modelKind_))
+      return false;
     if (right)
       *right = portal.toNeighbor.applyTangent(*right);
     if (up)
@@ -654,15 +704,16 @@ CameraPlacement Atlas::resolveCameraPlacement(int chart, const vec4 &start,
     return result;
   Isometry recenter = movePointToOrigin(point);
   vec4 tangent = recenter.inverse().applyTangent(vec4(move, 0));
-  float distance = tangentLength(tangent, modelKind_);
-  vec4 direction = distance > 1e-8f ? tangent / distance : vec4();
+  float distance = geodesicTangentLength(tangent, modelKind_);
+  Geodesic geodesic(point,
+                    distance > 1e-8f ? tangent / distance : vec4());
   int current = chart;
   if (distance > 1e-8f &&
-      !moveThroughPortals(current, point, direction, distance, nullptr,
-                          nullptr, nullptr))
+      !moveThroughPortals(current, geodesic, distance, nullptr, nullptr,
+                          nullptr))
     return result;
   result.chartId = current;
-  result.localPosition = point;
+  result.localPosition = distance > 1e-8f ? geodesic.point : point;
   return result;
 }
 
@@ -692,14 +743,17 @@ int Atlas::cameraMove(const vec3 &movement) {
   vec4 right = oldCenter.inverse().applyTangent(vec4(cameraRight_, 0));
   vec4 up = oldCenter.inverse().applyTangent(vec4(cameraUp_, 0));
   vec4 fwd = oldCenter.inverse().applyTangent(vec4(cameraFwd_, 0));
-  float distance = tangentLength(ambientMove, modelKind_);
-  vec4 direction = distance > 1e-8f ? ambientMove / distance : vec4();
+  float distance = geodesicTangentLength(ambientMove, modelKind_);
+  Geodesic geodesic(point,
+                    distance > 1e-8f ? ambientMove / distance : vec4());
   if (distance > 1e-8f &&
-      !moveThroughPortals(current, point, direction, distance, &right, &up,
+      !moveThroughPortals(current, geodesic, distance, &right, &up,
                           &fwd)) {
     setError(4);
     return -1;
   }
+  if (distance > 1e-8f)
+    point = geodesic.point;
   Isometry centered = movePointToOrigin(point);
   cameraRight_ = normalize(centered.applyTangent(right).xyz());
   cameraFwd_ = normalize(centered.applyTangent(fwd).xyz());

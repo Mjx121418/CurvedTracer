@@ -34,12 +34,12 @@ static void radial(float d, thread float &C, thread float &S) {
         S = d;
     }
 }
-static float4 rayPoint(float4 p, float4 v, float d) {
+static float4 geodesicPoint(float4 p, float4 v, float d) {
     float C, S;
     radial(d, C, S);
     return C * p + S * v;
 }
-static float4 rayTangent(float4 p, float4 v, float d) {
+static float4 geodesicTangent(float4 p, float4 v, float d) {
     if (SPACE_FORM == MODEL_S3)
         return -sin(d) * p + cos(d) * v;
     if (SPACE_FORM == MODEL_H3)
@@ -51,7 +51,8 @@ static float4 tangentNormalize(float4 v) {
     return q > EPS * EPS ? v * rsqrt(q) : float4(0);
 }
 
-static bool canonicalizeRayState(thread float4 &point, thread float4 &tangent) {
+static bool canonicalizeGeodesic(thread float4 &point,
+                                 thread float4 &tangent) {
     if (SPACE_FORM == MODEL_R3) {
         point.w = 1.0f;
         tangent = float4(tangent.xyz, 0.0f);
@@ -69,6 +70,26 @@ static bool canonicalizeRayState(thread float4 &point, thread float4 &tangent) {
     tangent = tangentNormalize(tangent);
     return all(isfinite(point)) && all(isfinite(tangent)) &&
     mdot(tangent, tangent) > 0.5f;
+}
+
+static float4 geodesicPoint(RayState ray, float distance) {
+    return geodesicPoint(ray.point, ray.tangent, distance);
+}
+
+static float4 geodesicTangent(RayState ray, float distance) {
+    return geodesicTangent(ray.point, ray.tangent, distance);
+}
+
+static bool canonicalizeRayState(thread RayState &ray) {
+    return canonicalizeGeodesic(ray.point, ray.tangent);
+}
+
+static bool advanceRayState(thread RayState &ray, float distance) {
+    float4 nextPoint = geodesicPoint(ray, distance);
+    float4 nextTangent = geodesicTangent(ray, distance);
+    ray.point = nextPoint;
+    ray.tangent = nextTangent;
+    return canonicalizeRayState(ray);
 }
 
 static float4 bsdfAmbientAxis(int index) {

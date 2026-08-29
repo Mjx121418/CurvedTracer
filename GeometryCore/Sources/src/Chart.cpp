@@ -161,11 +161,8 @@ vec4 Atlas::pointFromOriginTangent(const vec3 &t) const {
   float r = length(t);
   if (r < 1e-8f)
     return vec4(0, 0, 0, 1);
-  if (modelKind_ == GEO_MODEL_S3)
-    return vec4(t * (std::sin(r) / r), std::cos(r));
-  if (modelKind_ == GEO_MODEL_H3)
-    return vec4(t * (std::sinh(r) / r), std::cosh(r));
-  return vec4(t, 1);
+  Geodesic geodesic(vec4(0, 0, 0, 1), vec4(t / r, 0));
+  return geodesicPointAt(geodesic, r, modelKind_);
 }
 
 bool Atlas::canonicalizePoint(const vec4 &in, vec4 &out) const {

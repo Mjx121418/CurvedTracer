@@ -34,6 +34,28 @@ values to remain finite; R³ requires positive finite values. Signed plane and
 portal-trigger distances are validated independently from object radii and
 camera view distance.
 
+## Geodesics and rays
+
+An oriented geodesic is represented by a canonical ambient point `P` and a
+unit tangent `V` at that point. For S³ and H³, `metricDot(P,V) = 0`; for R³,
+`P.w = 1` and `V.w = 0`. Intrinsic distance is the ray parameter:
+
+| model | point after distance `d` | tangent after distance `d` |
+|---|---|---|
+| S³ | `cos(d) P + sin(d) V` | `-sin(d) P + cos(d) V` |
+| H³ | `cosh(d) P + sinh(d) V` | `sinh(d) P + cosh(d) V` |
+| R³ | `P + d V` | `V` |
+
+Camera, continuation, visibility, and portal rays all use this point–tangent
+representation. Linear and quadric intersections are solved analytically from
+the current `P` and `V`; tracing does not require the ray to start at a chart
+origin. Portal transitions apply the directed isometry to both fields and then
+restore their model invariants.
+
+`build()` may transform a flattened scene so its packet camera lies at the
+model origin. This is only a coordinate normalization and is not a ray-model
+precondition. `buildAtlas()` retains the authored camera point.
+
 ## Isometries
 
 `Isometry` stores a column-major homogeneous `mat4` and a `ModelKind`:
@@ -71,6 +93,8 @@ addSphericalAreaLight(chart, vec4 center, intrinsicRadius,
 cameraChartAt(chart, vec4 position, float viewDistance)
 addPortalPair(chartA, outwardA, distanceA,
               chartB, outwardB, distanceB, pairingAB)
+addGeodesicBallPortal(exteriorChart, interiorChart, interiorCenter,
+                      radius, exteriorToInterior, triggerCollar)
 addCappedTubePortal(exteriorChart, interiorChart, axis, radius,
                     lowerAxialDistance, upperAxialDistance,
                     exteriorToInterior, triggerCollar)
@@ -137,6 +161,14 @@ All three exterior records transition to `interiorChart`; their reverse records
 transition back to `exteriorChart`. Equivalent parallel portal edges are
 deduplicated during bounded light-lift traversal so the three faces do not
 multiply the same lifted lights.
+
+`addGeodesicBallPortal` creates a closed one-surface portal volume. The
+exterior entry sphere is contracted by the requested intrinsic collar and
+oriented toward its center; the interior exit sphere is expanded by the collar
+and oriented away from its center. Spherical and hyperbolic space use exact
+ambient linear geodesic-sphere equations. Euclidean space uses a homogeneous
+quadric. The center is authored in interior-chart coordinates and transformed
+into the exterior chart with `exteriorToInterior`'s inverse.
 
 ## Packet
 

@@ -12,6 +12,7 @@ let package = Package(
             name: "GeometryCore",
             path: "Sources",
             sources: [
+                "src/Geodesic.cpp",
                 "src/Isometry.cpp",
                 "src/Chart.cpp",
                 "src/ChartMaterials.cpp",
@@ -31,6 +32,7 @@ let package = Package(
                 "test_main.cpp",
                 "test_math.cpp",
                 "test_stereo.cpp",
+                "test_geodesic.cpp",
                 "test_isometry.cpp",
                 "test_intersect.cpp",
                 "test_atlas.cpp",

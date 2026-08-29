@@ -16,6 +16,7 @@ enum TowerScene {
         let enclosureRadius: Float
         let heroHeight: Float
         let lowerHeight: Float
+        let fovTan: Float
         let viewDistance: Float
         let fogDensity: Float
         let lightRadiance: Float
@@ -50,6 +51,7 @@ enum TowerScene {
                 enclosureRadius: 2.72,
                 heroHeight: 0.78,
                 lowerHeight: 0.40,
+                fovTan: 1.2,
                 viewDistance: 3.05,
                 fogDensity: 0,
                 lightRadiance: 50))
@@ -67,6 +69,7 @@ enum TowerScene {
                 enclosureRadius: 3.25,
                 heroHeight: 1.15,
                 lowerHeight: 0.50,
+                fovTan: 0.82,
                 viewDistance: 6.5,
                 fogDensity: 0,
                 lightRadiance: 72))
@@ -86,6 +89,7 @@ enum TowerScene {
                 enclosureRadius: 3.18,
                 heroHeight: 0.96,
                 lowerHeight: 0.43,
+                fovTan: 0.72,
                 viewDistance: 7.0,
                 fogDensity: 0.035,
                 lightRadiance: 88))
@@ -105,23 +109,57 @@ enum TowerScene {
 
         let vertices = tilingVertices(configuration)
         precondition(vertices.count > configuration.vertexDegree)
+        let allLowerVertices = Array(vertices.dropFirst())
+        let nearestPlanar = SIMD2<Float>(
+            vertices[1].point.x, vertices[1].point.y)
+        let nearestPlanarLength = sqrt(
+            nearestPlanar.x * nearestPlanar.x
+                + nearestPlanar.y * nearestPlanar.y)
+        precondition(nearestPlanarLength > 1e-4)
+        let nearestTowerDirection = nearestPlanar / nearestPlanarLength
         let hyperbolicSymmetryBearing = -4 * Float.pi / 7
         let hyperbolicSymmetryDirection = SIMD2<Float>(
             cos(hyperbolicSymmetryBearing), sin(hyperbolicSymmetryBearing))
-        // The initial camera looks toward -y with a deliberately wide field
-        // of view. Do not author the opposite half of the tiling: those tower
-        // charts and their three exterior portal faces would be paid for by
-        // every ray despite remaining behind the camera.
-        let visibleLowerVertices = vertices.dropFirst().filter {
-            if configuration.model == .hyperbolic {
-                return $0.point.x * hyperbolicSymmetryDirection.x
+        let visibleLowerVertices: [GroundVertex]
+        switch configuration.model {
+        case .spherical:
+            // The radius contains the five adjacent vertices and the five
+            // vertices in the next ring. Keep the complete ten-tower set.
+            visibleLowerVertices = allLowerVertices
+            let closestDistance = groundDistance(
+                vertices[0].point, vertices[1].point,
+                model: configuration.model)
+            let closestCount = allLowerVertices.filter {
+                abs(groundDistance(
+                    vertices[0].point, $0.point,
+                    model: configuration.model) - closestDistance) < 2e-3
+            }.count
+            precondition(
+                visibleLowerVertices.count == 10 && closestCount == 5,
+                "spherical tower scene must retain both five-tower rings")
+        case .euclidean:
+            // Face the first adjacent lattice vertex and retain the open
+            // forward half-plane. Reflection in that camera axis preserves
+            // the chosen set without paying for towers behind the camera.
+            visibleLowerVertices = allLowerVertices.filter {
+                $0.point.x * nearestTowerDirection.x
+                    + $0.point.y * nearestTowerDirection.y > 1e-4
+            }
+        case .hyperbolic:
+            visibleLowerVertices = allLowerVertices.filter {
+                $0.point.x * hyperbolicSymmetryDirection.x
                     + $0.point.y * hyperbolicSymmetryDirection.y > 1e-4
             }
-            return $0.point.y < -1e-4
-                || (abs($0.point.y) <= 1e-4 && $0.point.x < 0)
         }
         precondition(!visibleLowerVertices.isEmpty)
-        if configuration.model == .hyperbolic {
+        if configuration.model == .euclidean {
+            precondition(
+                hasReflectionSymmetry(
+                    visibleLowerVertices,
+                    axis: nearestTowerDirection,
+                    model: configuration.model),
+                "euclidean tower sector lost reflection symmetry")
+        } else if configuration.model == .hyperbolic {
             precondition(
                 hasReflectionSymmetry(
                     visibleLowerVertices,
@@ -149,13 +187,14 @@ enum TowerScene {
                     chart, geo.vec3(0, 0, 1), 0, materials.ground) >= 0,
                 "failed to add lower-tower ground")
 
-            let baseRadius = projectiveDistance(
-                0.115 * configuration.lowerHeight,
-                model: configuration.model)
-            let portalRadius = max(0.065, baseRadius + 0.028)
-            let portal = atlas.addCappedTubePortal(
-                exterior, chart, geo.vec3(0, 0, 1), portalRadius,
-                -0.045, 1.08 * configuration.lowerHeight + 0.045,
+            let portalBottom = Float(-0.045)
+            let portalTop = 1.045 * configuration.lowerHeight
+            let portalCenterHeight = 0.5 * (portalBottom + portalTop)
+            let portalRadius = 0.5 * (portalTop - portalBottom) + 0.012
+            let portalCenter = atlas.pointFromOriginTangent(
+                geo.vec3(0, 0, portalCenterHeight))
+            let portal = atlas.addGeodesicBallPortal(
+                exterior, chart, portalCenter, portalRadius,
                 exteriorToInterior, 0.008)
             precondition(portal >= 0, "failed to add lower-tower portal")
         }
@@ -164,18 +203,15 @@ enum TowerScene {
         let horizontal = sqrt(1 - down * down)
         let viewingDirection: SIMD2<Float>
         switch configuration.model {
-        case .euclidean:
-            viewingDirection = SIMD2<Float>(0, -1)
+        case .euclidean, .spherical:
+            viewingDirection = nearestTowerDirection
         case .hyperbolic:
             viewingDirection = hyperbolicSymmetryDirection
-        case .spherical:
-            viewingDirection = middleViewingDirection(
-                of: visibleLowerVertices)
         }
         let cameraRight = SIMD2<Float>(
             -viewingDirection.y, viewingDirection.x)
         atlas.setCamera(
-            0.72, 16.0 / 9.0,
+            configuration.fovTan, 16.0 / 9.0,
             geo.vec3(cameraRight.x, cameraRight.y, 0),
             geo.vec3(
                 down * viewingDirection.x,
@@ -199,23 +235,6 @@ enum TowerScene {
             fatalError("tower atlas build failed for model \(configuration.model): \(result)")
         }
         return camera
-    }
-
-    private static func middleViewingDirection(
-        of vertices: [GroundVertex]
-    ) -> SIMD2<Float> {
-        var minimumBearing = Float.infinity
-        var maximumBearing = -Float.infinity
-        for vertex in vertices {
-            var bearing = atan2(vertex.point.y, vertex.point.x)
-            if bearing > 0 {
-                bearing -= 2 * Float.pi
-            }
-            minimumBearing = min(minimumBearing, bearing)
-            maximumBearing = max(maximumBearing, bearing)
-        }
-        let middleBearing = 0.5 * (minimumBearing + maximumBearing)
-        return SIMD2<Float>(cos(middleBearing), sin(middleBearing))
     }
 
     private static func hasReflectionSymmetry(
@@ -246,16 +265,16 @@ enum TowerScene {
             geo.vec4(0.82, 0.68, 0.48, 1), 0.72, 0, 1.5, 0,
             geo.vec3(0, 0, 0))
         let trim = atlas.addMaterial(
-            geo.vec4(0.58, 0.25, 0.09, 1), 0.30, 0.72, 1.5, 0,
+            geo.vec4(0.58, 0.25, 0.09, 1), 0.30, 1, 1.5, 0,
             geo.vec3(0, 0, 0))
         let roof = atlas.addMaterial(
-            geo.vec4(0.08, 0.30, 0.25, 1), 0.24, 0.82, 1.5, 0,
+            geo.vec4(0.08, 0.30, 0.25, 1), 0.24, 1, 1.5, 0,
             geo.vec3(0, 0, 0))
         let lantern = atlas.addMaterial(
             geo.vec4(1.0, 0.48, 0.10, 1), 0.3, 0, 1.5, 0,
             geo.vec3(2.8, 0.75, 0.12))
         let finial = atlas.addMaterial(
-            geo.vec4(0.84, 0.63, 0.20, 1), 0.16, 0.92, 1.5, 0,
+            geo.vec4(0.84, 0.63, 0.20, 1), 0.16, 1, 1.5, 0,
             geo.vec3(0, 0, 0))
         precondition(
             [ground, enclosure, stone, trim, roof, lantern, finial]

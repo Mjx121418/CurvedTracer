@@ -29,11 +29,16 @@ void test_intersect() {
     t = raySphere(vec3(0, 0, 0), vec3(2, 0, 0), vec3(4, 0, 0), 1.0f, 0.0f);
     CHECK_NEAR(t, 1.5f, 1e-5);   // p(t)=2t*e1, reaches |x|=1? wait sphere center 4 radius 1 -> t=1.5,2.5
 
-    // ---- rayPlane: ray from origin ----
-    t = rayPlane(vec3(1, 0, 0), vec3(1, 0, 0), 2.0f);
+    // ---- rayPlane: arbitrary ray origin ----
+    t = rayPlane(vec3(0.5f, 0, 0), vec3(1, 0, 0),
+                 vec3(1, 0, 0), 2.0f);
+    CHECK_NEAR(t, 1.5f, 1e-5);
+
+    t = rayPlane(vec3(0, 0, 0), vec3(1, 0, 0), vec3(1, 0, 0), 2.0f);
     CHECK_NEAR(t, 2.0f, 1e-5);
 
-    t = rayPlane(vec3(0, 1, 0), vec3(1, 0, 0), 0.0f);   // parallel to plane through origin
+    t = rayPlane(vec3(0, 0, 0), vec3(0, 1, 0),
+                 vec3(1, 0, 0), 0.0f);   // parallel to plane
     CHECK_NEAR(t, -1.0f, 1e-6);
 
     // ---- invertSphere: sphere -> sphere ----

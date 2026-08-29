@@ -120,7 +120,7 @@ static bool makeCameraRay(
         screen.x * renderAspect * h->camera.fovTan * h->camera.right +
         screen.y * h->camera.fovTan * h->camera.up);
     ray.chartId = h->camera.chartId;
-    return canonicalizeRayState(ray.point, ray.tangent);
+    return canonicalizeRayState(ray);
 }
 
 

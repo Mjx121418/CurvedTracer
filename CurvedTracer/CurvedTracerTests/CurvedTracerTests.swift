@@ -222,6 +222,28 @@ struct CurvedTracerTests {
         }
     }
 
+    @Test func sphericalAndEuclideanTowerLayoutsUseNearestTowerAxis() {
+        var atlas = geo.Atlas()
+
+        _ = TowerScene.spherical(&atlas)
+        var bytes = [UInt8](atlas.packetBytes())
+        #expect(int32(bytes, at: 160) == 11)
+        #expect(int32(bytes, at: 164) == 20)
+        var forward = atlas.cameraFwd()
+        #expect(forward.x > 0.9)
+        #expect(abs(forward.y) < 0.0001)
+        #expect(forward.z < 0)
+
+        _ = TowerScene.euclidean(&atlas)
+        bytes = [UInt8](atlas.packetBytes())
+        #expect(int32(bytes, at: 160) == 9)
+        #expect(int32(bytes, at: 164) == 16)
+        forward = atlas.cameraFwd()
+        #expect(forward.x > 0.9)
+        #expect(abs(forward.y) < 0.0001)
+        #expect(forward.z < 0)
+    }
+
     @Test func primitiveGalleriesEncodeLinearQuadraticAndClippedSurfaces() {
         var atlas = geo.Atlas()
         _ = SphericalScene.primitiveGallery(&atlas)

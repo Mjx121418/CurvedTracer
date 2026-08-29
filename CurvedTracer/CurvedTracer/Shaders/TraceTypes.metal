@@ -129,6 +129,8 @@ struct Event {
 };
 
 struct RayState {
+    // Current chart-local point and unit tangent. The point is not required to
+    // be the chart origin; every continuation and portal hop updates both.
     float4 point;
     float4 tangent;
     int chartId;
